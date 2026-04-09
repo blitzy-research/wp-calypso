@@ -160,7 +160,7 @@ The `cacheDirectory` option at **line 7** sets the cache path to `path.join(__di
 
 *Source: `test/client/jest.config.js:7`*
 
-All test suite configurations in the repository use the same `.cache/jest` target path:
+Most test suite configurations in the repository (6 of 7 suites) use the same `.cache/jest` target path:
 
 | Suite Config File | Cache Path Pattern |
 |------|------|
@@ -168,8 +168,12 @@ All test suite configurations in the repository use the same `.cache/jest` targe
 | `test/server/jest.config.js` | `path.join( __dirname, '../../.cache/jest' )` |
 | `test/packages/jest-preset.js` | `path.join( __dirname, '../../.cache/jest' )` |
 | `test/build-tools/jest.config.js` | `path.join( __dirname, '../../.cache/jest' )` |
+| `test/e2e/jest.config.js` (line 5) | `'<rootDir>/../../.cache/jest'` |
+| `test/apps/jest-preset.js` (line 6) | `path.join( __dirname, '../../.cache/jest' )` |
 
-This shared path means ALL test suites contribute to and benefit from the same cache directory, maximizing cache reuse across different test invocations.
+**Exception:** `test/integration/jest.config.js` does **not** set a custom `cacheDirectory` option. It relies on the Jest default, which places the cache in a system temporary directory (typically `/tmp/jest_<hash>`). This means integration tests do not share the `.cache/jest` cache with the other 6 suites.
+
+This shared path means the 6 suites that set `cacheDirectory` contribute to and benefit from the same cache directory, maximizing cache reuse across different test invocations.
 
 ### The `cacheDirectory` Option Explained
 
@@ -209,7 +213,7 @@ The transform is driven by the rule at `packages/calypso-jest/jest-preset.js` li
 '\\.[jt]sx?$': [ 'babel-jest', { rootMode: 'upward' } ],
 ```
 
-The `{ rootMode: 'upward' }` option causes `babel-jest` to search upward from each source file until it finds the root `babel.config.js`. That root config (`babel.config.js` lines 6-9) delegates to `@automattic/calypso-babel-config`:
+The `{ rootMode: 'upward' }` option causes `babel-jest` to search upward from each source file until it finds the root `babel.config.js`. That root config (`babel.config.js` lines 6-10) delegates to `@automattic/calypso-babel-config`:
 
 ```js
 module.exports = babelConfig( {
@@ -232,7 +236,7 @@ This overrides the browser target with `node: 'current'` for optimal test-time t
 
 **Cache invalidation mechanism:** Each transform cache file's **first line** is a content hash. This hash is computed from the source file content combined with the Babel configuration. If either changes, the hash won't match on the next run, causing a cache miss — Jest then re-transpiles that specific file through the full Babel pipeline. This means a full cache rebuild only occurs when the Babel configuration itself changes (e.g., adding or removing plugins).
 
-*Source: `packages/calypso-jest/jest-preset.js:13-14`, `babel.config.js:6-9`, `packages/calypso-babel-config/config.js:22-25`*
+*Source: `packages/calypso-jest/jest-preset.js:13-14`, `babel.config.js:6-10`, `packages/calypso-babel-config/config.js:22-25`*
 
 #### 2. Haste Map Files (`haste-map-*`)
 
@@ -372,10 +376,10 @@ import useNock, { nock } from 'calypso/test-helpers/use-nock';
 // Line 27: Register suite-level cleanup (no setup callback)
 useNock();
 
-// Lines 31-32: Per-test success interceptor
+// Lines 31-32: Per-test data setup and success interceptor
 nock( 'https://public-api.wordpress.com:443' ).get( '/rest/v1.1/me' ).reply( 200, data );
 
-// Lines 45-46: Per-test error interceptor
+// Lines 45-46: Per-test error setup and error interceptor
 nock( 'https://public-api.wordpress.com:443' ).get( '/rest/v1.1/me' ).replyWithError( error );
 ```
 
@@ -503,7 +507,7 @@ When `--no-cache` forces re-transpilation, every imported module goes through th
 |--------|---------|---------|
 | `@automattic/babel-plugin-transform-wpcalypso-async` | workspace:^ | Calypso-specific async transform |
 
-**Total: 3 presets + 7 plugins = 10+ transformation steps per source file.**
+**Total: 4 presets + 6 plugins = 10 transformation steps per source file.** The test-environment `@babel/preset-env` (at `config.js` line 23, inside `presets: [...]`) is a preset override of the base `@babel/preset-env`, not a plugin — giving 4 presets (3 base + 1 test-env) and 6 plugins (4 base + 1 test-env + 1 monorepo).
 
 *Source: `packages/calypso-babel-config/presets/default.js:14-53`, `packages/calypso-babel-config/config.js:1-25`*
 
@@ -547,7 +551,7 @@ The custom module resolver at `packages/calypso-jest/src/module-resolver.js` use
 
 | File Path | Key Content | Relevant Lines |
 |-----------|-------------|----------------|
-| `babel.config.js` | Root Babel entry point — delegates to `@automattic/calypso-babel-config` with `importSource: '@emotion/react'` | Lines 6-9 |
+| `babel.config.js` | Root Babel entry point — delegates to `@automattic/calypso-babel-config` with `importSource: '@emotion/react'` | Lines 6-10 |
 | `test/client/jest.config.js` | Client Jest config — `cacheDirectory` setting, `setupFilesAfterEnv`, `transformIgnorePatterns` | Line 7 (`cacheDirectory`), Line 21 (`setupFilesAfterEnv`), Lines 14-16 (`transformIgnorePatterns`) |
 | `test/client/setup-test-framework.js` | Client test bootstrap — nock initialization and 12+ global polyfill/mock installations | Lines 6-22 (nock), Lines 25-78 (polyfills) |
 | `packages/calypso-jest/jest-preset.js` | Shared Jest preset — transform rules (`babel-jest` for JS/TS, `asset-transform.js` for images/styles), test matching, resolver | Lines 13-16 (transform), Line 9 (resolver), Line 12 (testMatch) |
