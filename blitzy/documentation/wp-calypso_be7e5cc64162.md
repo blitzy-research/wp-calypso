@@ -713,6 +713,7 @@ After diagnostic observation, ensure the repository remains unmodified:
 | `packages/onboarding/src/step-container/index.tsx` | Stepper step container: `renderBackButton()` visibility gated on `goBack \|\| backUrl` |
 | `packages/onboarding/src/step-navigation-link/index.tsx` | Stepper navigation link: stateless button with `href={backUrl}` and `onClick` |
 | `client/landing/stepper/declarative-flow/flows/onboarding/onboarding.ts` | Onboarding flow: returns only `{ submit }` — no `goBack`, triggering stepper `history.back()` fallback |
+| `client/landing/stepper/declarative-flow/flows/onboarding/README.md` | Onboarding flow documentation: minimal README with manual testing URL (`/setup/onboarding`) and ownership metadata |
 | `client/landing/stepper/declarative-flow/internals/index.tsx` | FlowRenderer: assembles step routes, calls `useStepNavigationWithTracking`, passes navigation to steps |
 | `client/landing/stepper/README.md` | Stepper framework documentation: `useStepNavigation` hook design, non-linearity, reusability contract |
 | `client/signup/navigation-link/test/index.jsx` | Test suite validating back-navigation URL computation, `getPreviousStep()` edge cases, `backUrl` override |
