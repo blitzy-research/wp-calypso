@@ -78,7 +78,7 @@ The `process.send` guard at line 27 means this signal only fires when running as
 
 **Readiness Signal 2: Console "Ready!" Message**
 
-The bundler middleware hooks into webpack's `compiler.hooks.done` at `client/server/bundler/index.js` lines 38–63:
+The bundler middleware hooks into webpack's `compiler.hooks.done` at `client/server/bundler/index.js` lines 38–64:
 
 ```js
 compiler.hooks.done.tap( 'Calypso', function () {
@@ -99,7 +99,7 @@ compiler.hooks.done.tap( 'Calypso', function () {
 } );
 ```
 
-Source: `client/server/bundler/index.js:38-63`
+Source: `client/server/bundler/index.js:38-64`
 
 The double `process.nextTick` at lines 50–51 ensures the "Ready!" message appears *after* webpack's own "bundle is now VALID" log, since webpack also hooks `done` and uses `nextTick` internally.
 
@@ -138,7 +138,7 @@ The port and host are centralized in the configuration file (`config/development
 
 The `waitForCompiler` middleware (lines 66–98 of `client/server/bundler/index.js`) acts as a gate: any HTTP request arriving before webpack finishes compilation is either queued (non-root paths) or served a "please wait" HTML page (root path with auto-refresh).
 
-Source: `config/development.json:6-8`, `client/server/index.js:11-13,25-31,73,83-86`, `client/server/bundler/index.js:9-11,17,38-63,66-98,100-102`
+Source: `config/development.json:6-8`, `client/server/index.js:11-13,25-31,73,83-86`, `client/server/bundler/index.js:9-11,17,38-64,66-98,100-102`
 
 ---
 
@@ -250,7 +250,7 @@ Source: `client/state/data-layer/wpcom/read/streams/index.js:165-168`
 | 18 | `custom_recs_posts_with_images` | `/read/recommendations/posts` | v1.2 (default) | `date` | `seed`, `alg_prefix: 'read:recommendations:posts'` |
 | 19 | `custom_recs_sites_with_images` | `/read/recommendations/sites` | v1.2 (default) | `date` | `algorithm: 'read:recommendations:sites/es/2'`, `posts_per_site: 1`, max 10 per poll |
 | 20 | `tag` | `/read/tags/{tag}/posts` | `wpcom/v2` (namespace) | `date` | — |
-| 21 | `tag_popular` | `/read/streams/tag/{tag}` | `wpcom/v2` (namespace) | `date` | `tags` from suffix, `tag_recs_per_card: 5`, `site_recs_per_card: 5` |
+| 21 | `tag_popular` | `/read/streams/tag/{tag}` | `wpcom/v2` (namespace) | *(undefined — not set)* | `tags` from suffix, `tag_recs_per_card: 5`, `site_recs_per_card: 5`. **Note:** unlike most stream types, `tag_popular` does not define a `dateProperty` field — when destructured at line 432, it evaluates to `undefined`. |
 | 22 | `list` | `/read/list/{owner}/{slug}/posts` | v1.3 | `date` | `number: 40`, `owner`/`slug` from JSON-parsed suffix |
 | 23 | `user` | `/users/{user_id}/posts` | v1 | `date` | — |
 
@@ -506,7 +506,7 @@ Source: `client/reader/index.ts:39-62`, `client/reader/controller.js:35-101`, `c
 
 ### Direct Answer
 
-Login detection spans four modules and checks four distinct storage mechanisms. The canonical login check is `isUserLoggedIn(state)` which simply verifies `state.currentUser.id !== null` in the Redux store. The complexity lies in *how* that state gets populated — through a multi-step initialization pipeline that checks cookies (server-side), `window.currentUser` (SSR bootstrap), localStorage (`wpcom_user_id`), and IndexedDB (persisted Redux state).
+Login detection spans four modules and checks four distinct storage mechanisms. The canonical login check is `isUserLoggedIn(state)` which verifies `state.currentUser?.id !== null` in the Redux store (note the optional chaining `?.` on `currentUser` — if the `currentUser` slice is `undefined`, the expression safely evaluates to `null !== null` → `false`). The complexity lies in *how* that state gets populated — through a multi-step initialization pipeline that checks cookies (server-side), `window.currentUser` (SSR bootstrap), localStorage (`wpcom_user_id`), and IndexedDB (persisted Redux state).
 
 ### Storage Mechanisms
 
@@ -644,11 +644,14 @@ Source: `client/lib/user/store.js:7-14`
 ```mermaid
 flowchart TD
     A[bootApp starts] --> B{isSupportUserSession?}
-    B -->|Yes| C[supportUserBoot - skip bootstrap]
-    B -->|No| D{isSupportNextSession?}
-    D -->|Yes| E[supportNextBoot - continue bootstrap]
-    D -->|No| F{wpcom-user-bootstrap<br/>feature enabled?}
-    E --> F
+    B -->|Yes| C[supportUserBoot<br/>skipBootstrap = true]
+    B -->|No| C2[skipBootstrap remains false]
+    C --> D{isSupportNextSession?}
+    C2 --> D
+    D -->|Yes| E[supportNextBoot]
+    D -->|No| F_gate[continue]
+    E --> F_gate
+    F_gate --> F{!skipBootstrap AND<br/>wpcom-user-bootstrap enabled?}
     F -->|Yes| G{window.currentUser<br/>exists?}
     F -->|No| H[rawCurrentUserFetch<br/>GET /me]
     G -->|Yes| I[Return window.currentUser<br/>SSR bootstrap]
@@ -664,10 +667,11 @@ flowchart TD
     N --> P{user && user.ID?}
     P -->|Yes| Q[dispatch setCurrentUser<br/>CURRENT_USER_RECEIVE]
     P -->|No| R[Skip - no user in store]
-    Q --> S[isUserLoggedIn returns true<br/>state.currentUser.id !== null]
-    R --> T[isUserLoggedIn returns false<br/>state.currentUser.id === null]
-    C --> O
+    Q --> S[isUserLoggedIn returns true<br/>state.currentUser?.id !== null]
+    R --> T[isUserLoggedIn returns false<br/>state.currentUser?.id === null]
 ```
+
+> **Key structural note:** `isSupportUserSession()` and `isSupportNextSession()` are independent sequential `if` checks (lines 14 and 21 of `initialize-current-user.js`) — both can evaluate to `true`. When `isSupportUserSession()` is true, `skipBootstrap` is set to `true`, which causes the bootstrap feature check (`!skipBootstrap && ...`) at line 28 to fail. Execution then falls through to `rawCurrentUserFetch()` at line 37 — it does **not** skip directly to `boot(false)`.
 
 ### Rationale
 
@@ -781,11 +785,11 @@ height: calc(100vh - var(--masterbar-height) - var(--content-padding-top) - var(
 
 Source: `client/reader/style.scss:89`
 
-Navigation header `::after` pseudo-element (lines 56–66):
+Navigation header `::after` pseudo-element (lines 53–66):
 - Default: `margin: 18px 0`
 - Above `$break-medium`: `margin: 24px 0`
 
-Source: `client/reader/style.scss:56-66`
+Source: `client/reader/style.scss:53-66`
 
 ### Rationale
 
@@ -809,7 +813,7 @@ All six question clusters have been answered with direct source code evidence:
 |----------|-------------|---------------|
 | **Q1: Dev Server Port** | Port 3000 on `calypso.localhost`, two readiness signals (IPC + console) | `config/development.json`, `client/server/index.js`, `client/server/bundler/index.js` |
 | **Q2: Multi-Port** | Single-port architecture — all traffic on port 3000 | `client/server/bundler/index.js:100-102` |
-| **Q3: Stream API** | 23 stream key entries in `streamApis` table, INITIAL_FETCH=4 | `client/state/data-layer/wpcom/read/streams/index.js:192-351` |
+| **Q3: Stream API** | 20 stream keys (23 endpoint variants including 4 discover sub-paths) in `streamApis` table, INITIAL_FETCH=4 | `client/state/data-layer/wpcom/read/streams/index.js:192-351` |
 | **Q4: Redux Actions** | REQUEST → API call → POSTS_RECEIVE + PAGE_RECEIVE | `client/reader/index.ts`, `client/state/reader/streams/actions.js` |
 | **Q5: Auth Detection** | Four storage backends: cookie, localStorage, window.currentUser, IndexedDB | `client/lib/user/shared-utils/initialize-current-user.js`, `client/server/user-bootstrap/index.js` |
 | **Q6: Sidebar CSS** | Four breakpoints (600/781/782/1300px), CSS custom properties drive layout | `client/reader/style.scss`, `client/reader/sidebar/style.scss`, `_variables.scss` |
