@@ -135,6 +135,8 @@ If even the stale cache retrieval or fallback storage throws (e.g., localStorage
         experimentName,
         source: 'loadExperimentAssignment-fallbackError',
     } );
+
+    // As a last resort we just keep it very simple
     return createFallbackExperimentAssignment( experimentName );
 }
 ```
@@ -155,7 +157,7 @@ graph TD
     G -->|No| I[Create fallback assignment]
     I --> J[Store fallback in localStorage]
     J --> K[Return fallback]
-    I -->|Storage fails| L[Log fallback error]
+    J -->|Storage fails| L[Log fallback error]
     L --> M[Return fallback without storing — last resort]
 ```
 
@@ -187,7 +189,7 @@ Key details:
 - **A/B experiment on timeout duration:** At runtime, `Math.random() > 0.5` halves the timeout to 5,000ms (Source: `create-explat-client.ts:134–138`). This means the effective timeout is randomly either **5 seconds or 10 seconds** per request.
 
 ```typescript
-// Temporarilly running an A/B experiment on the timeout
+// Temporarilly running an A/B experiment on the timeout, see https://github.com/Automattic/wp-calypso/pull/54507
 let experimentFetchTimeout = EXPERIMENT_FETCH_TIMEOUT;
 if ( Math.random() > 0.5 ) {
     experimentFetchTimeout = 5000;
@@ -240,7 +242,7 @@ This catches and swallows any error thrown by the logging function itself, preve
 - Verifies `logError` was called once with source `'loadExperimentAssignment-initialError'`
 
 **Test: "Timed-out fetch: should return fallback and log"**
-(Source: `packages/explat-client/src/test/create-explat-client.ts:216–248`)
+(Source: `packages/explat-client/src/test/create-explat-client.ts:216–249`)
 
 - Mocks `fetchExperimentAssignment` to return a **never-resolving** promise
 - Advances fake timers by 10 seconds
@@ -399,11 +401,11 @@ Key details:
 - TTL is in **seconds**, converted to milliseconds via `MILLISECONDS_PER_SECOND` (1000)
 - An assignment expires when: `now >= retrievedTimestamp + (ttl × 1000)`
 
-#### Dual-Layer Caching
+#### Two-Phase Cache Check
 
-The caching operates in two layers:
+The caching operates in two phases, both using localStorage as the single underlying storage mechanism:
 
-**Layer 1 — In-memory check via localStorage**
+**Phase 1 — Read and check (cache hit path)**
 
 When `loadExperimentAssignment` is called (Source: `create-explat-client.ts:119–125`), it first reads from localStorage:
 
@@ -419,7 +421,7 @@ if (
 
 If the assignment exists AND `isAlive()` returns `true`, it returns **immediately** with **NO network call**.
 
-**Layer 2 — localStorage persistence**
+**Phase 2 — Write and persist (cache store path)**
 
 Assignments are stored via `storeExperimentAssignment()` (Source: `packages/explat-client/src/internal/experiment-assignment-store.ts:21–40`) using keys prefixed with `explat-experiment--` followed by the experiment name.
 
@@ -467,7 +469,7 @@ graph TD
     A[loadExperimentAssignment called] --> B[Retrieve from localStorage]
     B --> C{Assignment exists?}
     C -->|No| E[Fetch from server]
-    C -->|Yes| D{"isAlive? (now < retrieved + ttl×1000)"}
+    C -->|Yes| D{"isAlive? (now < retrieved + ttl*1000)"}
     D -->|Yes| F[Return cached assignment — NO network call]
     D -->|No| E
     E -->|Success| G[Store in localStorage and return assignment]
