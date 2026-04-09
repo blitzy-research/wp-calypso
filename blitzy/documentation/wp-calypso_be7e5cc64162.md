@@ -40,7 +40,7 @@ This document is a technical investigation into the memoization and caching beha
 | `lodash` | ^4.17.21 | `createSelector` | Provides `memoize` for argument-level caching via `MapCache` |
 | `@wordpress/is-shallow-equal` | ^5.21.0 | `createSelector` | Element-by-element strict equality (`===`) comparison of dependency arrays |
 | `@wordpress/warning` | ^3.21.0 | `createSelector` | Development-mode warnings for complex object arguments |
-| `tslib` | ^2.3.0 | `treeSelect` | TypeScript helper runtime |
+| `tslib` | ^2.3.0 | `createSelector`, `treeSelect` | TypeScript helper runtime |
 
 *Source: `packages/state-utils/package.json:L32-38`, `packages/tree-select/package.json:L36-38`*
 
@@ -242,7 +242,7 @@ Setup: `getSitePosts = createSelector(selector, (state) => state.posts)` where `
 
 | Step | Action | Dependency Changed? | Cache Key | Selector Called? | Total Calls |
 |------|--------|:-------------------:|-----------|:----------------:|:-----------:|
-| 1 | `getSitePosts(stateA, 2916284)` | Yes (first call, no previous) | `"2916284"` | **Yes** | 1 |
+| 1 | `getSitePosts(stateA, 2916284)` | N/A (first call — MapCache empty) | `"2916284"` | **Yes** | 1 |
 | 2 | `getSitePosts(stateA, 2916284)` | No (`stateA.posts === stateA.posts`) | `"2916284"` | No (cache hit) | 1 |
 | 3 | `getSitePosts(stateA, 38303081)` | No (same state) | `"38303081"` | **Yes** (new key) | 2 |
 | 4 | `getSitePosts(stateA, 2916284)` | No (same state) | `"2916284"` | No (cache hit from step 1) | 2 |
@@ -846,7 +846,7 @@ const getPostMapByPostKey = treeSelect(
 
 ### `treeSelect` with Custom `getCacheKey` Example
 
-*Source: `client/state/reader/posts/selectors.js:L52-60`*
+*Source: `client/state/reader/posts/selectors.js:L52-61`*
 
 ```js
 export const getPostsByKeys = treeSelect(
@@ -870,11 +870,11 @@ export const getPostsByKeys = treeSelect(
 | File | Lines Referenced | Purpose |
 |------|-----------------|---------|
 | `packages/state-utils/src/create-selector/index.ts` | L1–113 | `createSelector` implementation — memoization, dependency tracking, cache key logic, shallow equality comparison |
-| `packages/tree-select/src/index.ts` | L1–132 | `treeSelect` implementation — WeakMap dependency tree, `NULLISH_KEY` sentinel, `insertDependentKey`, `clearCache()`, `getCacheKey` option |
+| `packages/tree-select/src/index.ts` | L1–131 | `treeSelect` implementation — WeakMap dependency tree, `NULLISH_KEY` sentinel, `insertDependentKey`, `clearCache()`, `getCacheKey` option |
 | `packages/state-utils/src/create-selector/test/index.js` | L1–291 | `createSelector` test suite — 13 test cases covering cache reuse, invalidation, multi-arg, warnings, dependency arrays, custom keys |
-| `packages/tree-select/test/index.js` | L1–267 | `treeSelect` test suite — 17 test cases covering caching, multi-dependent, argument validation, clearCache, nullish handling, getCacheKey |
-| `packages/state-utils/src/create-selector/README.md` | L1–70 | Existing `createSelector` documentation — API overview, FAQ, cache key warning |
-| `packages/tree-select/README.md` | L1–71 | Existing `treeSelect` documentation — API overview, dependency tree illustration |
+| `packages/tree-select/test/index.js` | L1–266 | `treeSelect` test suite — 17 test cases covering caching, multi-dependent, argument validation, clearCache, nullish handling, getCacheKey |
+| `packages/state-utils/src/create-selector/README.md` | L1–69 | Existing `createSelector` documentation — API overview, FAQ, cache key warning |
+| `packages/tree-select/README.md` | L1–70 | Existing `treeSelect` documentation — API overview, dependency tree illustration |
 | `packages/state-utils/package.json` | L1–44 | Package version (1.0.0-alpha.4) and dependencies (`lodash`, `@wordpress/is-shallow-equal`, `@wordpress/warning`) |
 | `packages/tree-select/package.json` | L1–43 | Package version (2.0.0) and dependencies (`tslib`) |
 | `client/state/posts/selectors/get-site-posts.js` | L1–25 | Real-world `createSelector` usage — site posts with `state.posts.queries` as dependency |
