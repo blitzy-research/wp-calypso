@@ -392,11 +392,11 @@ The following flows declare `back_to` in their `providesDependenciesInQuery` arr
 
 | Flow Name | File Location | Line | `providesDependenciesInQuery` value |
 |-----------|---------------|:----:|-------------------------------------|
-| `difm` (Do It For Me) | `client/signup/config/flows-pure.js` | 410 | `[ 'coupon', 'back_to' ]` |
+| `do-it-for-me` (`DIFM_FLOW`) | `client/signup/config/flows-pure.js` | 410 | `[ 'coupon', 'back_to' ]` |
 | `website-design-services` | `client/signup/config/flows-pure.js` | 446 | `[ 'siteSlug', 'back_to' ]` |
 | `woocommerce-install` | `client/signup/config/flows-pure.js` | 478 | `[ 'siteSlug', 'back_to' ]` |
 
-**Notable absence:** The `difm-store` flow (line 437) does **not** declare `back_to` in its `providesDependenciesInQuery` — it only declares `[ 'coupon' ]`. This means the `back_to` query parameter is ignored in the `difm-store` flow even if present in the URL, unlike the regular `difm` flow.
+**Notable absence:** The `do-it-for-me-store` (`DIFM_FLOW_STORE`) flow (line 437) does **not** declare `back_to` in its `providesDependenciesInQuery` — it only declares `[ 'coupon' ]`. This means the `back_to` query parameter is ignored in the `do-it-for-me-store` flow even if present in the URL, unlike the regular `do-it-for-me` flow.
 
 ### 5.3 Controller Dispatch
 
@@ -416,7 +416,7 @@ if ( 'woocommerce-install' === flowName ) {
 
 **Rationale:** This force-dispatch exists because the `woocommerce-install` flow supports site-switching (the comment at line 225 reads "Update initialContext to help woocommerce-install support site switching"). When the user switches sites, the controller needs to re-inject `back_to` into the Redux store, even if it was already injected by the `providesDependenciesInQuery` mechanism. The `initialContext = context` assignment on line 232 also ensures subsequent steps see the updated context.
 
-For other flows that declare `back_to` (like `difm` and `website-design-services`), the `providesDependenciesInQuery` mechanism handles extraction automatically — the signup framework reads the declared dependency names from the flow configuration and populates the Redux dependency store from the URL query parameters during flow initialization.
+For other flows that declare `back_to` (like `do-it-for-me` and `website-design-services`), the `providesDependenciesInQuery` mechanism handles extraction automatically — the signup framework reads the declared dependency names from the flow configuration and populates the Redux dependency store from the URL query parameters during flow initialization.
 
 ### 5.4 Step Consumption Pattern
 
@@ -651,7 +651,7 @@ Source: `client/signup/config/flows-pure.js:471-482`
 
 **Key observation:** Only `store-address` (step 0) is affected by the `back_to` override. The subsequent steps (`business-info`, `confirm`, `transfer`) do not consume `back_to` from `signupDependencies`, so they rely on `getPreviousStep()` and navigate step-by-step normally.
 
-#### `difm` flow (classic signup system)
+#### `do-it-for-me` flow (classic signup system)
 
 This flow declares `back_to` in `providesDependenciesInQuery`, but **multiple** steps consume it.
 
@@ -665,7 +665,7 @@ Source: `client/signup/config/flows-pure.js:385-412`
 | 2 | `difm-site-picker` | Yes (if `back_to` in URL) | External URL from `back_to` | Same override pattern via `signupDependencies.back_to` |
 | 2 | `difm-site-picker` | No | Previous step via `getPreviousStep()` | Normal step-by-step computation |
 
-**Key observation:** In the `difm` flow, both `new-or-existing-site` and `difm-site-picker` consume `back_to`. If a user enters the flow with `?back_to=/marketplace`, pressing Back at step 1 or step 2 would both navigate to `/marketplace` — not to the preceding step.
+**Key observation:** In the `do-it-for-me` flow, both `new-or-existing-site` and `difm-site-picker` consume `back_to`. If a user enters the flow with `?back_to=/marketplace`, pressing Back at step 1 or step 2 would both navigate to `/marketplace` — not to the preceding step.
 
 #### `onboarding` flow (declarative stepper system)
 
