@@ -179,11 +179,9 @@ The following table shows the persistence status of every sub-reducer within the
 
 ### 3.4 The Persistence Model
 
-Per the repository's own documentation:
+Per the repository's own documentation, Calypso persists Redux state to browser storage (IndexedDB) to avoid rebuilding the Redux tree on each page load. Persistence is opt-in: "the reducer must be wrapped with `withSchemaValidation`" to be saved (line 7). For custom serialization behavior, a reducer can further be wrapped with `withPersistence` to implement its own `serialize` and `deserialize` methods (line 168).
 
-> Calypso persists Redux state to browser storage (IndexedDB). Persistence is opt-in — a reducer must be wrapped with `withSchemaValidation` (or the shorthand `withPersistence`) to be saved.
-
-Source: `docs/data-persistence.md:1-7`
+Source: `docs/data-persistence.md:7, 168`
 
 The `combineReducers` from `calypso/state/utils` handles persistence coordination. The `withStorageKey('readerUi', combinedReducer)` at `reducer.js:65` namespaces the entire slice under `readerUi` in IndexedDB, but **only sub-reducers individually wrapped with `withPersistence` are actually serialized and saved**. Unwrapped sub-reducers within the combined reducer are initialized to their default state on deserialization.
 
@@ -233,6 +231,7 @@ The `LayoutLoggedOut` component at `client/layout/logged-out.jsx` is the **only 
 **Key selector reads (lines 89-91):**
 ```js
 const isLoggedIn = useSelector( isUserLoggedIn );
+const currentRoute = useSelector( getCurrentRoute );
 const loggedInAction = useSelector( getLastActionRequiresLogin );
 ```
 
@@ -349,7 +348,7 @@ Source: `client/data/reader/use-login-window.ts:31-47`
 
 **Popup Window Configuration (lines 48-50):**
 ```
-height=980, width=500, resizable=1, scrollbars=0
+status=0, toolbar=0, location=1, menubar=0, directories=0, resizable=1, scrollbars=0, height=980, width=500
 ```
 
 **The postMessage Listener — `waitForLogin` (lines 52-60):**
@@ -647,9 +646,9 @@ The same pattern exists in `PostComment`:
 
 1. **Lines 115-121:** If on a Reader tag embed page, open a new tab to account creation
 2. **Lines 123-125:** If `reader/login-window` is OFF, navigate to account creation
-3. **If the flag is ON:** Control proceeds to `handleReply` which dispatches `registerLastActionRequiresLogin`
+3. **If the flag is ON:** `onLikeToggle` returns without navigating — the underlying `LikeButtonContainer` handles logged-out likes via the popup flow. The `handleReply` method (lines 129-136) operates independently and always dispatches `registerLastActionRequiresLogin` for reply actions when the user is not logged in, regardless of the flag.
 
-Source: `client/blocks/comments/post-comment.jsx:115-127`
+Source: `client/blocks/comments/post-comment.jsx:112-136`
 
 ### 8.3 Absence from Static Configuration
 
