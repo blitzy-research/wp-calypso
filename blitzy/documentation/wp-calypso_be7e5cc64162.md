@@ -13,6 +13,15 @@ This document answers six architectural questions about the Calypso Reader secti
 2. **Evidence** — code excerpts with file paths and line numbers
 3. **Rationale** — the reasoning chain explaining *why* the answer follows from the evidence
 
+**Document navigation:**
+- [Q1: Development Server Port & Readiness](#q1-development-server-port--readiness)
+- [Q2: Multi-Port Architecture](#q2-multi-port-architecture)
+- [Q3: Reader Stream API Endpoints](#q3-reader-stream-api-endpoints)
+- [Q4: Redux Actions During Initial Load](#q4-redux-actions-during-initial-load)
+- [Q5: Authentication Detection](#q5-authentication-detection)
+- [Q6: Sidebar Responsive Design](#q6-sidebar-responsive-design)
+- [Summary](#summary)
+
 **Terminology conventions:**
 - **stream key** — the identifier string passed to the data layer to select a stream (e.g., `'following'`, `'site:12345'`)
 - **masterbar** — the top navigation bar rendered across all Calypso sections
@@ -61,7 +70,6 @@ The `sendBootStatus` function is defined at lines 25–31 of `client/server/inde
 function sendBootStatus( status ) {
     if ( ! process.send ) { return; }
     process.send( { boot: status } );
-}
 ```
 
 It fires inside the `server.listen()` callback at line 85:
@@ -83,20 +91,7 @@ The bundler middleware hooks into webpack's `compiler.hooks.done` at `client/ser
 ```js
 compiler.hooks.done.tap( 'Calypso', function () {
     built = true;
-    // ...
-    process.nextTick( function () {
-        process.nextTick( function () {
-            if ( beforeFirstCompile ) {
-                beforeFirstCompile = false;
-                console.info( chalk.cyan(
-                    `\nReady! You can load ${ protocol }://${ host }:${ port }/ now. Have fun!`
-                ) );
-            } else {
-                console.info( chalk.cyan( '\nReady! All assets are re-compiled. Have fun!' ) );
-            }
-        } );
-    } );
-} );
+    // ...double process.nextTick → console.info("Ready! You can load .../  now. Have fun!")
 ```
 
 Source: `client/server/bundler/index.js:38-64`
@@ -199,10 +194,9 @@ The `streamApis` configuration table in `client/state/data-layer/wpcom/read/stre
 Defined at lines 160–163:
 
 ```js
-export const PER_FETCH = 7;
-export const INITIAL_FETCH = 4;
-const PER_POLL = 40;
-const PER_GAP = 40;
+export const INITIAL_FETCH = 4;  // first page
+export const PER_FETCH = 7;      // subsequent pages
+// ...PER_POLL = 40 (polling), PER_GAP = 40 (gap-filling)
 ```
 
 Source: `client/state/data-layer/wpcom/read/streams/index.js:160-163`
@@ -262,13 +256,8 @@ The handler registration at lines 514–529 uses a side-effect-based pattern:
 
 ```js
 registerHandlers( 'state/data-layer/wpcom/read/streams/index.js', {
-    [ READER_STREAMS_PAGE_REQUEST ]: [
-        dispatchRequest( { fetch: requestPage, onSuccess: handlePage, onError: noop } ),
-    ],
-    [ READER_STREAMS_PAGINATED_REQUEST ]: [
-        dispatchRequest( { fetch: requestPage, onSuccess: handlePage, onError: noop } ),
-    ],
-} );
+    [ READER_STREAMS_PAGE_REQUEST ]: [ dispatchRequest({ fetch: requestPage, onSuccess: handlePage }) ],
+    // ...READER_STREAMS_PAGINATED_REQUEST uses the same requestPage/handlePage pair
 ```
 
 Source: `client/state/data-layer/wpcom/read/streams/index.js:514-529`
@@ -291,7 +280,6 @@ Stream keys are parsed by `getStreamType()` in `client/reader/utils.ts` lines 11
 export function getStreamType( streamKey: string ): string {
     const indexOfColon = streamKey.indexOf( ':' );
     return indexOfColon === -1 ? streamKey : streamKey.substring( 0, indexOfColon );
-}
 ```
 
 Source: `client/reader/utils.ts:116-120`
@@ -321,15 +309,9 @@ When a user navigates to `/reader`, the route middleware chain defined in `clien
 The `/reader` route is registered at `client/reader/index.ts` lines 54–62:
 
 ```ts
-page(
-    [ '/reader', '/reader/recent/:feed_id' ],
-    redirectLoggedOutToDiscover,
-    sidebar,
-    setSelectedSiteIdByOrigin,
-    following,
-    makeLayout,
-    clientRender
-);
+page( [ '/reader', '/reader/recent/:feed_id' ],
+    redirectLoggedOutToDiscover, sidebar, setSelectedSiteIdByOrigin,
+    following, makeLayout, clientRender );
 ```
 
 Source: `client/reader/index.ts:54-62`
@@ -344,14 +326,8 @@ Checks `isUserLoggedIn(state)` from `client/state/current-user/selectors.js`. If
 
 ```js
 export function sidebar( context, next ) {
-    const state = context.store.getState();
-    if ( isUserLoggedIn( state ) ) {
-        context.secondary = (
-            <AsyncLoad require="calypso/reader/sidebar" ... />
-        );
-    }
+    // ...if logged in, sets context.secondary = <AsyncLoad require="calypso/reader/sidebar" />
     next();
-}
 ```
 
 Source: `client/reader/controller.js:35-44`
@@ -367,12 +343,8 @@ This is where the key action setup occurs:
 
 ```js
 context.primary = createElement( StreamComponent, {
-    key: 'following',
-    streamKey: 'following',
-    startDate,
-    recsStreamKey: 'custom_recs_posts_with_images',
-    // ...
-} );
+    key: 'following', streamKey: 'following', recsStreamKey: 'custom_recs_posts_with_images',
+    // ...startDate, listsUrl, etc.
 ```
 
 Source: `client/reader/controller.js:50-101`
@@ -384,10 +356,8 @@ When the `StreamComponent` mounts, it dispatches `requestPage({ streamKey: 'foll
 The `requestPage` action creator in `client/state/reader/streams/actions.js` lines 28–50 produces:
 
 ```js
-{
-    type: READER_STREAMS_PAGE_REQUEST,
-    payload: { streamKey, pageHandle, streamType, isPoll, gap, localeSlug, feedId }
-}
+{ type: READER_STREAMS_PAGE_REQUEST,
+  payload: { streamKey, pageHandle, streamType, isPoll, gap, localeSlug, feedId } }
 ```
 
 Source: `client/state/reader/streams/actions.js:28-50`
@@ -464,14 +434,8 @@ The Reader conditionally loads a real-time update middleware called Lasagna. Thi
 
 ```ts
 export async function lazyLoadDependencies(): Promise< void > {
-    const isBrowser = typeof window === 'object';
-    if ( isBrowser && config.isEnabled( 'lasagna' ) && config.isEnabled( 'reader' ) ) {
-        const lasagnaMiddleware = await import(
-            'calypso/state/lasagna/middleware.js'
-        );
-        addMiddleware( lasagnaMiddleware.default );
-    }
-}
+    if ( typeof window === 'object' && config.isEnabled( 'lasagna' ) && config.isEnabled( 'reader' ) ) {
+        // ...dynamically imports and adds lasagna middleware via addMiddleware()
 ```
 
 Source: `client/reader/index.ts:39-47`
@@ -526,9 +490,7 @@ The app boot sequence begins in `client/boot/common.js` lines 340–344:
 ```js
 export const bootApp = async ( appName, registerRoutes ) => {
     const user = await initializeCurrentUser();
-    debug( `Starting ${ appName }. Let's do this.` );
     await boot( user, registerRoutes );
-};
 ```
 
 Source: `client/boot/common.js:340-344`
@@ -547,11 +509,8 @@ Defined in `client/lib/user/shared-utils/initialize-current-user.js` lines 11–
 
 ```js
 if ( ! skipBootstrap && config.isEnabled( 'wpcom-user-bootstrap' ) ) {
-    if ( window.currentUser ) {
-        return window.currentUser;
-    }
-    return false;
-}
+    if ( window.currentUser ) { return window.currentUser; }
+    return false;  // no SSR user data available
 ```
 
 Source: `client/lib/user/shared-utils/initialize-current-user.js:11-50`
@@ -562,11 +521,8 @@ Back in `client/boot/common.js`, the `boot()` function (lines 315–338) creates
 
 ```js
 const configureReduxStore = ( currentUser, reduxStore ) => {
-    if ( currentUser && currentUser.ID ) {
-        reduxStore.dispatch( setCurrentUser( currentUser ) );
-    }
-    // ...
-};
+    if ( currentUser && currentUser.ID ) { reduxStore.dispatch( setCurrentUser( currentUser ) ); }
+    // ...additional store configuration
 ```
 
 Source: `client/boot/common.js:217-223`
@@ -580,13 +536,9 @@ Source: `client/state/current-user/actions.js:21-26`
 All components and middleware use `isUserLoggedIn(state)` to check login status:
 
 ```js
-export function getCurrentUserId( state ) {
-    return state.currentUser?.id;
-}
-
-export function isUserLoggedIn( state ) {
-    return getCurrentUserId( state ) !== null;
-}
+export function getCurrentUserId( state ) { return state.currentUser?.id; }
+// ...
+export function isUserLoggedIn( state ) { return getCurrentUserId( state ) !== null; }
 ```
 
 Source: `client/state/current-user/selectors.js:6-17`
@@ -616,21 +568,8 @@ For client-side re-authentication, `client/state/current-user/actions.js` lines 
 
 ```js
 export function fetchCurrentUser() {
-    return ( dispatch ) => {
-        // ...
-        fetchingUser = rawCurrentUserFetch()
-            .then( async ( user ) => {
-                const userData = filterUserObject( user );
-                const storedUserId = getStoredUserId();
-                if ( storedUserId != null && storedUserId !== userData.ID ) {
-                    await clearStore();
-                }
-                setStoredUserId( userData.ID );
-                dispatch( setCurrentUser( userData ) );
-            } )
-        // ...
-    };
-}
+    // ...thunk: rawCurrentUserFetch() → filterUserObject → clearStore (if user changed)
+    // → setStoredUserId(userData.ID) → dispatch(setCurrentUser(userData))
 ```
 
 Source: `client/state/current-user/actions.js:30-61`
