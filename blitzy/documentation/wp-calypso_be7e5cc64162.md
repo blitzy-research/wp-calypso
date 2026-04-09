@@ -504,7 +504,7 @@ flowchart TD
 
 ### Rationale
 
-Understanding *when* browser-like APIs become available during a test run is critical for diagnosing "X is not defined" errors. Jest has a well-defined lifecycle: configuration is read first, then `setupFiles` execute, then the test environment initializes, then `setupFilesAfterEnv` execute, and only then are test modules loaded. The timing of each stage determines what globals are available when.
+Understanding *when* browser-like APIs become available during a test run is critical for diagnosing "X is not defined" errors. Jest has a well-defined lifecycle: configuration is read first, then the test environment initializes, then `setupFiles` execute (inside the already-initialized environment), then `setupFilesAfterEnv` execute, and only then are test modules loaded. The timing of each stage determines what globals are available when.
 
 ### Jest Lifecycle Flowchart
 
@@ -516,8 +516,8 @@ flowchart TD
     classDef test fill:#f3e5f5,stroke:#4a148c
 
     S1["1. Jest reads config file\n(jest.config.js / jest-preset.js)"]:::config
-    S2["2. setupFiles execute\n• jest-canvas-mock (client, apps)"]:::setup
-    S3["3. Test Environment initializes\n• node: global, process, console\n• jsdom: + window, document, localStorage"]:::env
+    S2["2. Test Environment initializes\n• node: global, process, console\n• jsdom: + window, document, localStorage"]:::env
+    S3["3. setupFiles execute\n• jest-canvas-mock (client, apps)"]:::setup
     S4["4. setupFilesAfterEnv execute\n• global.matchMedia = jest.fn()\n• global.fetch = jest.fn()\n• global.ResizeObserver = polyfill\n• nock.disableNetConnect()\n• @testing-library/jest-dom loaded\n• etc."]:::setup
     S5["5. Test module loaded\n• import/require at file top\n• Module-level code executes\n• calypso-config window check HERE"]:::test
     S6["6. describe() blocks evaluated"]:::test
@@ -543,14 +543,14 @@ There is **no difference** in API availability between:
 
 All APIs are present at all three stages. The setup happens once per test file, before the file's own code runs.
 
-**The one important exception:** The `window` global depends on the test environment (step 3), **not** on `setupFilesAfterEnv` (step 4). The jsdom environment creates `window` at step 3. The `calypso-config` browser variant checks for `window` at module-load time (step 5). Since step 3 comes before step 5, `window` is available — but ONLY if the test environment is `jsdom`. There is no way for `setupFilesAfterEnv` to "fix" this, because `window` must be provided by the environment itself, not by a setup file (the `node` environment's `global` object is not the same as `window`).
+**The one important exception:** The `window` global depends on the test environment (step 2), **not** on `setupFilesAfterEnv` (step 4). The jsdom environment creates `window` at step 2. The `calypso-config` browser variant checks for `window` at module-load time (step 5). Since step 2 comes before step 5, `window` is available — but ONLY if the test environment is `jsdom`. There is no way for `setupFilesAfterEnv` to "fix" this, because `window` must be provided by the environment itself, not by a setup file (the `node` environment's `global` object is not the same as `window`).
 
 ### When Browser APIs Become Available
 
 | API | Available From | Provided By | Notes |
 |-----|---------------|-------------|-------|
-| Canvas mock | Step 2 (`setupFiles`) | `jest-canvas-mock` | Client and apps contexts only |
-| `window` / `document` | Step 3 (environment init) | `jest-environment-jsdom` | **Apps context only** |
+| `window` / `document` | Step 2 (environment init) | `jest-environment-jsdom` | **Apps context only** |
+| Canvas mock | Step 3 (`setupFiles`) | `jest-canvas-mock` | Client and apps contexts only |
 | `CSS.supports` mock | Step 4 (`setupFilesAfterEnv`) | Setup file | Client, apps, build-tools |
 | `TextEncoder` / `TextDecoder` | Step 4 (setup) / Step 1 (Node built-in) | `util` module / Node.js | Defensive fallback; already available in Node ≥22.9.0 |
 | `nock.disableNetConnect()` | Step 4 (`setupFilesAfterEnv`) | Setup file | Client, server, apps |
@@ -617,7 +617,7 @@ flowchart TD
 
 ### Root Cause 3: Only One Context Uses jsdom
 
-The apps context (`test/apps/jest-preset.js:7`) is the **only** context that sets `testEnvironment: 'jsdom'`. This provides `window`, `document`, `localStorage`, `sessionStorage`, `navigator`, and other browser DOM APIs at environment initialization time (step 3). All other contexts use the `node` environment, which provides only Node.js globals.
+The apps context (`test/apps/jest-preset.js:7`) is the **only** context that sets `testEnvironment: 'jsdom'`. This provides `window`, `document`, `localStorage`, `sessionStorage`, `navigator`, and other browser DOM APIs at environment initialization time (step 2). All other contexts use the `node` environment, which provides only Node.js globals.
 
 Individual test files in the packages context can opt into jsdom via the `@jest-environment jsdom` docblock (e.g., `packages/data-stores/src/onboard/test/utils.ts:1-3`), but this is a per-file override, not a context-wide setting.
 
