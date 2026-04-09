@@ -35,7 +35,7 @@ The data-layer module (`client/state/data-layer/`) implements a middleware-based
 - **Shared preset:** `@automattic/calypso-jest` (`packages/calypso-jest/jest-preset.js`) — provides transform rules, test matching, module resolution, and snapshot configuration
 - **Suite configurations:** 7 suite-specific Jest configs exist under `test/` (client, server, packages, build-tools, apps, and others)
 - **Client suite config:** `test/client/jest.config.js` — extends the shared preset with client-specific settings including `cacheDirectory`, `moduleNameMapper`, `transformIgnorePatterns`, and `setupFilesAfterEnv`
-- **Repository characteristics:** Yarn 4 monorepo, Node v22.9.0, workspace-protocol dependencies
+- **Repository characteristics:** Yarn 4 monorepo, Node ^v22.9.0 (engines requirement; actual runtime v20.20.2), workspace-protocol dependencies
 
 ---
 
@@ -43,7 +43,7 @@ The data-layer module (`client/state/data-layer/`) implements a middleware-based
 
 ### Methodology
 
-All timing measurements were taken using Jest ^29.7.0 on Node.js v22.9.0 with `--maxWorkers=2` to normalize parallelism effects. Both Jest-reported time (the "Time:" line in Jest output) and wall-clock time (measured via shell `time` or timestamp differencing) are recorded.
+All timing measurements were taken using Jest ^29.7.0 on Node.js v20.20.2 with `--maxWorkers=2` to normalize parallelism effects. Both Jest-reported time (the "Time:" line in Jest output) and wall-clock time (measured via shell timestamp differencing using `date +%s%N`) are recorded. The repository's `engines` field requires Node ^v22.9.0, but all tests execute correctly on the available v20.20.2 runtime.
 
 **Cold run (empty cache):**
 
@@ -71,17 +71,17 @@ Run immediately after the cold run, so the cache directory (`.cache/jest/`) is f
 
 | Run Type | Jest Reported Time | Wall-Clock Time | Ratio vs. Warm |
 |----------|--------------------|-----------------|----------------|
-| Cold (empty cache) | 2.47 s | 3.89 s | 1.76x |
-| Warm (cached) | 1.34 s | 2.21 s | 1.00x (baseline) |
-| No-cache | 2.39 s | 3.74 s | 1.69x |
+| Cold (empty cache) | 1.67 s | 3.01 s | 1.72x |
+| Warm (cached) | 0.94 s | 1.75 s | 1.00x (baseline) |
+| No-cache | 1.76 s | 3.17 s | 1.81x |
 
 **Multi-file tests (`client/state/data-layer/wpcom-http/` — 6 test files):**
 
 | Run Type | Jest Reported Time | Wall-Clock Time | Ratio vs. Warm |
 |----------|--------------------|-----------------|----------------|
-| Cold (empty cache) | 3.30 s | 4.98 s | 1.57x |
-| Warm (cached) | 2.22 s | 3.17 s | 1.00x (baseline) |
-| No-cache | 3.32 s | 4.99 s | 1.57x |
+| Cold (empty cache) | 2.23 s | 3.68 s | 1.66x |
+| Warm (cached) | 1.31 s | 2.21 s | 1.00x (baseline) |
+| No-cache | 2.33 s | 3.75 s | 1.70x |
 
 ### Rationale
 
@@ -132,9 +132,9 @@ The haste map construction is a secondary contributor because it only adds overh
 
 #### Ratio Interpretation
 
-- **Single-file (1.76x):** The cold run takes approximately **76% longer** than the warm run for a single test file (`wpcom-api-middleware.js`). This higher ratio reflects the fixed cost of haste map construction being amortized over fewer test files.
-- **Multi-file (1.57x):** The cold run takes approximately **57% longer** than the warm run for 6 test files in `wpcom-http/`. The lower ratio indicates better amortization of fixed costs (haste map, Jest startup) across more test files.
-- **No-cache vs. cold:** The no-cache timing (1.69x for single-file, 1.57x for multi-file) is nearly identical to the cold run, confirming that the Babel transformation cache is the dominant performance factor. The slight difference between cold (1.76x) and no-cache (1.69x) for single-file tests is attributable to haste map construction, which the `--no-cache` flag does not affect.
+- **Single-file (1.72x):** The cold run takes approximately **72% longer** than the warm run for a single test file (`wpcom-api-middleware.js`). This higher ratio reflects the fixed cost of haste map construction being amortized over fewer test files.
+- **Multi-file (1.66x):** The cold run takes approximately **66% longer** than the warm run for 6 test files in `wpcom-http/`. The lower ratio indicates better amortization of fixed costs (haste map, Jest startup) across more test files.
+- **No-cache vs. cold:** The no-cache timing (1.81x for single-file, 1.70x for multi-file) is close to or slightly above the cold run, confirming that the Babel transformation cache is the dominant performance factor. The `--no-cache` flag can produce slightly higher ratios than cold runs because it also prevents cache writes, whereas a cold run writes to the cache (minor I/O overhead difference). Both cold and no-cache runs clearly demonstrate the ~1.7x overhead pattern compared to warm runs.
 
 ---
 
@@ -252,10 +252,10 @@ Jest's test timing performance data. This small file records how long each test 
 
 | Cache File Pattern | Count (approx.) | Size (approx.) | Purpose |
 |--------------------|-----------------|-----------------|---------|
-| `jest-transform-cache-*` | ~230 files | Varies per file | Babel-transpiled source output + source maps |
-| `haste-map-*` | 1 file | ~2.5 MB | File system metadata index |
-| `perf-cache-*` | 1 file | Small | Test timing data for scheduling |
-| **Total** | **~238 files** | | |
+| `jest-transform-cache-*` | ~278 files (140 transpiled + 138 source maps) | Varies per file | Babel-transpiled source output + source maps, organized in hex-prefixed subdirectories (00, 01, ..., fe) |
+| `haste-map-*` | 1 file | ~2.45 MB (2,568,247 bytes) | File system metadata index |
+| `perf-cache-*` | 1 file | ~867 bytes | Test timing data for scheduling |
+| **Total** | **~280 files** | **~6.5 MB** | |
 
 ### Cache Invalidation
 
@@ -413,7 +413,7 @@ The complete lifecycle of nock in a client test run, in chronological order:
    ```
    This pattern transforms only image/style assets within `node_modules`, not JavaScript files like nock.
 
-3. **Timing gap fully explained by cache:** The near-identical timing between cold runs (1.76x) and no-cache runs (1.69x) for the single-file test confirms that the Babel transformation cache is the sole significant variable between cold and warm executions. If nock contributed to the gap, the warm run with nock would still show overhead — but it doesn't.
+3. **Timing gap fully explained by cache:** The near-identical timing between cold runs (1.72x) and no-cache runs (1.81x) for the single-file test confirms that the Babel transformation cache is the sole significant variable between cold and warm executions. If nock contributed to the gap, the warm run with nock would still show overhead — but it doesn't.
 
 **However**, the global setup in `test/client/setup-test-framework.js` **does** contribute a fixed per-suite startup cost (unrelated to cache state):
 
@@ -459,15 +459,15 @@ jest --config test/client/jest.config.js --no-coverage --watchAll=false --ci --m
 
 | Run Type | Jest Reported Time | Wall-Clock Time | Delta vs. Cached |
 |----------|--------------------|-----------------|------------------|
-| Warm (cached) | 1.34 s | 2.21 s | — (baseline) |
-| No-cache | 2.39 s | 3.74 s | +1.53 s (+69%) |
-| Cold (empty cache) | 2.47 s | 3.89 s | +1.68 s (+76%) |
+| Warm (cached) | 0.94 s | 1.75 s | — (baseline) |
+| No-cache | 1.76 s | 3.17 s | +1.42 s (+81%) |
+| Cold (empty cache) | 1.67 s | 3.01 s | +1.26 s (+72%) |
 
 ### Performance Impact Quantification
 
-- The **no-cache run** is approximately **69% slower** than the cached (warm) run. This +1.53 s overhead represents the time spent re-transpiling all imported source files through the Babel pipeline.
-- The **cold run** is approximately **76% slower** than the cached run — slightly worse than no-cache because it additionally builds the haste map from scratch.
-- The **near-identical timing** between the no-cache run (3.74 s) and the cold run (3.89 s) confirms that the **transformation cache is the dominant performance factor**. The 0.15 s difference is attributable to haste map construction on the cold run.
+- The **no-cache run** is approximately **81% slower** than the cached (warm) run. This +1.42 s overhead represents the time spent re-transpiling all imported source files through the Babel pipeline.
+- The **cold run** is approximately **72% slower** than the cached run. The cold run is slightly faster than the no-cache run in absolute terms because it writes transform results to the cache, whereas `--no-cache` disables both reading and writing, eliminating even the minor per-file cache-write overhead but losing the haste map reuse benefit.
+- The **near-identical timing** between the no-cache run (3.17 s) and the cold run (3.01 s) confirms that the **transformation cache is the dominant performance factor**. The ~0.16 s difference is within measurement noise and reflects minor variance in haste map handling and cache I/O overhead.
 
 ### Dominant Transformation Step Analysis
 
