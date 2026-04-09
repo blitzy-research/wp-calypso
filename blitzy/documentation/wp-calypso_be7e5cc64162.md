@@ -22,7 +22,7 @@ Every claim in this document cites a specific source file and line number. All c
 - [1. Development Server Verification](#1-development-server-verification)
 - [2. Test Environment Anatomy](#2-test-environment-anatomy)
   - [2.1 How Jest Boots the Test Environment](#21-how-jest-boots-the-test-environment-jestconfigjs-chain)
-  - [2.2 Shared Preset: @automattic/calypso-jest](#22-shared-preset-automaticcalypso-jest)
+  - [2.2 Shared Preset: @automattic/calypso-jest](#22-shared-preset-automatticcalypso-jest)
   - [2.3 Client Test Setup vs. Server Test Setup vs. Packages Setup](#23-client-test-setup-vs-server-test-setup-vs-packages-setup)
   - [2.4 Complete Catalog: Test-Only Globals, Polyfills, and Environment Variables](#24-complete-catalog-test-only-globals-polyfills-and-environment-variables)
 - [3. Network Isolation During Tests](#3-network-isolation-during-tests)
@@ -138,7 +138,7 @@ Note that `test-client` sets `TZ=UTC` to ensure deterministic date/time formatti
 
 Each test suite has its own Jest configuration that extends a shared preset. Here is the boot chain for each:
 
-#### Client Tests (`test/client/jest.config.js` — 27 lines)
+#### Client Tests (`test/client/jest.config.js` — 26 lines)
 
 ```js
 const path = require( 'path' );
@@ -169,7 +169,7 @@ module.exports = {
 };
 ```
 
-> Source: `test/client/jest.config.js:1-27`
+> Source: `test/client/jest.config.js:1-26`
 
 Key aspects:
 - **Line 5:** Spreads the shared `@automattic/calypso-jest` preset as the base
@@ -198,7 +198,7 @@ module.exports = {
 };
 ```
 
-> Source: `test/server/jest.config.js:1-15`
+> Source: `test/server/jest.config.js:1-14`
 
 Key differences from client:
 - **Line 7:** `rootDir` points to `../../client/server` — scoped to server code only
@@ -208,7 +208,7 @@ Key differences from client:
 - **No `jest-canvas-mock`** — not needed in Node.js
 - **No `google` or `__i18n_text_domain__` globals** — not applicable to server code
 
-#### Packages Tests (`test/packages/jest-preset.js` — 16 lines)
+#### Packages Tests (`test/packages/jest-preset.js` — 15 lines)
 
 ```js
 const path = require( 'path' );
@@ -228,7 +228,7 @@ module.exports = {
 };
 ```
 
-> Source: `test/packages/jest-preset.js:1-16`
+> Source: `test/packages/jest-preset.js:1-15`
 
 Key differences:
 - **Line 12:** Injects `__i18n_text_domain__` (like client), but no `google` global
@@ -1171,7 +1171,7 @@ disabledFeatures.forEach( function ( feature ) {
 | **Feature flags** | 178 flags (many dev-only enabled) | 101 flags (conservative subset) |
 | **Network access** | Full HTTP/HTTPS | Blocked by `nock.disableNetConnect()` |
 | **Browser APIs** | Real browser (or SSR) | Mocked globals (`fetch`, `matchMedia`, `CSS`, etc.) |
-| **DOM environment** | Real browser DOM (client) / Node.js (server) | jsdom (client/apps) or Node.js (server/packages) |
+| **DOM environment** | Real browser DOM (client) / Node.js (server) | jsdom (apps globally) / node with per-file `@jest-environment jsdom` opt-in (client) / node (server/packages) |
 | **Module resolution** | Webpack with aliases | Jest `moduleNameMapper` + `enhanced-resolve` |
 | **Config import path** | `@automattic/calypso-config` → npm package → `window.configData` | `@automattic/calypso-config` → redirected to `client/server/config/index.js` → `parser.js` → `config/test.json` |
 | **Canvas API** | Real browser Canvas | `jest-canvas-mock` stubs |
