@@ -213,16 +213,16 @@ The following table compares 13 browser-like APIs across all 5 directly probed e
 | `matchMedia` | ✓ (mock) | ✗ | ✓ (mock) | ✓ (mock) | ✗ |
 | `ResizeObserver` | ✓ (polyfill) | ✗ | ✓ (polyfill) | ✓ (polyfill) | ✗ |
 | `CSS.supports` | ✓ (mock) | ✗ | ✗ | ✓ (mock) | ✓ (mock) |
-| `fetch` | ✓ (jest.fn mock) | ✗ | ✗ | ✓ (jest.fn mock) | ✗ |
+| `fetch` | ✓ (jest.fn mock) | ✓ (Node built-in) | ✓ (Node built-in) | ✓ (jest.fn mock) | ✓ (Node built-in) |
 | `Worker` | ✓ (worker_threads) | ✗ | ✗ | ✓ (worker_threads) | ✗ |
 | `TextEncoder` | ✓ (util) | ✓ (Node built-in) | ✓ (Node built-in) | ✓ (util) | ✓ (Node built-in) |
-| `ReadableStream` | ✓ (stream/web) | ✗ | ✗ | ✓ (stream/web) | ✗ |
+| `ReadableStream` | ✓ (stream/web) | ✓ (Node built-in) | ✓ (Node built-in) | ✓ (stream/web) | ✓ (Node built-in) |
 | `structuredClone` | ✓ (fallback) | ✓ (Node built-in) | ✓ (Node built-in) | ✓ (fallback) | ✓ (Node built-in) |
-| `crypto.randomUUID` | ✓ (Node crypto) | ✗ | ✓ (`'fake-uuid'`) | ✓ (Node crypto) | ✗ |
+| `crypto.randomUUID` | ✓ (Node crypto) | ✓ (Node built-in) | ✓ (overridden to `'fake-uuid'`) | ✓ (Node crypto) | ✓ (Node built-in) |
 | `__i18n_text_domain__` | ✓ (`'default'`) | ✗ | ✓ (`'default'`) | ✗ | ✗ |
-| `crypto.subtle` | ✓ (Node crypto) | ✗ | ✗ | ✓ (Node crypto) | ✗ |
+| `crypto.subtle` | ✓ (Node crypto) | ✓ (Node built-in) | ✓ (Node built-in) | ✓ (Node crypto) | ✓ (Node built-in) |
 
-> **Important note on `TextEncoder` and `structuredClone`:** With Node.js ≥22.9.0 (required by `package.json:57`), both `TextEncoder` and `structuredClone` are available as Node.js built-in globals in **all** contexts. The setup files in `test/client/setup-test-framework.js` still assign them (lines 25–26 for `TextEncoder`, lines 71–73 for `structuredClone`), but this is a defensive fallback — they are already present from the Node.js runtime itself.
+> **Important note on Node.js built-in globals:** With Node.js ≥22.9.0 (required by `package.json:57`), the following six APIs are available as Node.js built-in globals in **all** contexts: `TextEncoder` (stable since Node 11), `structuredClone` (stable since Node 17), `fetch` (stable since Node 21), `ReadableStream` (stable since Node 18), `crypto.randomUUID` (stable since Node 19), and `crypto.subtle` (available since Node 15). Some setup files re-assign or override these globals: `test/client/setup-test-framework.js` overrides `fetch` with a `jest.fn()` mock (line 36), re-assigns `TextEncoder` (lines 25–26), `ReadableStream`/`TransformStream` (lines 66–67), `structuredClone` (lines 71–73), `crypto.randomUUID` (line 52), and `crypto.subtle` (lines 76–78). `test/packages/setup.js` overrides `crypto.randomUUID` to return the static string `'fake-uuid'` (line 3). In contexts without these overrides (Server, Build-Tools, and partially Packages), the Node.js built-in implementations are available directly.
 
 ### What Provides Each API
 
@@ -252,13 +252,13 @@ Each browser-like API is provided by a specific setup file. Here is the exact pr
 
 The five contexts form a clear hierarchy of API richness, from most restrictive to most capable:
 
-1. **Build-Tools** — Most minimal. Only `CSS.supports` mock from `packages/calypso-jest/src/setup.js` (5 lines total). No `matchMedia`, no `fetch`, no `ResizeObserver`, no nock, no `@testing-library/jest-dom`.
+1. **Build-Tools** — Most minimal. Only `CSS.supports` mock from `packages/calypso-jest/src/setup.js` (5 lines total). No `matchMedia`, no `ResizeObserver`, no `Worker`, no nock, no `@testing-library/jest-dom`. Node.js built-ins (`fetch`, `ReadableStream`, `crypto.randomUUID`, `crypto.subtle`) are available from the runtime.
 
-2. **Server** — Restrictive. Provides nock (network isolation) and a minimal `wpcom-proxy-request` mock (`{ __esModule: true }` only — Source: `test/server/setup-test-framework.js:21-23`). No browser API mocks of any kind. Total setup: 24 lines.
+2. **Server** — Restrictive. Provides nock (network isolation) and a minimal `wpcom-proxy-request` mock (`{ __esModule: true }` only — Source: `test/server/setup-test-framework.js:21-23`). No browser API mocks of any kind, though Node.js built-ins (`fetch`, `ReadableStream`, `crypto.randomUUID`, `crypto.subtle`) are available from the runtime. Total setup: 23 lines.
 
-3. **Packages** — Middle tier. Provides `@testing-library/jest-dom`, `crypto.randomUUID` (returning the static string `'fake-uuid'`, not real UUIDs), `ResizeObserver` polyfill, and `matchMedia` mock. No `fetch`, no `Worker`, no `ReadableStream`, no `CSS.supports`, no nock. Total setup: 17 lines (Source: `test/packages/setup.js`).
+3. **Packages** — Middle tier. Provides `@testing-library/jest-dom`, `crypto.randomUUID` (overridden to return the static string `'fake-uuid'`, not the real Node built-in UUIDs), `ResizeObserver` polyfill, and `matchMedia` mock. No `Worker`, no `CSS.supports`, no nock. Node.js built-ins (`fetch`, `ReadableStream`, `crypto.subtle`) are available from the runtime. Total setup: 16 lines (Source: `test/packages/setup.js`).
 
-4. **Client** — Rich. All 13 APIs except `window`/`document`. Provides nock, `@testing-library/jest-dom`, full `wpcom-proxy-request` mock (with `canAccessWpcomApis`, `reloadProxy`, `requestAllBlogsAccess` — Source: `test/client/setup-test-framework.js:44-49`), and all browser API mocks/polyfills. Total setup: 80 lines.
+4. **Client** — Rich. All 13 APIs except `window`/`document`. Provides nock, `@testing-library/jest-dom`, full `wpcom-proxy-request` mock (with `canAccessWpcomApis`, `reloadProxy`, `requestAllBlogsAccess` — Source: `test/client/setup-test-framework.js:44-49`), and all browser API mocks/polyfills (some overriding Node.js built-ins like `fetch` with `jest.fn()` mocks). Total setup: 79 lines.
 
 5. **Apps** — Richest. Gets everything from client setup **plus** real `window`/`document`/`localStorage`/`sessionStorage` from jsdom. This is the only context where the browser variant of `@automattic/calypso-config` can load without mocking, because `window` exists.
 
@@ -452,7 +452,7 @@ This means:
 |-----------------|--------|--------|----------|------|-------------|-------------|
 | `@automattic/calypso-config` | `client/server/config/index.js` | `client/server/config/index.js` | `packages/calypso-config/src/index.ts` | `packages/calypso-config/src/index.ts` | `packages/calypso-config/src/index.ts` | `client/server/config/index.js` |
 | `@automattic/calypso-analytics` | `packages/calypso-analytics/src/index.ts` | `packages/calypso-analytics/src/index.ts` | `packages/calypso-analytics/src/index.ts` | `packages/calypso-analytics/src/index.ts` | `packages/calypso-analytics/src/index.ts` | `packages/calypso-analytics/src/index.ts` |
-| `i18n-calypso` | `packages/i18n-calypso/src/index.js` | `packages/i18n-calypso/src/index.js` | `packages/i18n-calypso/src/index.js` | `packages/i18n-calypso/src/index.js` | `packages/i18n-calypso/src/index.js` | `packages/i18n-calypso/src/index.js` |
+| `i18n-calypso` | `packages/i18n-calypso/src/index.ts` | `packages/i18n-calypso/src/index.ts` | `packages/i18n-calypso/src/index.ts` | `packages/i18n-calypso/src/index.ts` | `packages/i18n-calypso/src/index.ts` | `packages/i18n-calypso/src/index.ts` |
 
 > **Key takeaway:** `@automattic/calypso-config` is the **ONLY** workspace package that has a `moduleNameMapper` override in any context. All other workspace packages always resolve via `calypso:src` to their untranspiled source, regardless of which test context runs.
 
@@ -555,13 +555,13 @@ All APIs are present at all three stages. The setup happens once per test file, 
 | `TextEncoder` / `TextDecoder` | Step 4 (setup) / Step 1 (Node built-in) | `util` module / Node.js | Defensive fallback; already available in Node ≥22.9.0 |
 | `nock.disableNetConnect()` | Step 4 (`setupFilesAfterEnv`) | Setup file | Client, server, apps |
 | `ResizeObserver` polyfill | Step 4 (`setupFilesAfterEnv`) | `resize-observer-polyfill` | Client, packages, apps |
-| `fetch` mock | Step 4 (`setupFilesAfterEnv`) | `jest.fn()` | Client, apps |
+| `fetch` | Step 1 (Node built-in) / Step 4 (mock override in client, apps) | Node.js / `jest.fn()` | All contexts (Node built-in); client and apps override with `jest.fn()` mock |
 | `matchMedia` mock | Step 4 (`setupFilesAfterEnv`) | `jest.fn()` | Client, packages, apps |
-| `ReadableStream` / `TransformStream` | Step 4 (`setupFilesAfterEnv`) | `node:stream/web` | Client, apps |
+| `ReadableStream` / `TransformStream` | Step 1 (Node built-in) / Step 4 (re-assigned in client, apps) | Node.js / `node:stream/web` | All contexts (Node built-in); client and apps re-assign from `node:stream/web` |
 | `Worker` | Step 4 (`setupFilesAfterEnv`) | `worker_threads` | Client, apps |
 | `structuredClone` | Step 4 (setup) / Step 1 (Node built-in) | JSON fallback / Node.js | Defensive fallback; already available in Node ≥22.9.0 |
-| `crypto.randomUUID` | Step 4 (`setupFilesAfterEnv`) | Node `crypto` / `'fake-uuid'` | Client uses real impl; packages returns static string |
-| `crypto.subtle` | Step 4 (`setupFilesAfterEnv`) | Node `crypto` | Client, apps |
+| `crypto.randomUUID` | Step 1 (Node built-in) / Step 4 (override in client, packages) | Node.js / Node `crypto` / `'fake-uuid'` | All contexts (Node built-in); client re-assigns from Node crypto; packages overrides to static `'fake-uuid'` |
+| `crypto.subtle` | Step 1 (Node built-in) / Step 4 (re-assigned in client, apps) | Node.js / Node `crypto` | All contexts (Node built-in); client and apps re-assign from Node crypto |
 
 ---
 
@@ -584,9 +584,9 @@ Different contexts load different setup files, each providing a different set of
 
 | Setup File | Contexts | API Surface | Lines |
 |-----------|----------|-------------|-------|
-| `test/client/setup-test-framework.js` | Client, **Apps** | Richest: all 13 APIs, nock, jest-dom, wpcom-proxy-request (full) | 80 |
-| `test/server/setup-test-framework.js` | Server | Minimal: nock + wpcom-proxy-request mock (`__esModule: true` only) | 24 |
-| `test/packages/setup.js` | Packages | Medium: jest-dom, `crypto.randomUUID` (`'fake-uuid'`), `ResizeObserver`, `matchMedia` | 17 |
+| `test/client/setup-test-framework.js` | Client, **Apps** | Richest: all 13 APIs, nock, jest-dom, wpcom-proxy-request (full) | 79 |
+| `test/server/setup-test-framework.js` | Server | Minimal: nock + wpcom-proxy-request mock (`__esModule: true` only) | 23 |
+| `test/packages/setup.js` | Packages | Medium: jest-dom, `crypto.randomUUID` (`'fake-uuid'`), `ResizeObserver`, `matchMedia` | 16 |
 | `packages/calypso-jest/src/setup.js` | **Build-Tools** | CSS.supports only | 5 |
 
 ```mermaid
@@ -594,9 +594,9 @@ flowchart TD
     subgraph "Setup File Inheritance"
         BASE["packages/calypso-jest/jest-preset.js\n(base preset)"]
         BASE_SETUP["packages/calypso-jest/src/setup.js\n• CSS.supports mock (5 lines)"]
-        CLIENT_SETUP["test/client/setup-test-framework.js\n• @testing-library/jest-dom\n• nock, fetch, matchMedia, ResizeObserver\n• Worker, ReadableStream, crypto.*\n• wpcom-proxy-request (full mock)\n(80 lines)"]
-        SERVER_SETUP["test/server/setup-test-framework.js\n• nock\n• wpcom-proxy-request (minimal)\n(24 lines)"]
-        PKG_SETUP["test/packages/setup.js\n• @testing-library/jest-dom\n• crypto.randomUUID ('fake-uuid')\n• ResizeObserver, matchMedia\n(17 lines)"]
+        CLIENT_SETUP["test/client/setup-test-framework.js\n• @testing-library/jest-dom\n• nock, fetch, matchMedia, ResizeObserver\n• Worker, ReadableStream, crypto.*\n• wpcom-proxy-request (full mock)\n(79 lines)"]
+        SERVER_SETUP["test/server/setup-test-framework.js\n• nock\n• wpcom-proxy-request (minimal)\n(23 lines)"]
+        PKG_SETUP["test/packages/setup.js\n• @testing-library/jest-dom\n• crypto.randomUUID ('fake-uuid')\n• ResizeObserver, matchMedia\n(16 lines)"]
 
         CLIENT["Client Context\nsetupFilesAfterEnv → client setup"]
         SERVER["Server Context\nsetupFilesAfterEnv → server setup"]
