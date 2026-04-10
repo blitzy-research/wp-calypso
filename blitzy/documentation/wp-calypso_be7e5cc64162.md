@@ -194,8 +194,8 @@ The `streamApis` configuration table in `client/state/data-layer/wpcom/read/stre
 Defined at lines 160–163:
 
 ```js
-export const INITIAL_FETCH = 4;  // first page
 export const PER_FETCH = 7;      // subsequent pages
+export const INITIAL_FETCH = 4;  // first page
 // ...PER_POLL = 40 (polling), PER_GAP = 40 (gap-filling)
 ```
 
@@ -470,7 +470,7 @@ Source: `client/reader/index.ts:39-62`, `client/reader/controller.js:35-101`, `c
 
 ### Direct Answer
 
-Login detection spans four modules and checks four distinct storage mechanisms. The canonical login check is `isUserLoggedIn(state)` which verifies `state.currentUser?.id !== null` in the Redux store (note the optional chaining `?.` on `currentUser` — if the `currentUser` slice is `undefined`, the expression safely evaluates to `null !== null` → `false`). The complexity lies in *how* that state gets populated — through a multi-step initialization pipeline that checks cookies (server-side), `window.currentUser` (SSR bootstrap), localStorage (`wpcom_user_id`), and IndexedDB (persisted Redux state).
+Login detection spans four modules and checks four distinct storage mechanisms. The canonical login check is `isUserLoggedIn(state)` which verifies `state.currentUser?.id !== null` in the Redux store. In practice, the Redux store always initializes `currentUser` with `{ id: null }`, so when no user is logged in, the selector correctly evaluates `null !== null` → `false`. Note: if the `currentUser` slice were truly `undefined`, optional chaining (`?.`) would return `undefined`, and `undefined !== null` would be `true` — but this edge case does not arise in normal operation because the reducer always provides an initialized state. The complexity lies in *how* that state gets populated — through a multi-step initialization pipeline that checks cookies (server-side), `window.currentUser` (SSR bootstrap), localStorage (`wpcom_user_id`), and IndexedDB (persisted Redux state).
 
 ### Storage Mechanisms
 
