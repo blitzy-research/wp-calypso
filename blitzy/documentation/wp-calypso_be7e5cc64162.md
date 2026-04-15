@@ -126,7 +126,7 @@ wp-calypso maintains seven distinct test suites, each with its own Jest configur
 | Integration | `test/integration/jest.config.js` | node (explicitly set, line 7) | `../..` | **No** (standalone config) |
 | E2E | `test/e2e/` | Playwright (separate from Jest) | — | N/A |
 
-> **Note on the Packages suite**: The `test-packages` script in `package.json` (line 125) points to `test/packages/jest.config.js` — **not** the preset. That config file uses Jest's `projects` feature (`projects: ['<rootDir>/packages/*/jest.config.js']`) to discover per-package Jest configs. Individual packages then reference `test/packages/jest-preset.js` as their preset. The table above lists the preset because it defines the shared configuration (environment, globals, setup files) that all package-level configs inherit.
+> **Note on the Packages suite**: The `test-packages` script in `package.json` (line 129) points to `test/packages/jest.config.js` — **not** the preset. That config file uses Jest's `projects` feature (`projects: ['<rootDir>/packages/*/jest.config.js']`) to discover per-package Jest configs. Individual packages then reference `test/packages/jest-preset.js` as their preset. The table above lists the preset because it defines the shared configuration (environment, globals, setup files) that all package-level configs inherit.
 
 > **Note on the Client suite `testEnvironmentOptions.url`**: The client config sets `testEnvironmentOptions: { url: 'https://example.com' }` (line 17–18). This is a jsdom-specific option that configures the URL for test files that opt into jsdom via `@jest-environment jsdom` docblocks. It does **not** activate jsdom as the default environment — the default remains `node` (inherited from the base preset).
 
