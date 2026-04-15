@@ -18,8 +18,8 @@ This document is a comprehensive, evidence-based onboarding guide to the **wp-ca
    - [3.2 Module-Level Mocks](#32-module-level-mocks)
    - [3.3 Comparison: Test vs. Development Runtime](#33-comparison-test-vs-development-runtime)
 4. [Network Request Interception During Tests](#4-network-request-interception-during-tests)
-   - [4.1 nock.disableNetConnect() — Global Network Isolation](#41-nockdisablenetconnect--global-network-isolation)
-   - [4.2 The useNock Helper — Interceptor Lifecycle Management](#42-the-usenock-helper--interceptor-lifecycle-management)
+   - [4.1 nock.disableNetConnect() — Global Network Isolation](#41-nock-disablenetconnect-global-network-isolation)
+   - [4.2 The useNock Helper — Interceptor Lifecycle Management](#42-the-usenock-helper-interceptor-lifecycle-management)
    - [4.3 What Happens When an Unintercepted Request Is Made](#43-what-happens-when-an-unintercepted-request-is-made)
 5. [End-to-End Mock Tracing of an API Call](#5-end-to-end-mock-tracing-of-an-api-call)
    - [5.1 The Test Setup](#51-the-test-setup)
@@ -118,13 +118,17 @@ wp-calypso maintains seven distinct test suites, each with its own Jest configur
 
 | Suite | Config File | Test Environment | rootDir | Spreads Base Preset? |
 |-------|------------|-----------------|---------|---------------------|
-| Client | `test/client/jest.config.js` | jsdom (via `testEnvironmentOptions.url`) | `../../client` | Yes (`...base`) |
+| Client | `test/client/jest.config.js` | node (inherited from base) | `../../client` | Yes (`...base`) |
 | Server | `test/server/jest.config.js` | node (inherited from base) | `../../client/server` | Yes (`...base`) |
-| Packages | `test/packages/jest-preset.js` | node (inherited from base) | varies per package | Yes (`...base`) |
+| Packages | `test/packages/jest-preset.js` (preset) | node (inherited from base) | varies per package | Yes (`...base`) |
 | Apps | `test/apps/jest-preset.js` | jsdom (explicitly set, line 7) | varies per app | Yes (`...base`) |
 | Build-tools | `test/build-tools/jest.config.js` | node (inherited from base) | `../../build-tools` | Yes (`...base`) |
 | Integration | `test/integration/jest.config.js` | node (explicitly set, line 7) | `../..` | **No** (standalone config) |
 | E2E | `test/e2e/` | Playwright (separate from Jest) | — | N/A |
+
+> **Note on the Packages suite**: The `test-packages` script in `package.json` (line 125) points to `test/packages/jest.config.js` — **not** the preset. That config file uses Jest's `projects` feature (`projects: ['<rootDir>/packages/*/jest.config.js']`) to discover per-package Jest configs. Individual packages then reference `test/packages/jest-preset.js` as their preset. The table above lists the preset because it defines the shared configuration (environment, globals, setup files) that all package-level configs inherit.
+
+> **Note on the Client suite `testEnvironmentOptions.url`**: The client config sets `testEnvironmentOptions: { url: 'https://example.com' }` (line 17–18). This is a jsdom-specific option that configures the URL for test files that opt into jsdom via `@jest-environment jsdom` docblocks. It does **not** activate jsdom as the default environment — the default remains `node` (inherited from the base preset).
 
 ### 2.2 Shared Base Preset
 
@@ -157,7 +161,7 @@ Key configuration points:
 |----------|-------|---------|
 | `resolver` | `./src/module-resolver.js` | Custom `enhanced-resolve` based resolver with `calypso:src` field priority |
 | `setupFilesAfterEnv` | `[ ./src/setup.js ]` | Minimal shared setup (installs `global.CSS.supports` mock) |
-| `testEnvironment` | `'node'` | Default environment; overridden by client and apps suites |
+| `testEnvironment` | `'node'` | Default environment; overridden by apps suite (to jsdom). The client suite inherits node and manually installs browser-like globals. |
 | `testMatch` | `['<rootDir>/**/test/*.[jt]s?(x)', ...]` | Auto-discovers tests in `test/` subdirectories |
 | `transform` | babel-jest with `rootMode: 'upward'` | Transpiles source using root-level Babel config; transforms image/style assets to empty modules |
 | `testPathIgnorePatterns` | `[...defaults, '/dist/']` | Excludes built output from test discovery |
@@ -180,7 +184,8 @@ global.CSS = {
 Here is the complete setup file chain for each suite:
 
 **Client suite** (`test/client/jest.config.js`):
-1. `setupFiles: [ 'jest-canvas-mock' ]` (line 20) — Canvas API polyfill for jsdom
+The client suite runs in the **node** environment (inherited from the base preset), not jsdom. Browser-like globals (`fetch`, `matchMedia`, `ResizeObserver`, etc.) are manually installed by the setup file rather than provided by a jsdom environment. Individual test files can opt into jsdom via `@jest-environment jsdom` docblocks when they need a full DOM environment.
+1. `setupFiles: [ 'jest-canvas-mock' ]` (line 20) — Canvas API polyfill, primarily useful for test files that opt into the jsdom environment
 2. `setupFilesAfterEnv: [ '<rootDir>/../test/client/setup-test-framework.js' ]` (line 21) — Installs ALL test-only globals/polyfills, nock network isolation, and `wpcom-proxy-request` mock. This **replaces** the base preset's `setupFilesAfterEnv`, so `packages/calypso-jest/src/setup.js` does NOT run. However, `test/client/setup-test-framework.js` independently re-installs `global.CSS = { supports: jest.fn() }` (lines 30–32).
 
 **Server suite** (`test/server/jest.config.js`):
@@ -382,6 +387,8 @@ This extends Jest's `expect` with custom DOM matchers like `toBeInTheDocument()`
 
 ## 4. Network Request Interception During Tests
 
+<a id="41-nock-disablenetconnect-global-network-isolation"></a>
+
 ### 4.1 nock.disableNetConnect() — Global Network Isolation
 
 Network isolation is the first line of defense ensuring tests never make real HTTP calls. It is established in the setup files for both client and server suites.
@@ -441,6 +448,8 @@ afterAll( () => {
 **Important exception**: The **Integration suite** (`test/integration/jest.config.js`) does NOT load any setup file that calls `nock.disableNetConnect()`. Its config is standalone (no `...base` spread) and has no `setupFilesAfterEnv`. This means integration tests **can make real network requests**, which is by design. As stated in `docs/testing/testing-overview.md` (line 60):
 
 > "They run daily on continuous integration (TeamCity), because they can use network connection or memory intensive processing and therefore can have longer runtime."
+
+<a id="42-the-usenock-helper-interceptor-lifecycle-management"></a>
 
 ### 4.2 The useNock Helper — Interceptor Lifecycle Management
 
@@ -564,7 +573,7 @@ const businessPlan = {
 
 **Step 4: nock interceptor registration** (lines 44–54 via `useNock`)
 
-As shown in [Section 4.2](#42-the-usenock-helper--interceptor-lifecycle-management), three interceptors are registered on `https://public-api.wordpress.com:443` for `GET /rest/v1.1/products`.
+As shown in [Section 4.2](#42-the-usenock-helper-interceptor-lifecycle-management), three interceptors are registered on `https://public-api.wordpress.com:443` for `GET /rest/v1.1/products`.
 
 ### 5.2 The Request Flow (Success Path)
 
@@ -899,9 +908,11 @@ const disabledFeatures = opts.disabledFeatures ? opts.disabledFeatures.split( ',
 if ( data.hasOwnProperty( 'features' ) ) {
     enabledFeatures.forEach( function ( feature ) {
         data.features[ feature ] = true;
+        // debug logging omitted
     } );
     disabledFeatures.forEach( function ( feature ) {
         data.features[ feature ] = false;
+        // debug logging omitted
     } );
 }
 ```
