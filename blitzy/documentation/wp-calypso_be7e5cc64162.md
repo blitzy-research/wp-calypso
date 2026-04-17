@@ -158,6 +158,17 @@ flowchart TD
     JestConfig -->|"remaps import"| ServerConfig
     ServerConfig -->|"NODE_ENV=test"| Parser
     Parser --> SharedJSON
+    Parser --> TestJSON
+    Parser --> CreateConfig
+
+    SSRRender -->|"loads config"| DevJSON
+    SSRRender -->|"injects into"| WindowConfig
+    BrowserConfig -->|"reads"| WindowConfig
+```
+
+The diagram highlights why the two environments never converge: the test path terminates in `createConfig(serverData)` inside the Node-side loader, and the dev path terminates in the browser-side `packages/calypso-config/src/index.ts` reading `window.configData`. At `packages/calypso-config/src/index.ts` lines 17–19, the browser module throws `'Trying to initialize the configuration outside of a browser context.'` when `typeof window === 'undefined'` — which is why `test/client/jest.config.js` line 11 remaps the import to the Node-side loader instead.
+
+---
 
 ## 3. Test-Only Globals and Polyfills Inventory
 
@@ -302,18 +313,6 @@ That is **14 distinct `global.*` runtime assignments plus 2 Jest config globals 
 
 ---
 
-    Parser --> TestJSON
-    Parser --> CreateConfig
-
-    SSRRender -->|"loads config"| DevJSON
-    SSRRender -->|"injects into"| WindowConfig
-    BrowserConfig -->|"reads"| WindowConfig
-```
-
-The diagram highlights why the two environments never converge: the test path terminates in `createConfig(serverData)` inside the Node-side loader, and the dev path terminates in the browser-side `packages/calypso-config/src/index.ts` reading `window.configData`. At `packages/calypso-config/src/index.ts` lines 17–19, the browser module throws `'Trying to initialize the configuration outside of a browser context.'` when `typeof window === 'undefined'` — which is why `test/client/jest.config.js` line 11 remaps the import to the Node-side loader instead.
-
----
-
 ## 4. Network Request Interception Analysis
 
 The client test environment blocks outbound HTTP at three layers. Each layer operates independently, so a test that accidentally bypasses one layer is usually caught by another. The three layers are: `nock.disableNetConnect()` at the Node.js `http`/`https` module boundary, the `global.fetch` mock at the Fetch API boundary, and the `jest.mock('wpcom-proxy-request', ...)` hoist that replaces the browser-only proxy transport.
@@ -426,7 +425,7 @@ When test code invokes a thunk that calls `wpcom.site(123).postsList()` without 
 1. The Node variant of `wpcom` (selected because module resolution excludes `browser` from `conditionNames`) invokes `wpcom-xhr-request`.
 2. `wpcom-xhr-request` opens an HTTPS connection via Node's `https.request`.
 3. Nock's monkey-patch intercepts the request, finds no matching interceptor, and throws `NetConnectNotAllowedError`.
-4. The error propagates up the promise chain in `client/state/posts/actions/request-posts.js` into the `.catch()` at line 45, which dispatches `{ type: POSTS_REQUEST_FAILURE, siteId, query, error }`.
+4. The error propagates up the promise chain in `client/state/posts/actions/request-posts.js` into the `.catch()` handler at lines 39–46, which dispatches `{ type: POSTS_REQUEST_FAILURE, siteId, query, error }`.
 5. The test assertion then either expects the failure action or fails with the raw error stack.
 
 ### 4.8 Server Test Nock Setup
