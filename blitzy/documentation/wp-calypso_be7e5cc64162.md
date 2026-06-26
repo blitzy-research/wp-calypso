@@ -224,7 +224,7 @@ This file (registered at `test/client/jest.config.js:L21`) is the main injection
 | `global.CSS = { supports: jest.fn() }`             | `@wordpress/components` calls `CSS.supports`       | `:L30-L32`             |
 | `global.ResizeObserver`                            | `resize-observer-polyfill`                         | `:L34`                 |
 | `global.fetch = jest.fn(...)`                      | mock resolving `{ json: () => Promise.resolve() }` | `:L36-L40`             |
-| `jest.mock('wpcom-proxy-request', …)`              | 4-fn mock (accesses `document`)                    | `:L44-L49`             |
+| `jest.mock('wpcom-proxy-request', …)`              | 3-fn mock (+ `__esModule`; accesses `document`)    | `:L44-L49`             |
 | `global.crypto.randomUUID`                         | delegates to Node's `crypto.randomUUID()`          | `:L52`                 |
 | `global.matchMedia = jest.fn(...)`                 | media-query stub (`matches:false`, listeners)      | `:L54-L63`             |
 | `global.ReadableStream` / `global.TransformStream` | for `@wp-playground/client`                        | `:L66-L67`             |
@@ -315,7 +315,7 @@ Error message: Nock: Disallowed net connect for "public-api.wordpress.com:443/re
 
 **`fetch` is independently mocked.** Even though nock intercepts `http`/`https`, `global.fetch` is a jest mock resolving empty JSON (`test/client/setup-test-framework.js:L36-L40`), so `fetch`-based code is stubbed regardless of nock.
 
-**Server also mocks the proxy transport.** `jest.mock('wpcom-proxy-request', () => ({ __esModule: true }))` on the server (`test/server/setup-test-framework.js:L21-L23`); the client mock is richer (four jest functions, `test/client/setup-test-framework.js:L44-L49`).
+**Server also mocks the proxy transport.** `jest.mock('wpcom-proxy-request', () => ({ __esModule: true }))` on the server (`test/server/setup-test-framework.js:L21-L23`); the client mock is richer (three jest functions plus an `__esModule: true` flag, `test/client/setup-test-framework.js:L44-L49`).
 
 **Rationale.** Disabling net connect by default turns "did you forget to mock this call?" from a flaky, environment-dependent failure into a loud, deterministic one: the test author is forced to declare every HTTP interaction. Because nock matches by host + path, the author controls precisely what each endpoint returns, which makes tests fast, offline-capable, and reproducible on any machine or CI runner.
 
