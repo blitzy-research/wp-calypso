@@ -574,9 +574,10 @@ Reading the table against the symptoms:
 
 Per the engagement’s rules, behavior was observed with a **temporary** Node
 script kept **entirely outside** the repository tree, at
-`/tmp/aap_probe/back_probe.js`. It was executed on **Node `v22.22.2`** (which
-satisfies the repository’s `engines.node` `^v22.9.0` and `.nvmrc` `22.9.0`),
-uses **Node built-ins only** (`URL`, `URLSearchParams`), installs nothing, and
+`/tmp/aap_probe/back_probe.js`. It was executed on **Node `v22.23.1`** (which
+satisfies the repository’s `engines.node` `^v22.9.0` and `.nvmrc` `22.9.0`); to keep the verbatim output below stable across
+patch/minor releases in that range, the harness prints only the **major**
+version line (`Node v22.x`). It uses **Node built-ins only** (`URL`, `URLSearchParams`), installs nothing, and
 was **deleted after use** — the repository was never modified. Its content is
 preserved here verbatim as a reproducible artifact.
 
@@ -794,7 +795,9 @@ const scenarios = [
 
 const FLOW = DEFAULT_FLOW_NAME;
 
-console.log('Node ' + process.version);
+// Major Node version only, so this block stays byte-stable across patch/minor
+// releases within the repo's pinned ^v22.9.0 range (.nvmrc 22.9.0).
+console.log('Node ' + process.version.split('.')[0] + '.x');
 console.log('Flow: ' + FLOW + ' steps=' + JSON.stringify(ONBOARDING_STEPS));
 console.log('');
 
@@ -834,7 +837,7 @@ console.log('        (client/signup/navigation-link/index.jsx:L154-L161).');
 ### Harness output (verbatim)
 
 ```text
-Node v22.22.2
+Node v22.x
 Flow: onboarding steps=["user","domains","plans"]
 
 Scenario                 | pos 0 (user)             | pos 1 (domains)          | pos 2 (plans)           
@@ -848,6 +851,7 @@ F. ?back_to=https://evil.example (not /-prefixed) | hidden                   | /
 ------------------------------------------------------------------------------------------------
 Legend: "hidden" = first-step render guard suppressed the button
         (client/signup/navigation-link/index.jsx:L154-L161).
+
 ```
 
 To reproduce: save the script to `/tmp/aap_probe/back_probe.js` and run
@@ -894,7 +898,7 @@ different `lastKnownFlow`. Both are deterministic outcomes of the single
 | File | Role in the Back decision |
 |------|---------------------------|
 | `client/signup/navigation-link/index.jsx` | `getBackUrl()` (L78-L115), `getPreviousStep()` (L47-L76), render guard (L154-L161), `href`-driven nav (L183-L193) |
-| `client/signup/step-wrapper/index.jsx` | effective `backUrl` via `connect()` (L273-L283); `allowBackFirstStep || !!backUrl` (L65) |
+| `client/signup/step-wrapper/index.jsx` | effective `backUrl` via `connect()` (L273-L283); `allowBackFirstStep \|\| !!backUrl` (L65) |
 | `client/signup/utils.js` | `getStepUrl` (L45-L69, step-less L54), `getFilteredSteps` (L137-L150), `isFirstStepInFlow` (L28-L31), `getPreviousStepName` (L85-L88) |
 | `client/signup/main.jsx` | `getPositionInFlow` (L733-L736), non-resumable first-step redirect (L171-L194), step prop wiring without `goToPreviousStep` (≈L766-L820) |
 | `client/signup/controller.js` | `back_to` dependency dispatch for `woocommerce-install` (L226-L230) |
