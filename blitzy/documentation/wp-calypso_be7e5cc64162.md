@@ -317,10 +317,10 @@ values like numbers or booleans."_
   nullish dependent maps to the _same_ sentinel object, results keyed on nullish dependents are cached
   normally.
 - **Non-nullish primitive dependents (numbers, booleans, strings) THROW a `TypeError`.** The guard
-  `if ( key != null && Object( key ) !== key ) throw new TypeError( 'key must be an object, \`null\`,
-  or \`undefined\`' )` rejects anything that is non-null but not an object — i.e., any primitive
-[packages/tree-select/src/index.ts:L118-120]. (`Object( key ) !== key`is true exactly for
-primitives; for objects,`Object( obj ) === obj`.)
+  `` if ( key != null && Object( key ) !== key ) throw new TypeError( 'key must be an object, `null`, or `undefined`' ) ``
+  rejects anything that is non-null but not an object — i.e., any primitive
+  [packages/tree-select/src/index.ts:L118-120]. (`Object( key ) !== key` is true exactly for
+  primitives; for objects, `Object( obj ) === obj`.)
 
 **Rationale (the "why").** `WeakMap` keys _must_ be objects. The implementation accommodates the common
 "this slice of state may be absent" case by treating nullish as a legitimate, memoizable placeholder
@@ -374,8 +374,8 @@ development) and instead asks you to declare a deterministic serialization that 
 the fields that matter for your query.
 
 **Proof in the suite.** The test _"accepts a getCacheKey option that enables object arguments"_ passes
-`{ getCacheKey: ( query ) => \`key:${ query.siteId }\` }`and then calls the selector with two
-**different** objects,`{ siteId: 'site1', foo: 'bar' }`and`{ siteId: 'site1', foo: 'baz' }`. Because
+`` { getCacheKey: ( query ) => `key:${ query.siteId }` } `` and then calls the selector with two
+**different** objects, `{ siteId: 'site1', foo: 'bar' }` and `{ siteId: 'site1', foo: 'baz' }`. Because
 both produce the identical generated key (`key:site1`), the second result is the **same reference** as
 the first — they collapse to one cache entry
 [packages/tree-select/test/index.js:L243-264] (assertion at L263). This also demonstrates the hazard:
