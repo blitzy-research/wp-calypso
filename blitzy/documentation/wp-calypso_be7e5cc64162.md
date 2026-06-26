@@ -251,13 +251,13 @@ Because `nock` lives in `node_modules`, it is **excluded by `transformIgnorePatt
 `babel-jest`‑transformed** and **never enters the transform cache**. I confirmed this empirically after a
 cold run of the nock‑using `wpcom-http` test (52 cached modules):
 
-| Empirical check against the live transform cache | Result |
-|---------------------------------------------------|--------|
-| Cached **project** files that *reference* nock via `require("nock")` | **1** — the transformed `use-nock` helper (`…/aa/index_…`, line 17: `var _nock = _interopRequireDefault(require("nock"));`) |
-| Cached files whose **source path** is under `node_modules/nock` | **0** |
-| Cached files containing nock's own identifier `disableNetConnect` | **0** (the identifier *does* exist in `node_modules/nock/lib/intercept.js`, so it would appear *if* nock were transformed) |
+| Empirical check against the live transform cache (52 modules) | Result |
+|----------------------------------------------------------------|--------|
+| Cached files whose **source path** is under `node_modules/nock` (nock's *own* module transpiled) | **0** — nock itself is **never** transformed or cached |
+| Cached **project** files emitting `require("nock")` (double‑quote form) | **1** — the transformed `use-nock` helper (`…/aa/index_…`, line 17: `var _nock = _interopRequireDefault(require("nock"));`) |
+| Cached files containing the identifier `disableNetConnect` | **2** — 1 code file + its `.map`: the transformed **project** bootstrap `setup-test-framework.js` (`…/60/setuptestframework_…`), which *itself* calls `nock.disableNetConnect()` (`setup-test-framework.js:L9`). It is cached **because a project file references it**, *not* because nock's own source was transformed. |
 
-So nock is **consumed** (one `require`) but its own source is **never compiled or cached**. Its setup cost
+So nock is **consumed** by project files — **3** transformed project modules reference it (the bootstrap `setup-test-framework.js`, the `use-nock` helper, and the `wpcom-http` test itself) — but its own source is **never compiled or cached** (the `node_modules/nock` source‑path check above returns **0**). Its setup cost
 (`disableNetConnect`, `activate`/`restore`/`cleanAll`, plus per‑test interceptor registration) is **small and
 roughly constant** across cold and warm runs — it does not grow with the import graph and is not eliminated
 by the cache. **Therefore `nock` is not the dominant first‑run contributor and does not explain the
@@ -381,10 +381,13 @@ CI=true TZ=UTC node_modules/.bin/jest -c=test/client/jest.config.js --watchAll=f
 ls -la .cache/jest
 find .cache/jest -maxdepth 2 | head
 
-# Prove nock is never cached (Q3)
+# Prove nock's OWN source is never cached (Q3) — the source-path check is the correct proof
 TC=$(find .cache/jest -maxdepth 1 -name 'jest-transform-cache-*')
-grep -rl 'node_modules/nock' "$TC" | wc -l          # -> 0
-grep -rlE 'disableNetConnect' "$TC" | wc -l         # -> 0
+grep -rl 'node_modules/nock' "$TC" | wc -l          # -> 0   (nock's own module is never transformed/cached)
+# NB: project files that *reference* nock ARE transformed/cached, so grepping for an identifier that
+# nock happens to use is NOT a valid proof. e.g. disableNetConnect matches the transformed project
+# bootstrap test/client/setup-test-framework.js (which calls nock.disableNetConnect() at :L9) + its .map:
+grep -rl 'disableNetConnect' "$TC" | wc -l          # -> 2   (transformed setup-test-framework.js + its .map)
 
 # --no-cache reproduces cold (Q4)
 CI=true TZ=UTC node_modules/.bin/jest -c=test/client/jest.config.js --watchAll=false \
