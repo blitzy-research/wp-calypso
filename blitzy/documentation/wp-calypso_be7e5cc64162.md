@@ -31,37 +31,6 @@ pattern with a per-step trace.
 
 ---
 
-## (a) Scope: there are two onboarding frameworks; this is about the legacy one
-
-Calypso ships **two** distinct signup/onboarding frameworks, and only one of
-them exhibits the centralized “prop vs. query vs. position” precedence the
-question describes:
-
-- **Legacy signup framework — `client/signup`, served at `/start`.** This is the
-  subject of this document. Its route controller lives at
-  [`client/signup/controller.js`], its flow-controller component at
-  [`client/signup/main.jsx`], its shared step chrome at
-  [`client/signup/step-wrapper/index.jsx`], and the actual Back/Skip control at
-  [`client/signup/navigation-link/index.jsx`]. In this framework a **single**
-  function — `NavigationLink.getBackUrl()` — centralizes the decision, taking
-  the step’s props, the query string, and the recorded progress as inputs.
-
-- **Newer “stepper” framework — `client/landing/stepper`, served at `/setup`.**
-  This framework is **out of the primary subject**. It implements navigation
-  declaratively: each flow supplies its own `useStepNavigation` hook with a
-  bespoke `goBack()`, so there is no single centralized precedence among
-  prop/query/position. (`client/signup/utils.js` even branches on the `/setup`
-  pathname when assembling URLs — see `getStepUrl` framework detection at
-  [`client/signup/utils.js:L57-L61`] — but the Back *decision* logic discussed
-  here is the legacy framework’s.)
-
-**Why this distinction matters:** the user described “flow position, component
-props, and query string arguments” competing for a single decision. That
-description matches the legacy framework’s `getBackUrl()` precisely, so the
-remainder of this document analyzes `client/signup`.
-
----
-
 ## The anchor: one function decides, and it drives an `<a href>` — not a click handler
 
 Two facts frame everything that follows.
@@ -110,6 +79,37 @@ absent from the entire file (the step prop wiring is around
 the `else if` is falsy and the Back navigation is driven **entirely** by the
 anchor `href` — i.e. by `getBackUrl()`. This is *why* understanding
 `getBackUrl()` is sufficient to understand the behavior.
+
+---
+
+## (a) Scope: there are two onboarding frameworks; this is about the legacy one
+
+Calypso ships **two** distinct signup/onboarding frameworks, and only one of
+them exhibits the centralized “prop vs. query vs. position” precedence the
+question describes:
+
+- **Legacy signup framework — `client/signup`, served at `/start`.** This is the
+  subject of this document. Its route controller lives at
+  [`client/signup/controller.js:L70`], its flow-controller component at
+  [`client/signup/main.jsx:L113`], its shared step chrome at
+  [`client/signup/step-wrapper/index.jsx:L15`], and the actual Back/Skip control at
+  [`client/signup/navigation-link/index.jsx:L17`]. In this framework a **single**
+  function — `NavigationLink.getBackUrl()` — centralizes the decision, taking
+  the step’s props, the query string, and the recorded progress as inputs.
+
+- **Newer “stepper” framework — `client/landing/stepper`, served at `/setup`.**
+  This framework is **out of the primary subject**. It implements navigation
+  declaratively: each flow supplies its own `useStepNavigation` hook with a
+  bespoke `goBack()`, so there is no single centralized precedence among
+  prop/query/position. (`client/signup/utils.js` even branches on the `/setup`
+  pathname when assembling URLs — see `getStepUrl` framework detection at
+  [`client/signup/utils.js:L57-L61`] — but the Back *decision* logic discussed
+  here is the legacy framework’s.)
+
+**Why this distinction matters:** the user described “flow position, component
+props, and query string arguments” competing for a single decision. That
+description matches the legacy framework’s `getBackUrl()` precisely, so the
+remainder of this document analyzes `client/signup`.
 
 ---
 
@@ -203,10 +203,10 @@ send Back into a *different* flow.
 
 | Priority | Input | Where it comes from | Behavior |
 |---|---|---|---|
-| **1 (highest)** | Explicit step `backUrl` prop | A step renders `<StepWrapper backUrl=… />` (e.g. WooCommerce transfer [`client/signup/steps/woocommerce-install/transfer/index.tsx:L75`]) | Returned immediately by `getBackUrl()`; **no eligibility check** [`navigation-link/index.jsx:L83-L85`] |
-| **2** | `back_to` query-string arg | `getCurrentQueryArguments(state)?.back_to`, kept **only if** it starts with `/` [`step-wrapper/index.jsx:L274-L275`] | Becomes the `backUrl` prop via `ownProps.backUrl ?? backTo` [`step-wrapper/index.jsx:L277`], then behaves exactly like priority 1 |
-| **3** | Progress-derived previous step | `getPreviousStep()` over filtered/sorted `signupProgress` [`navigation-link/index.jsx:L47-L76`] | The normal step-by-step Back; may cross flows via `previousStep.lastKnownFlow` [`navigation-link/index.jsx:L109`] |
-| **4 (lowest)** | Static flow position | `flow.steps` order via `getFilteredSteps`/`isFirstStepInFlow` [`utils.js:L137-L150`, `utils.js:L28-L31`] | **Fallback only.** Position never wins by itself; it participates *only* through `signupProgress`, and when progress yields no previous step the result collapses to a step-less URL → the first step |
+| **1 (highest)** | Explicit step `backUrl` prop | A step renders `<StepWrapper backUrl=… />` (e.g. WooCommerce transfer [`client/signup/steps/woocommerce-install/transfer/index.tsx:L75`]) | Returned immediately by `getBackUrl()`; **no eligibility check** [`client/signup/navigation-link/index.jsx:L83-L85`] |
+| **2** | `back_to` query-string arg | `getCurrentQueryArguments(state)?.back_to`, kept **only if** it starts with `/` [`client/signup/step-wrapper/index.jsx:L274-L275`] | Becomes the `backUrl` prop via `ownProps.backUrl ?? backTo` [`client/signup/step-wrapper/index.jsx:L277`], then behaves exactly like priority 1 |
+| **3** | Progress-derived previous step | `getPreviousStep()` over filtered/sorted `signupProgress` [`client/signup/navigation-link/index.jsx:L47-L76`] | The normal step-by-step Back; may cross flows via `previousStep.lastKnownFlow` [`client/signup/navigation-link/index.jsx:L109`] |
+| **4 (lowest)** | Static flow position | `flow.steps` order via `getFilteredSteps`/`isFirstStepInFlow` [`client/signup/utils.js:L137-L150`, `client/signup/utils.js:L28-L31`] | **Fallback only.** Position never wins by itself; it participates *only* through `signupProgress`, and when progress yields no previous step the result collapses to a step-less URL → the first step |
 
 **Rationale / why this ordering is real and not assumed:** the ordering is a
 direct reading of control flow. Layer 1’s `??` makes the prop beat the query
@@ -257,13 +257,13 @@ getPreviousStep( flowName, signupProgress, currentStepName ) {
 `previousStep.stepName` is `null` in three situations:
 
 1. **The current step is the first step in the flow** —
-   `isFirstStepInFlow(...)` is true [`navigation-link/index.jsx:L50-L52`].
+   `isFirstStepInFlow(...)` is true [`client/signup/navigation-link/index.jsx:L50-L52`].
 2. **There is no usable recorded progress** — after filtering to the flow’s
    steps and removing skipped ones, the array is empty
-   [`navigation-link/index.jsx:L61-L63`].
+   [`client/signup/navigation-link/index.jsx:L61-L63`].
 3. **Index underflow** — the current step is found at index `0` of progress, so
    `filteredProgressedSteps[ -1 ]` is `undefined` and the `|| previousStep`
-   fallback yields `{ stepName: null }` [`navigation-link/index.jsx:L75`].
+   fallback yields `{ stepName: null }` [`client/signup/navigation-link/index.jsx:L75`].
 
 ### Step 2 — `getStepUrl()` builds a *step-less* URL from a null step
 
@@ -369,7 +369,7 @@ current signup flow is honored verbatim — even on step 0. Two things make this
 an effective “quiet override even when the step shouldn’t be eligible”:
 
 - The `backUrl` can be supplied **externally** via the `back_to` query argument,
-  which `connect()` turns into the prop [`step-wrapper/index.jsx:L274-L277`].
+  which `connect()` turns into the prop [`client/signup/step-wrapper/index.jsx:L274-L277`].
 - The first-step render **guard** is *defeated* whenever a `backUrl` exists,
   because `StepWrapper` forces `allowBackFirstStep` true:
 
@@ -619,7 +619,7 @@ preserved here verbatim as a reproducible artifact.
 
 // ---- Flow definition (client/signup/config/flows-pure.js:L132-L133) ---------
 // onboarding steps = [ userSocialStep, 'domains', 'plans' ]; with
-// `signup/social-first` DISABLED, userSocialStep === 'user' (flows-pure.js:L13-L14).
+// `signup/social-first` DISABLED, userSocialStep === 'user' (client/signup/config/flows-pure.js:L13-L14).
 // NOTE: the bundled config enables the flag, making the live first step
 // 'user-social'; the destination LOGIC/pattern below is identical either way —
 // only the literal first-step slug changes.
@@ -713,19 +713,19 @@ function getPreviousStep(flowName, signupProgress, currentStepName) {
 }
 
 // ---- Effective backUrl + render guard + getBackUrl --------------------------
-// Models step-wrapper connect (L274-L277), allowBackFirstStep (L65), the
-// first-step render guard (navigation-link L154-L161) and getBackUrl (L78-L115).
+// Models step-wrapper connect (client/signup/step-wrapper/index.jsx:L274-L277), allowBackFirstStep (client/signup/step-wrapper/index.jsx:L65), the
+// first-step render guard (client/signup/navigation-link/index.jsx:L154-L161) and getBackUrl (client/signup/navigation-link/index.jsx:L78-L115).
 function computeBack({ ownBackUrl, backToQueryArg, signupProgress, flowName, stepName, positionInFlow }) {
-	// step-wrapper/index.jsx:L274-L275 — back_to accepted only if it starts with '/'
+	// client/signup/step-wrapper/index.jsx:L274-L275 — back_to accepted only if it starts with '/'
 	const backTo = backToQueryArg && backToQueryArg.startsWith('/') ? backToQueryArg : undefined;
-	// step-wrapper/index.jsx:L277 — explicit prop wins over query arg
+	// client/signup/step-wrapper/index.jsx:L277 — explicit prop wins over query arg
 	const backUrl = ownBackUrl ?? backTo;
 
 	const stepSectionName = ''; // no sub-steps in this trace
-	// step-wrapper/index.jsx:L65 — allowBackFirstStep || !!backUrl
+	// client/signup/step-wrapper/index.jsx:L65 — allowBackFirstStep || !!backUrl
 	const allowBackFirstStep = false || !!backUrl;
 
-	// navigation-link/index.jsx:L154-L161 — first-step render guard
+	// client/signup/navigation-link/index.jsx:L154-L161 — first-step render guard
 	if (positionInFlow === 0 && !stepSectionName && !allowBackFirstStep) {
 		return 'hidden';
 	}
@@ -739,7 +739,7 @@ function computeBack({ ownBackUrl, backToQueryArg, signupProgress, flowName, ste
 	const previousStep = getPreviousStep(flowName, signupProgress, stepName);
 	const locale = ''; // userLoggedIn assumed true (L106) -> no locale segment
 	// queryParams = onboarding flow-supported params (getCurrentFlowSupportedQueryParams,
-	// main.jsx:L633-L652). `back_to` is NOT supported by onboarding -> dropped.
+	// client/signup/main.jsx:L633-L652). `back_to` is NOT supported by onboarding -> dropped.
 	const queryParams = {};
 	return getStepUrl(
 		previousStep.lastKnownFlow || flowName, // L109 — cross-flow via lastKnownFlow
@@ -877,13 +877,13 @@ backDestination = f( backUrl prop, back_to query arg, signupProgress, flowName, 
   `back_to` query argument).
 - Made explicit, the rule is simple and total:
   1. an explicit `backUrl` prop wins unconditionally
-     [`navigation-link/index.jsx:L83-L85`];
+     [`client/signup/navigation-link/index.jsx:L83-L85`];
   2. otherwise a `/`-prefixed `back_to` query arg becomes that prop
-     [`step-wrapper/index.jsx:L274-L277`];
+     [`client/signup/step-wrapper/index.jsx:L274-L277`];
   3. otherwise the previous step is derived from `signupProgress` and may carry
-     its own `lastKnownFlow` [`navigation-link/index.jsx:L98-L109`];
+     its own `lastKnownFlow` [`client/signup/navigation-link/index.jsx:L98-L109`];
   4. and when no previous step can be derived, the URL is **step-less** and
-     routes to the first step [`utils.js:L54`].
+     routes to the first step [`client/signup/utils.js:L54`].
 
 So: “snaps to the first step” = a `null` previous step → step-less `/start`;
 “slips into a different flow” = an external override or a previous step from a
@@ -897,15 +897,15 @@ different `lastKnownFlow`. Both are deterministic outcomes of the single
 
 | File | Role in the Back decision |
 |------|---------------------------|
-| `client/signup/navigation-link/index.jsx` | `getBackUrl()` (L78-L115), `getPreviousStep()` (L47-L76), render guard (L154-L161), `href`-driven nav (L183-L193) |
-| `client/signup/step-wrapper/index.jsx` | effective `backUrl` via `connect()` (L273-L283); `allowBackFirstStep \|\| !!backUrl` (L65) |
-| `client/signup/utils.js` | `getStepUrl` (L45-L69, step-less L54), `getFilteredSteps` (L137-L150), `isFirstStepInFlow` (L28-L31), `getPreviousStepName` (L85-L88) |
-| `client/signup/main.jsx` | `getPositionInFlow` (L733-L736), non-resumable first-step redirect (L171-L194), step prop wiring without `goToPreviousStep` (≈L766-L820) |
-| `client/signup/controller.js` | `back_to` dependency dispatch for `woocommerce-install` (L226-L230) |
-| `client/signup/config/flows-pure.js` | `onboarding` steps (L132-L133), `userSocialStep` (L13-L14, L30) |
-| `client/signup/config/flows.js` | `defaultFlowName === 'onboarding'` (L243-L245, L250) |
-| `client/signup/steps/woocommerce-install/transfer/index.tsx` | concrete external `backUrl` (L75) |
-| `client/lib/url/add-query-args.ts` | query-arg serialization used by `getStepUrl` |
+| `client/signup/navigation-link/index.jsx` | `getBackUrl()` (`client/signup/navigation-link/index.jsx:L78-L115`), `getPreviousStep()` (`client/signup/navigation-link/index.jsx:L47-L76`), render guard (`client/signup/navigation-link/index.jsx:L154-L161`), `href`-driven nav (`client/signup/navigation-link/index.jsx:L183-L193`) |
+| `client/signup/step-wrapper/index.jsx` | effective `backUrl` via `connect()` (`client/signup/step-wrapper/index.jsx:L273-L283`); `allowBackFirstStep \|\| !!backUrl` (`client/signup/step-wrapper/index.jsx:L65`) |
+| `client/signup/utils.js` | `getStepUrl` (`client/signup/utils.js:L45-L69`, step-less `client/signup/utils.js:L54`), `getFilteredSteps` (`client/signup/utils.js:L137-L150`), `isFirstStepInFlow` (`client/signup/utils.js:L28-L31`), `getPreviousStepName` (`client/signup/utils.js:L85-L88`) |
+| `client/signup/main.jsx` | `getPositionInFlow` (`client/signup/main.jsx:L733-L736`), non-resumable first-step redirect (`client/signup/main.jsx:L171-L194`), step prop wiring without `goToPreviousStep` (`client/signup/main.jsx:L766-L820`) |
+| `client/signup/controller.js` | `back_to` dependency dispatch for `woocommerce-install` (`client/signup/controller.js:L226-L230`) |
+| `client/signup/config/flows-pure.js` | `onboarding` steps (`client/signup/config/flows-pure.js:L132-L133`), `userSocialStep` (`client/signup/config/flows-pure.js:L13-L14`, `client/signup/config/flows-pure.js:L30`) |
+| `client/signup/config/flows.js` | `defaultFlowName === 'onboarding'` (`client/signup/config/flows.js:L243-L245`, `client/signup/config/flows.js:L250`) |
+| `client/signup/steps/woocommerce-install/transfer/index.tsx` | concrete external `backUrl` (`client/signup/steps/woocommerce-install/transfer/index.tsx:L75`) |
+| `client/lib/url/add-query-args.ts` | query-arg serialization used by `getStepUrl` (`client/lib/url/add-query-args.ts:L12`) |
 | `docs/routing.md`, `docs/isomorphic-routing.md` | background on Calypso routing conventions |
 
 *All citations anchored to `HEAD = be7e5cc641622d153040491fd5625c6cb83e12eb`.*
