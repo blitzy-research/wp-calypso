@@ -13,7 +13,7 @@ This is a Question-and-Answer briefing. It opens by confirming the **development
 2. **Citations** — every claim points at real code using the `path:Lstart-Lend` convention (line numbers verified at the commit above).
 3. **Rationale / thinking** — _why_ the code behaves this way, not just _that_ it does.
 
-Where it adds clarity, an answer includes a short code excerpt or a diagram. The closing **"How this was verified"** section lists the commands that were actually run; all probes were inline `node -e` snippets that created no files, so the repository is left pristine.
+Where it adds clarity, an answer includes a short code excerpt or a diagram. The closing **"How this was verified"** section lists the commands that were actually run — read-only test runs, inline `node -e` snippets, and an actual dev-server boot. Apart from the dev server's **gitignored** `build/` artifacts (cleaned up afterward), the probes created no files, so the tracked source tree is left pristine.
 
 Two stable, well-documented Jest framework defaults are relied upon throughout and are called out where used: (a) Jest sets `process.env.NODE_ENV` to `'test'` when it is unset; (b) Jest's default `testEnvironment` is Node, with a browser-like `jsdom` environment being opt-in per file via a `@jest-environment` docblock (Jest docs, `jestjs.io`). These corroborate — they do not replace — the repository evidence below.
 
@@ -77,7 +77,14 @@ const { serverData, clientData } = parser( configPath, {
 
 With neither `CALYPSO_ENV` nor `NODE_ENV` set, `env` falls through to `'development'` (`client/server/config/index.js:L6`). This is corroborated by `config/README.md:L3`, which states the server picks the config file from `NODE_ENV` and that the default is `"development"`.
 
-**Observed.** Running the shim with both variables unset prints `development` (see "How this was verified"). `node --version` reported `v22.12.0`, which satisfies the gate.
+**Observed (the dev server was actually booted).** The build-then-run chain was exercised non-interactively and the server came up:
+
+1. **Runtime gate passed.** `npx check-node-version --package` exited `0` against the installed Node `v22.12.0` / Yarn `4.0.2` — the `engines` gate in `start` accepts this toolchain.
+2. **Server bundle built.** `yarn run build-server` (the webpack step at `package.json:L81`) emitted the generated `build/server.js` (~7.9 MB), which is gitignored and absent from the source tree until built.
+3. **Server started and served HTTP 200.** Run exactly as `start-build` does — `BROWSERSLIST_ENV=evergreen node build/server.js` (`package.json:L113`) with `NODE_ENV`/`CALYPSO_ENV` unset — it logged `wp-calypso booted in 1086ms - http://calypso.localhost:3000`, and `curl -sI http://localhost:3000` returned **`HTTP/1.1 200 OK`** (served by Express). That 200 is the framework's "waiting for webpack" placeholder page, the expected response when only the server bundle has been built (the full `yarn start` additionally builds the client).
+4. **Environment confirmed `development`.** With both variables unset, the same shim the server uses resolves `config('env_id') === 'development'` (`client/server/config/index.js:L6`).
+
+The server was then stopped; its `build/` output is gitignored, so the tracked source tree is unchanged.
 
 **Rationale.** Confirming the dev server matters because it fixes the _baseline_: a single long-running Node process serving the `development` configuration. Every difference described below — auto-set `NODE_ENV=test`, injected globals, disabled network, a remapped config module — is a deliberate divergence _from this baseline_ that exists to make tests fast, hermetic, and deterministic.
 
@@ -85,7 +92,7 @@ With neither `CALYPSO_ENV` nor `NODE_ENV` set, `env` falls through to `'developm
 
 ## Q2. Test environment at boot vs. normal development
 
-**Answer.** Where the dev server is _one_ long-lived Node process serving `development` config, the test suite is split into **seven Jest projects** that each spin up **isolated Jest workers**. At boot each worker: spreads a shared base preset, defaults to a Node test environment (jsdom is opt-in), resolves untranspiled monorepo source via a custom resolver, has `NODE_ENV` auto-set to `'test'`, injects a battery of globals/polyfills (Q3), disables the network (Q4), and remaps `@automattic/calypso-config` to a disk-reading shim (Q6/Q7).
+**Answer.** Where the dev server is _one_ long-lived Node process serving `development` config, the test suite is split into **seven Jest projects** that each spin up **isolated Jest workers**. The projects are _not_ uniform in how they configure those workers: **client**, **server**, and **build-tools** spread the shared base preset `@automattic/calypso-jest` directly; **packages** and **apps** are multi-project aggregators whose _child_ configs pick up that base preset indirectly (through `test/packages/jest-preset.js` / `test/apps/jest-preset.js`); **integration** does not spread the base at all but manually reuses the Calypso resolver and a Node environment; and **e2e** uses a Playwright config instead. What the projects that load Calypso source _share_ is the common machinery described below: defaulting to a Node test environment (jsdom is opt-in), resolving untranspiled monorepo source via the `calypso:src` resolver, having `NODE_ENV` auto-set to `'test'`, injecting a battery of globals/polyfills (Q3), and disabling the network (Q4). The `@automattic/calypso-config` import is remapped to a disk-reading shim in the **client**, **server**, and **integration** projects specifically (Q6/Q7) — not in every project.
 
 ### The seven projects
 
@@ -117,7 +124,7 @@ There are seven Jest config files on disk — `test/{client,server,packages,apps
 
 ### The shared base preset
 
-Every project spreads `@automattic/calypso-jest` — the base preset:
+Three top-level projects — **client**, **server**, and **build-tools** — spread `@automattic/calypso-jest` directly (`test/client/jest.config.js:L2`,`:L5`; `test/server/jest.config.js:L2`,`:L5`; `test/build-tools/jest.config.js:L2`,`:L5`). **packages** and **apps** do _not_ spread it at the top level — they are aggregators (`projects: ['<rootDir>/packages/*/jest.config.js']` at `test/packages/jest.config.js:L4`; `projects: ['<rootDir>/apps/*/jest.config.js']` at `test/apps/jest.config.js:L4`) whose _child_ configs inherit the base preset indirectly via `test/packages/jest-preset.js:L9` / `test/apps/jest-preset.js:L5` (each does `...base`). **integration** does _not_ spread the base — it declares its own `testEnvironment: 'node'`, resolver, `testMatch`, and `verbose` (`test/integration/jest.config.js:L7-L15`) while reusing the Calypso resolver (`require.resolve( '@automattic/calypso-jest/src/module-resolver.js' )`, `:L8`). **e2e** spreads the Playwright config instead (`test/e2e/jest.config.js:L1`,`:L4`). The base preset that the first group spreads (and that the packages/apps presets re-spread) is:
 
 ```js
 // packages/calypso-jest/jest-preset.js:L8-L22
@@ -196,7 +203,7 @@ Citations: `test/client/jest.config.js:L6` (`rootDir`), `:L11`, `:L17-L19`, `:L2
 | Network                      | real                                     | disabled by `nock.disableNetConnect()` (Q4)     |
 | Extra globals                | none injected                            | `fetch`, `matchMedia`, `ResizeObserver`, … (Q3) |
 
-**Rationale.** The design optimizes for _speed, isolation, and consistency_: the `calypso:src` resolver skips per-package transpilation in a large monorepo; defaulting to the Node environment (with jsdom only where a DOM is actually needed) keeps workers light; and spreading one shared preset keeps seven projects behaving consistently. The remapped config module and disabled network are what make a test's outcome depend only on its declared inputs, never on a developer's machine or the live network.
+**Rationale.** The design optimizes for _speed, isolation, and consistency_: the `calypso:src` resolver skips per-package transpilation in a large monorepo; defaulting to the Node environment (with jsdom only where a DOM is actually needed) keeps workers light; and sharing one base preset across the Calypso-source projects (spread directly by client/server/build-tools, or re-spread by the packages/apps presets) keeps them behaving consistently. The remapped config module and disabled network are what make a test's outcome depend only on its declared inputs, never on a developer's machine or the live network.
 
 ---
 
@@ -236,9 +243,9 @@ global.fetch = jest.fn( () =>
 );
 ```
 
-### Base setup — `packages/calypso-jest/src/setup.js` (every suite)
+### Base setup — `packages/calypso-jest/src/setup.js` (base-preset projects)
 
-The base preset's `setupFilesAfterEnv` (`packages/calypso-jest/jest-preset.js:L10`) loads one global for **all** projects:
+The base preset's `setupFilesAfterEnv` (`packages/calypso-jest/jest-preset.js:L10`) loads one global for the projects that spread that preset — **client**, **server**, **build-tools**, and the **packages**/**apps** child configs that re-spread it (Q2) — but **not** integration (which declares its own config with no base spread) or e2e (Playwright):
 
 ```js
 // packages/calypso-jest/src/setup.js:L3-L5
@@ -434,7 +441,7 @@ flowchart TD
 
 ## Q6. Config / feature-flag resolution — dev vs. test (two implementations behind one import)
 
-**Answer.** The single import `@automattic/calypso-config` resolves to **two completely different implementations** depending on environment. In the browser (dev/prod) it is a module that reads `window.configData`. In **every Jest project** it is remapped (via `moduleNameMapper`) to a server/test shim that reads `config/<env>.json` from disk, where `<env>` is driven by `NODE_ENV`. This remap is the crux of the dev-vs-test divergence.
+**Answer.** The single import `@automattic/calypso-config` resolves to **two completely different implementations** depending on environment. In the browser (dev/prod) it is a module that reads `window.configData`. In the Jest projects that exercise Calypso source — **client**, **server**, and **integration** — it is remapped (via `moduleNameMapper`) to a server/test shim that reads `config/<env>.json` from disk, where `<env>` is driven by `NODE_ENV`. This remap is the crux of the dev-vs-test divergence. (The other top-level projects — build-tools, packages, apps, and e2e — declare no such mapper in their configs or presets; client/server/integration are the ones whose tests actually resolve `@automattic/calypso-config`.)
 
 ### A) Browser implementation — `packages/calypso-config/src/index.ts` (dev/prod)
 
@@ -458,7 +465,7 @@ if (
 
 where `flagEnvironments = ['wpcalypso','horizon','stage','jetpack-cloud-stage','a8c-for-agencies-stage']` (`:L78-L84`); cookie/sessionStorage/URL handling at `:L91-L94` / `:L96-L103` / `:L105-L109`. It builds the API with `createConfig(configData)` (`:L111`) and re-exports `isEnabled`/`enabledFeatures`/`enable`/`disable` (`:L113-L116`).
 
-### B) Disk shim — `client/server/config/index.js` (every Jest project)
+### B) Disk shim — `client/server/config/index.js` (client, server & integration projects)
 
 ```js
 // client/server/config/index.js:L5-L11
@@ -478,7 +485,7 @@ It is wired per project through `moduleNameMapper`:
 | server      | `^@automattic/calypso-config$` → `calypso/server/config`                   | `test/server/jest.config.js:L9-L12`  |
 | integration | `^@automattic/calypso-config$` → `<rootDir>/client/server/config/index.js` | `test/integration/jest.config.js:L3` |
 
-Because tests resolve this shim (never the browser module), they read config from disk and are never subject to the dev-only cookie/URL override channels.
+In the three projects listed above, tests resolve this shim (never the browser module), so they read config from disk and are never subject to the dev-only cookie/URL override channels.
 
 ### The cascade resolver — `client/server/config/parser.js`
 
@@ -560,11 +567,12 @@ The repository already encodes this contract: `client/server/config/test/parser.
 
 ## How this was verified
 
-Every claim above was checked against the source at `be7e5cc641622d153040491fd5625c6cb83e12eb`, and the dynamic behaviors were observed by running code. All probes were inline `node -e` snippets or read-only test runs that **created no files**; the repository was left pristine.
+Every claim above was checked against the source at `be7e5cc641622d153040491fd5625c6cb83e12eb`, and the dynamic behaviors were observed by running code. The probes were inline `node -e` snippets, read-only test runs, and one dev-server boot; apart from the dev server's **gitignored** `build/` artifacts (cleaned up afterward), they **created no files in the tracked tree**, which was left pristine.
 
 | Check                       | Command (abbreviated)                                                                             | Observed result                                                                   |
 | --------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | Runtime                     | `node --version` / `yarn --version`                                                               | `v22.12.0` / `4.0.2`                                                              |
+| Dev server boots (HTTP 200) | `check-node-version --package` → `yarn run build-server` → `node build/server.js` → `curl -sI :3000` | gate exit `0`; `build/server.js` (~7.9 MB) emitted; `booted in 1086ms`; **`HTTP/1.1 200 OK`**; `env_id` = `development` |
 | Dev env resolution          | `delete NODE_ENV/CALYPSO_ENV; require('./client/server/config')('env_id')`                        | `development`                                                                     |
 | Test env resolution         | `NODE_ENV=test … config('env_id')`                                                                | `test`                                                                            |
 | Flag divergence (same call) | `isEnabled('checkout/checkout-version')` under each env                                           | `true` (dev) vs `false` (test)                                                    |
@@ -573,6 +581,6 @@ Every claim above was checked against the source at `be7e5cc641622d153040491fd56
 | Resolver nuance             | `enhanced-resolve@5.9.3` with the preset config resolving `calypso/lib/wp`                        | Jest config → `client/lib/wp/node.js`; browser-style → `client/lib/wp/browser.js` |
 | Network isolation           | `nock.disableNetConnect()` + unmocked `https.get(...)`                                            | `NetConnectNotAllowedError` (mocked request returns `200` + body)                 |
 
-**Repository hygiene.** No existing repository file was modified, added, or deleted other than this document. After completion, `git status --porcelain` shows only `blitzy/documentation/wp-calypso_be7e5cc64162.md`. All investigation used inline snippets, leaving no temporary scripts behind.
+**Repository hygiene.** No existing repository file was modified, added, or deleted other than this document: the baseline diff (`git diff be7e5cc..HEAD`) contains only the added `blitzy/documentation/wp-calypso_be7e5cc64162.md`, and once that file is committed the final working tree is clean (`git status --porcelain` is empty). During investigation the document was the only untracked addition; all probing used inline `node -e` snippets and read-only test runs plus a dev-server boot whose `build/` artifacts are gitignored, so no temporary scripts were left behind and the tracked source tree is pristine.
 
 **Cross-references.** Technical Specification **§6.6 (Testing Strategy)** corroborates the seven-project layout, the shared preset, the `calypso:src` resolver, and jsdom opt-in; **§4.10 (Feature Flag and Configuration Flow)** corroborates the two-implementation config model and `NODE_ENV`-driven file selection.
