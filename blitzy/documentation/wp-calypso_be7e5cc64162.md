@@ -4,7 +4,7 @@
 
 This analysis is **code-as-truth**: every factual claim below is backed by an exact citation that was re-verified against the source. No behavior is assumed.
 
-## Context
+**Context facts.** The investigation was performed against the following repository state:
 
 | Fact        | Value                                                                | Source                            |
 | ----------- | -------------------------------------------------------------------- | --------------------------------- |
@@ -392,7 +392,9 @@ All citations were re-verified against the source at commit `be7e5cc641622d15304
 | Action creators return expected shapes                              | `client/state/reader-ui/test/actions.js`   | register L16–L19; clear L25–L27 |
 | Selector null / value cases                                         | `client/state/reader-ui/test/selectors.js` | L15, L21 / L34                  |
 
-### Corroborating dispatch sites (nine total — proves the pattern is general)
+### Corroborating dispatch sites (eight additional sites — proves the pattern is general)
+
+> These are the **eight** additional non-like dispatch sites; together with the like-button capture site (documented in the **Capture path** table above), they make the **nine** total dispatch sites noted in Q5.
 
 | File                                                       | Lines (import / dispatch)    |
 | ---------------------------------------------------------- | ---------------------------- |
