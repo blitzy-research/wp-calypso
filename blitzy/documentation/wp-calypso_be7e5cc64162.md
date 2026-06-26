@@ -424,15 +424,15 @@ This is the classic failure mode of a reference-equality cache. Recall from R1 t
 entry is invalidated **only** when a dependent's **object reference** changes; the selector never deep-
 compares state [packages/tree-select/src/index.ts:L84-89, packages/tree-select/README.md:L40]. So
 "data changed but the selector returned a stale value" means the cache did **not** observe a reference
-change (or a key change) for the data you altered. There are three concrete mechanisms, in rough order
-of likelihood:
+change (or a key change) for the data you altered. There are three concrete mechanisms that can
+produce this:
 
 1. **`getDependents` under-declares a slice of state the `selector` actually reads.** The cache only
    busts when one of the objects in the **returned dependents array** changes identity
    [packages/tree-select/src/index.ts:L73, packages/tree-select/src/index.ts:L84-89]. If your selector
    reads some piece of state that is _not_ present in that array, then changes to that hidden state
    never change a dependent reference, so the cache never busts and you keep getting the old value.
-   **This is the most common cause of stale filtered results.**
+   **This is a primary cause to check for stale filtered results.**
    _Fix:_ make `getDependents` enumerate **every** state slice the `selector` body reads. The README
    stresses this is the whole point of the design — passing the dependents (not raw `state`) to the
    selector _"forces you to declare all of your state-dependencies"_
@@ -559,8 +559,8 @@ returned by getDependents" (R5), "throws on a non-nullish primitive value return
 suite, a faithful standalone port of the algorithm in `packages/tree-select/src/index.ts` was written
 and run from a temporary directory **outside** the repo tree (so no repository file was added or
 changed). It asserts the same five counts plus the clearCache, nullish-memoization, primitive-throw,
-and `getCacheKey`-collapse behaviors. Result: **9 / 9 checks passed**, on Node `v22.23.1` (the repo's
-toolchain) and again on Node `v24.x` — counts confirmed as **(1, 1, 2, 2, 2)**, nullish memoized to the
+and `getCacheKey`-collapse behaviors. Result: **9 / 9 checks passed** on Node `v22.23.1` (the repo's
+toolchain) — counts confirmed as **(1, 1, 2, 2, 2)**, nullish memoized to the
 same reference, all six non-nullish primitives threw, and the two distinct objects collapsed to one
 entry under a shared `getCacheKey`.
 
