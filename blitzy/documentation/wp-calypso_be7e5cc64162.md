@@ -328,7 +328,7 @@ Error message: Nock: Disallowed net connect for "public-api.wordpress.com:443/re
 
 (Reproduced with a standalone `nock.disableNetConnect()` + `https.get(...)` snippet — see "How this was verified".) A request _with_ a matching interceptor returns the mocked body instead — that is the mechanism Q5 traces end-to-end.
 
-**`fetch` is independently mocked.** Even though nock intercepts `http`/`https`, `global.fetch` is a jest mock resolving empty JSON (`test/client/setup-test-framework.js:L36-L40`), so `fetch`-based code is stubbed regardless of nock.
+**`fetch` is independently mocked.** Even though nock intercepts `http`/`https`, `global.fetch` is a jest mock resolving to `{ json: () => Promise.resolve() }` — so awaiting its `.json()` yields `undefined` (an empty body), not an `{}` object (`test/client/setup-test-framework.js:L36-L40`); `fetch`-based code is therefore stubbed regardless of nock.
 
 **Server also mocks the proxy transport.** `jest.mock('wpcom-proxy-request', () => ({ __esModule: true }))` on the server (`test/server/setup-test-framework.js:L21-L23`); the client mock is richer (three jest functions plus an `__esModule: true` flag, `test/client/setup-test-framework.js:L44-L49`).
 
