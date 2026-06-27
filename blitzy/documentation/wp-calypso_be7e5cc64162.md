@@ -209,7 +209,7 @@ Citations: `test/client/jest.config.js:L6` (`rootDir`), `:L11`, `:L17-L19`, `:L2
 
 ## Q3. Globals, environment variables, and polyfills that exist only under test
 
-**Answer.** Test workers run code that expects browser/runtime APIs the Node (and even jsdom) environment doesn't fully provide. The setup files registered via `setupFilesAfterEnv` patch a battery of these onto `global` **only during test execution**; they do not exist when the dev server runs. The richest set is injected by the **client** setup file, with a smaller base set for all suites and a separate set for the packages suite.
+**Answer.** Test workers run code that expects browser/runtime APIs the Node (and even jsdom) environment doesn't fully provide. The setup files registered via `setupFilesAfterEnv` patch a battery of these onto `global` **only during test execution**; they do not exist when the dev server runs. The richest set is injected by the **client** setup file (which the **apps** suite reuses); the **packages** suite injects its own, separate set; and the base preset contributes a single global that — as detailed below — actually loads only for the **build-tools** project, because every other project overrides `setupFilesAfterEnv`.
 
 ### Client suite — `test/client/setup-test-framework.js`
 
@@ -243,9 +243,9 @@ global.fetch = jest.fn( () =>
 );
 ```
 
-### Base setup — `packages/calypso-jest/src/setup.js` (base-preset projects)
+### Base setup — `packages/calypso-jest/src/setup.js` (loaded only where the base `setupFilesAfterEnv` is not overridden)
 
-The base preset's `setupFilesAfterEnv` (`packages/calypso-jest/jest-preset.js:L10`) loads one global for the projects that spread that preset — **client**, **server**, **build-tools**, and the **packages**/**apps** child configs that re-spread it (Q2) — but **not** integration (which declares its own config with no base spread) or e2e (Playwright):
+The base preset declares `setupFilesAfterEnv: [ require.resolve( './src/setup.js' ) ]` (`packages/calypso-jest/jest-preset.js:L10`), and that one file injects a single global:
 
 ```js
 // packages/calypso-jest/src/setup.js:L3-L5
@@ -253,6 +253,21 @@ global.CSS = {
 	supports: jest.fn(),
 };
 ```
+
+But this base file does **not** run for every project. Each project config that does `...base` and then sets its own `setupFilesAfterEnv` **replaces** the base array rather than appending to it — plain object‑spread is not additive. Of the seven projects, only **build-tools** leaves the base value untouched (`test/build-tools/jest.config.js:L4-L8` spreads `...base` and declares no `setupFilesAfterEnv`), so **build-tools is the only project that actually loads `packages/calypso-jest/src/setup.js`**. The **client** (`test/client/jest.config.js:L21`), **server** (`test/server/jest.config.js:L13`), **apps** (`test/apps/jest-preset.js:L13`), and **packages** (`test/packages/jest-preset.js:L14`) configs each set their own `setupFilesAfterEnv` after `...base`, so this base file never loads for them.
+
+The practical consequence for `global.CSS.supports` is therefore **per-project**, not "every suite":
+
+| Project           | `setupFilesAfterEnv` actually used                                        | `global.CSS.supports` present?                                          |
+| ----------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| build-tools       | base `src/setup.js` — not overridden (`test/build-tools/jest.config.js:L4-L8`) | ✅ yes — via the base file (`packages/calypso-jest/src/setup.js:L3-L5`)  |
+| client            | `test/client/setup-test-framework.js` (`test/client/jest.config.js:L21`)  | ✅ yes — the client file defines its own (`test/client/setup-test-framework.js:L30-L32`) |
+| apps              | client file, reused (`test/apps/jest-preset.js:L13`)                       | ✅ yes — via the client file (`test/client/setup-test-framework.js:L30-L32`) |
+| server            | `test/server/setup-test-framework.js` (`test/server/jest.config.js:L13`)  | ❌ no — not defined there                                               |
+| packages          | `test/packages/setup.js` (`test/packages/jest-preset.js:L14`)             | ❌ no — not defined there                                               |
+| integration / e2e | none — they do not spread the base preset at all (Q2)                      | ❌ no                                                                   |
+
+A runtime probe of a package suite confirms `CSS.supports` is `undefined` there, so a package test that needs it must add it explicitly. In short: the base `src/setup.js` is loaded **only** by build-tools; `global.CSS.supports` still exists in client and apps tests, but it comes from the **client** setup file (`test/client/setup-test-framework.js:L30-L32`), not from the base preset.
 
 ### Packages suite — `test/packages/setup.js`
 
@@ -512,7 +527,7 @@ Both implementations build their API from this factory:
 
 ### Edge case worth calling out
 
-Because `config(key)` only throws on a missing key when `NODE_ENV === 'development'`, a missing key **throws in the dev server but returns `undefined` under test** (where `NODE_ENV === 'test'`). Likewise, the cookie / `sessionStorage` / URL `?flags=` override channels apply in dev but never under test. These are concrete behavioral differences for the _same_ `config(...)` call.
+Be careful to separate two distinct senses of _environment_ here: the **config environment** (`env_id`) and the **Node process environment** (`process.env.NODE_ENV`). The shim selects the config _file_ from `process.env.CALYPSO_ENV || process.env.NODE_ENV || 'development'` (`client/server/config/index.js:L6`), whereas the factory throws on a missing key **only when `process.env.NODE_ENV === 'development'` literally** (`packages/create-calypso-config/src/index.ts:L35-L40`), otherwise returning `undefined` (`:L61`). These are **not** the same condition. In the documented dev-server baseline `NODE_ENV` is unset (Q1), so `env_id` resolves to `development` through the `|| 'development'` fallback **yet a missing key returns `undefined`** — it does **not** throw, because `process.env.NODE_ENV` is not the string `'development'`. A missing key throws **only** when the process is actually launched with `NODE_ENV=development`; under Jest (`NODE_ENV='test'`) and under the `NODE_ENV`-unset dev-server baseline alike, it returns `undefined`. (Verified at runtime: with `NODE_ENV`/`CALYPSO_ENV` unset, `config('definitely_missing_key')` returns `undefined` while `config('env_id')` is `development`; only launching with `NODE_ENV=development` makes the same call throw a `ReferenceError`.) Separately, the cookie / `sessionStorage` / URL `?flags=` override channels apply in dev but never under test. These remain concrete behavioral differences for the _same_ `config(...)` call.
 
 **Rationale.** The `moduleNameMapper` indirection plus `NODE_ENV`-driven file selection is what makes configuration **deterministic and disk-backed under test**, versus **browser-window-backed and override-prone in dev**. Tests get a fixed, checked-in `config/test.json`; the dev server gets `window.configData` plus a developer's local overrides. Corroborated by `config/README.md:L3`, `packages/calypso-config/README.md:L3-L5`, and Technical Specification §4.10 (Feature Flag and Configuration Flow).
 
