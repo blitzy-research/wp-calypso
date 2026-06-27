@@ -851,7 +851,6 @@ F. ?back_to=https://evil.example (not /-prefixed) | hidden                   | /
 ------------------------------------------------------------------------------------------------
 Legend: "hidden" = first-step render guard suppressed the button
         (client/signup/navigation-link/index.jsx:L154-L161).
-
 ```
 
 To reproduce: save the script to `/tmp/aap_probe/back_probe.js` and run
