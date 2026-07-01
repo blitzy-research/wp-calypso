@@ -20,13 +20,27 @@ document was produced under ruleset `SWE-AtlasQnA-Repo`.
 ## Reproducibility Anchor
 
 - **Branch:** `wp-calypso_be7e5cc64162`
-- **HEAD commit:** `be7e5cc641622d153040491fd5625c6cb83e12eb`
-  — all `file:line` locators in this document are anchored to this revision and can be re-verified against it.
-- **Toolchain observed at run time:** Node `v22.23.1`, Yarn `4.0.2`.
-  - The repository declares `engines.node = "^v22.9.0"` and `packageManager = "yarn@4.0.2"` in the
-    **root** `package.json`, and `.nvmrc` pins `22.9.0`. Note that the package manifest
-    `packages/explat-client/package.json` itself has **no** `engines` field; the engine constraint is
-    inherited from the monorepo root.
+- **Baseline / source-reference commit:** `be7e5cc641622d153040491fd5625c6cb83e12eb`
+  — every `file:line` locator in this document is anchored to this baseline revision and can be
+  re-verified against it. This is the commit the analysis was performed against; it is **not** a claim
+  about the current branch `HEAD`, which advances beyond this baseline when the delivery commit that
+  adds this document is made (see [§ Integrity](#integrity-read-only-clean-tree)).
+- **Toolchain observed at run time:** Node `v22.23.1`, Yarn `4.0.2`, captured verbatim:
+
+  ```text
+  $ node --version
+  v22.23.1
+  $ yarn --version
+  4.0.2
+  ```
+
+  - These match the repository's declared constraints: `engines.node = "^v22.9.0"` and
+    `engines.yarn = "^4.0.0"` [root `package.json:L56-L59`, with `node` at `L57`], plus
+    `packageManager = "yarn@4.0.2"` [root `package.json:L422`], while `.nvmrc` pins `22.9.0`
+    [`.nvmrc:L1`]. Note that the package manifest `packages/explat-client/package.json` itself has
+    **no** `engines` field (confirmed across all 36 lines)
+    [`packages/explat-client/package.json:L1-L36`]; the engine constraint is inherited from the
+    monorepo root.
 
 ## Methodology — Run-First
 
@@ -636,25 +650,46 @@ behavior is as cited above.
 
 - **Fallback-to-control on error.** Mature feature-flag / experiment SDKs are designed to serve a
   *consistent fallback variation* — not `null`-as-error or an exception — when resolution fails. For
-  example, Split's SDKs return the `control` treatment when a flag cannot be resolved, and LaunchDarkly
-  serves a code-defined default value (one of the flag's variations) when the service is unreachable or
-  the key is missing. This is exactly what `createFallbackExperimentAssignment` does by returning
-  `variationName: null` — the default/control experience
-  [`packages/explat-client/src/internal/experiment-assignments.ts:L29-L38`;
+  example, Split (Harness FME) documents that its SDKs "are designed to never throw exceptions or
+  errors" and instead return the `control` treatment when a flag cannot be resolved
+  ([Split — *Control treatment*][ext-split]); and LaunchDarkly serves a code-defined *fallback value*
+  (one of the flag's variations) when, for instance, "LaunchDarkly is unreachable, the feature flag key
+  doesn't exist" ([LaunchDarkly — *Flag variation evaluation*][ext-launchdarkly]). This is exactly what
+  `createFallbackExperimentAssignment` does by returning `variationName: null` — the default/control
+  experience [`packages/explat-client/src/internal/experiment-assignments.ts:L29-L38`;
   `packages/explat-client/README.md:L22`].
 
 - **Request de-duplication / single-flight.** The "singleflight" pattern ensures that only one execution
   per key is in flight at a time while duplicate callers await the same result; the recommended
-  composition is *cache-first, single-flight-on-miss*. That is precisely how this client is structured:
-  an `isAlive` cache check first [`...create-explat-client.ts:L119-L125`], and `Timing.asyncOneAtATime`
-  wrapping the per-experiment fetch on a miss
-  [`packages/explat-client/src/internal/timing.ts:L44-L54`; `...create-explat-client.ts:L82-L90`].
+  composition is *cache-first, single-flight-on-miss*. Go's official `golang.org/x/sync/singleflight`
+  package "provides a duplicate function call suppression mechanism" in which duplicate callers wait for
+  the first execution and share its result ([Go — *singleflight*][ext-singleflight]); the cache-first
+  composition (single-flight only on a cache miss) is a widely-documented idiom
+  ([*Eliminating Redundant Requests in Go with Singleflight*][ext-singleflight-cache]). That is
+  precisely how this client is structured: an `isAlive` cache check first
+  [`...create-explat-client.ts:L119-L125`], and `Timing.asyncOneAtATime` wrapping the per-experiment
+  fetch on a miss [`packages/explat-client/src/internal/timing.ts:L44-L54`;
+  `...create-explat-client.ts:L82-L90`].
 
 - **Client-side caching with TTL.** Client SDKs commonly cache results so that a fresh cache serves with
   no network request and a refetch occurs only after the TTL elapses; a small default TTL (on the order
-  of ~60 seconds) is typical. This matches the client's `isAlive` gating plus the `minimumTtl = 60`
-  floor [`...experiment-assignments.ts:L8-L14`, `L21`], with a ~`3600`-second production server TTL
+  of ~60 seconds) is typical. For instance, ConfigCat's lazy-loading cache states that "the cache Time
+  To Live (TTL) value is 60 seconds" and downloads only when the cache is absent or expired
+  ([ConfigCat — *Polling Modes & Caching*][ext-configcat]); Langfuse's client SDKs likewise default to a
+  60-second TTL and refetch after it expires ([Langfuse — *Caching*][ext-langfuse]). This matches the
+  client's `isAlive` gating plus the `minimumTtl = 60` floor
+  [`...experiment-assignments.ts:L8-L14`, `L21`], with a ~`3600`-second production server TTL
   [`packages/explat-client/README.md:L42`].
+
+**External sources (industry corroboration).** The framing above is corroborated by the following
+public/official documentation:
+
+[ext-split]: https://help.split.io/hc/en-us/articles/360020528072-Control-treatment
+[ext-launchdarkly]: https://launchdarkly.com/docs/sdk/features/evaluating
+[ext-singleflight]: https://pkg.go.dev/golang.org/x/sync/singleflight
+[ext-singleflight-cache]: https://tiagomelo.info/go/singleflight/2024/10/14/go-singleflight.html
+[ext-configcat]: https://configcat.com/docs/advanced/caching/
+[ext-langfuse]: https://langfuse.com/docs/prompt-management/features/caching
 
 ---
 
@@ -708,13 +743,19 @@ Ran all test suites matching /zz_observation/i.
 
 ### Integrity (read-only, clean tree)
 
-After capturing the output, the temporary test was **deleted**. `git status --porcelain` is empty, the
-working tree is clean, and HEAD is unchanged at `be7e5cc641622d153040491fd5625c6cb83e12eb`. **No
-existing source file was modified**; the only file added to the repository is this document.
+After capturing the output, the temporary observation test was **deleted**, so `git status --porcelain`
+is empty and the working tree is clean. **No existing source file was modified**; the only file added to
+the repository is this document. To be precise about repository state: the baseline
+`be7e5cc641622d153040491fd5625c6cb83e12eb` is the **source/reference revision** the analysis was
+performed against (and to which every `file:line` locator is anchored) — it is *not* the current branch
+`HEAD`. The delivery commit that adds this document advances `HEAD` beyond that baseline; that delivery
+adds **only** this documentation artifact on top of the baseline, changing no source, test,
+configuration, manifest, or lockfile.
 
 ### Verifiability note
 
-All `file:line` locators are anchored to HEAD `be7e5cc641622d153040491fd5625c6cb83e12eb`. The
+All `file:line` locators are anchored to the baseline / source-reference commit
+`be7e5cc641622d153040491fd5625c6cb83e12eb` (not the current branch `HEAD`). The
 `retrievedTimestamp` integers in the observed output are real `monotonicNow()` / `Date.now()` values and
 will differ per run; the counts, timeout milliseconds, log messages, object shapes, and log `source`
 tags are stable and reproduce exactly.
@@ -746,7 +787,7 @@ tags are stable and reproduce exactly.
 - [x] R5 — 0 additional calls within TTL, count `2` after expiry; `minimumTtl = 60`; server TTL ~`3600`.
 - [x] R6 — graceful degradation; dev-only logging; `maybeLoaded` → `null`; existing-suite corroboration.
 - [x] Industry framing covers all three patterns (fallback-to-control, single-flight, TTL cache).
-- [x] HEAD anchor recorded; read-only / clean-tree statement present.
+- [x] Baseline / source-reference commit anchor recorded (distinct from the current `HEAD`); read-only / clean-tree statement present.
 - [x] No value the questions ask for is paraphrased (timeouts `10000`/`5000`, the timeout message,
       `variationName: null` / `ttl: 60` / `isFallbackExperimentAssignment: true`, `network_calls=1`,
       `network_after_TTL_expiry=2`, the constructor message, and the log `source` tags
