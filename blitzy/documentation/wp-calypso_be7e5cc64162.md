@@ -122,6 +122,32 @@ projects=58 {"node":36,"jsdom":22}
 
 Most suites run in **Node.js** (no DOM); **apps** run in **jsdom**; the **packages** suite is **mixed** (per‑project, 36 `node` / 22 `jsdom`); and **client** is Node by default while a **minority** of its files opt into jsdom **per file** — exactly **498** files under `client/` carry a `@jest-environment jsdom` docblock (verbatim count above and in the Coverage pass), far fewer than the **1404** files the client `testMatch` (`<rootDir>/**/test/*.[jt]s?(x)` [packages/calypso-jest/jest-preset.js:12]) can pick up, so this is a subset — **not** a majority. This is the **first axis** of the pass‑in‑isolation/fail‑in‑suite phenomenon: the *same* test file can execute under a *different* environment depending on which command/config picks it up.
 
+The **1404** figure is itself a measured value: it is the raw number of files the base `testMatch` (`<rootDir>/**/test/*.[jt]s?(x)`, which also negates `!**/.eslintrc.*` [packages/calypso-jest/jest-preset.js:12]) can pick up under the client `rootDir: '../../client'` [test/client/jest.config.js:6]:
+
+```bash
+find client -path '*/test/*' -type f | grep -E '/test/[^/]+\.(js|jsx|ts|tsx)$' | grep -v '/\.eslintrc\.' | wc -l
+```
+
+**Verbatim captured output (this host):**
+
+```text
+1404
+```
+
+Jest then applies the client config's `testPathIgnorePatterns: [ '<rootDir>/server/' ]` [test/client/jest.config.js:8], which drops the `client/server/` tests, so the **effective** number of files Jest enumerates for `test-client` is `1392`. Confirmed with Jest's own test discovery:
+
+```bash
+TZ=UTC node_modules/.bin/jest --listTests -c=test/client/jest.config.js | wc -l
+```
+
+**Verbatim captured output (this host):**
+
+```text
+1392
+```
+
+So `1404` is the raw `testMatch` candidate count and `1392` is the effective count after `client/server/` is ignored (the 12 excluded files being `client/server/**/test/*`); either way, the **498** jsdom-docblock files remain a clear minority.
+
 **Toolchain cited by the repo:** `engines.node: "^v22.9.0"` [package.json:57]; `packageManager: "yarn@4.0.2"` [package.json:422]; `.nvmrc` = `22.9.0` [.nvmrc:1]. (This investigation ran on Node `v22.23.1`, within `^v22.9.0` — see the Methodology appendix.)
 
 ---
@@ -549,7 +575,7 @@ Because `matchMedia=function` already at module‑top, the provider (`setupFiles
 
 Every sub‑question is answered above; each item below links to its evidence.
 
-- [x] **R1 — Test commands and their runtimes.** Command → config → `testEnvironment` table with `file:line`: aggregate fan‑out [package.json:120]; per‑suite `jest -c` commands [package.json:121-131]; default `node` [packages/calypso-jest/jest-preset.js:11]; integration `node` explicit [test/integration/jest.config.js:7] (and integration does **not** spread the base preset); apps `jsdom` explicit [test/apps/jest-preset.js:7]; **packages is project‑based/mixed — 36 `node` / 22 `jsdom` of 58** (verbatim `--showConfig` tally); client `node` by default with exactly **498** `@jest-environment jsdom` docblocks (a minority of 1404 test‑match candidates, verbatim counts).
+- [x] **R1 — Test commands and their runtimes.** Command → config → `testEnvironment` table with `file:line`: aggregate fan‑out [package.json:120]; per‑suite `jest -c` commands [package.json:121-131]; default `node` [packages/calypso-jest/jest-preset.js:11]; integration `node` explicit [test/integration/jest.config.js:7] (and integration does **not** spread the base preset); apps `jsdom` explicit [test/apps/jest-preset.js:7]; **packages is project‑based/mixed — 36 `node` / 22 `jsdom` of 58** (verbatim `--showConfig` tally); client `node` by default with exactly **498** `@jest-environment jsdom` docblocks (a minority of 1404 raw test‑match candidates; 1392 effective after `testPathIgnorePatterns` ignores `client/server/`; verbatim counts).
 - [x] **R2 — Global environment comparison.** `typeof` matrix (node vs jsdom) with verbatim output; **`window` and `document`** identified as the divergent globals (`object` under jsdom, `undefined` under node); pure‑Node baseline contrast proving `matchMedia`/`CSS` are injected by setup.
 - [x] **R3 — Internal‑dependency resolution.** `packages/load-script/src/index.js` loaded under Jest vs `MODULE_NOT_FOUND` under plain Node, quoted verbatim; `dist/` confirmed absent; 64 `calypso:src` packages; the concrete edge is `@automattic/calypso-analytics` → `@automattic/load-script` [packages/calypso-analytics/src/tracks.ts:4].
 - [x] **R4 — Import‑path overrides.** Per‑context `moduleNameMapper` expressions for `@automattic/calypso-config` — client [test/client/jest.config.js:11], server [test/server/jest.config.js:10], integration [test/integration/jest.config.js:3] — differ in text but **all resolve to the same physical file `client/server/config/index.js`** (verbatim resolution output); the real divergence is **mapped vs unmapped**, where the unmapped custom resolver's `calypso:src` `mainFields` preference [packages/calypso-jest/src/module-resolver.js:16-20] instead selects `packages/calypso-config/src/index.ts` [packages/calypso-config/package.json:11], quoted verbatim.
