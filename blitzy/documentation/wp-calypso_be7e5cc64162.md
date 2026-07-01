@@ -15,8 +15,8 @@ this machine — never a paraphrase.
 | Branch / commit | `wp-calypso_be7e5cc64162` — HEAD `be7e5cc641622d153040491fd5625c6cb83e12eb` | `git rev-parse HEAD` |
 | Node.js | `v22.23.1` (satisfies `engines.node` `^v22.9.0`) | [`package.json`:L57], [`.nvmrc`:L1] |
 | Yarn | `4.0.2` (activated via Corepack) | [`package.json`:L422] (`packageManager`) |
-| Jest | `29.7.0` | [`package.json`:`devDependencies.jest`] |
-| nock | `13.5.6` | [`package.json`:`devDependencies.nock`] |
+| Jest | `29.7.0` | [`package.json`:L290] |
+| nock | `13.5.6` | [`package.json`:L299] |
 
 All dependencies were already installed (`node_modules` present); no dependency was added,
 updated, or removed. **This document is the only file written.** No existing repository file
@@ -81,7 +81,9 @@ is real I forced it on and inspected the raw bytes:
 ```console
 $ FORCE_COLOR=1 node bin/welcome.js | head -c 40 | od -c
 0000000 033   [   3   6   m                                            
-...
+0000020           _                                                    
+0000040                                
+0000050
 $ FORCE_COLOR=1 node bin/welcome.js | grep -c $'\x1b\[36m'
 7
 ```
@@ -94,22 +96,44 @@ non-TTY stream.
 
 ### 1c. Build the server bundle — `yarn run build-server`
 
-`build-server` [`package.json`:L81] runs webpack against
-[`client/webpack.config.node.js`](client/webpack.config.node.js):
+`build-server` [`package.json`:L81] runs webpack against the server-bundle config, whose
+`entry` points webpack at the `server/` directory [`client/webpack.config.node.js`:L82]. I
+captured the run to a log so its **entire** output can be quoted without eliding anything:
 
 ```console
-$ NODE_OPTIONS=--max-old-space-size=8192 yarn run build-server ; echo "BUILD_EXIT=$?"
-...
-Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
-  npx update-browserslist-db@latest
+$ ( NODE_OPTIONS=--max-old-space-size=8192 yarn run build-server ; echo "BUILD_EXIT=$?" ) > /tmp/build.log 2>&1
+$ tail -n 1 /tmp/build.log
 BUILD_EXIT=0
 $ stat -c%s build/server.js
 7935308
 ```
 
-The build exited **`0`** (only harmless `Browserslist … 17 months old` warnings appeared) and
-produced **`build/server.js` at `7935308` bytes**. `build/` is git-ignored
-([`.gitignore`:L43] = `/build`), so producing it does not dirty the tree.
+The build exited **`0`** and produced **`build/server.js` at `7935308` bytes**. The command's
+*entire* console output is a single Browserslist advisory emitted once per webpack worker; the
+distinct block, quoted verbatim, is:
+
+```console
+Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+```
+
+and its exact multiplicity is **measured** (nothing elided): the log is `97` lines — `32`
+identical three-line advisories (`96` lines, one per worker) plus the single `BUILD_EXIT=0`
+line:
+
+```console
+$ wc -l < /tmp/build.log
+97
+$ grep -c 'Browserslist: browsers data' /tmp/build.log
+32
+$ grep -c 'BUILD_EXIT=0' /tmp/build.log
+1
+```
+
+No webpack **errors** appear because `build-server` runs with `--stats-preset errors-only`
+[`package.json`:L81]. `build/` is git-ignored ([`.gitignore`:L43] = `/build`), so producing it
+does not dirty the tree.
 
 ### 1d. The listen / ready path
 
@@ -126,21 +150,24 @@ server.listen( { port, host: process.env.CALYPSO_IS_FORK ? host : null }, functi
 
 I then attempted the full live listen. **In this sandbox it actually completed** (exceeding the
 limitation the plan anticipated), so I quote the real evidence rather than asserting a
-limitation:
+limitation. The raw server logs are `bunyan` JSON; I pipe them through `bunyan -o short` —
+exactly as the `start-build` script does [`package.json`:L113] — whose short format prints only
+`time LEVEL name: msg` and so omits the `hostname` and `pid` fields (keeping infrastructure
+metadata out of this document):
 
 ```console
-$ CALYPSO_ENV=development BROWSERSLIST_ENV=evergreen PORT=3456 node build/server.js
-{"name":"calypso","hostname":"reverse-code-generator-5b5bf301-h64m5","pid":27174,"level":30,"msg":"wp-calypso booted in 1015ms - http://calypso.localhost:3456","time":"2026-07-01T05:14:51.724Z","v":0}
+$ CALYPSO_ENV=development BROWSERSLIST_ENV=evergreen PORT=3456 node build/server.js | node_modules/.bin/bunyan -o short
+06:17:34.039Z  INFO calypso: wp-calypso booted in 1024ms - http://calypso.localhost:3456
 $ curl -s -o /dev/null -w 'HTTP_STATUS=%{http_code}\n' http://127.0.0.1:3456/
 HTTP_STATUS=200
 ```
 
-The server booted (`wp-calypso booted in 1015ms - http://calypso.localhost:3456`) and answered
+The server booted (`wp-calypso booted in 1024ms - http://calypso.localhost:3456`) and answered
 HTTP **`200`**. **Honest nuance:** because only the *server* bundle was built (not the full
 client bundle), the `200` response is Calypso's *"Welcome to Calypso!"* holding page ("Please
 wait until webpack has finished compiling…") rather than the fully hydrated app — the server is
 up and serving, with the client still compiling. After capturing this I terminated **only** the
-process I spawned (PID `27174`) and confirmed the port was freed and the tree stayed clean.
+server process I spawned and confirmed the port was freed and the tree stayed clean.
 
 ---
 
@@ -167,7 +194,23 @@ module.exports = {
 
 `testEnvironment: 'node'` [`packages/calypso-jest/jest-preset.js`:L11] means each suite boots in
 a Node.js test environment by default; a suite opts into a browser-like DOM per file via a
-`@jest-environment jsdom` docblock pragma. This matches the official Jest documentation, which
+`@jest-environment jsdom` docblock pragma. A concrete in-repo example is
+[`client/state/partner-portal/licenses/test/actions.js`:L2], whose file header is:
+
+```js
+/**
+ * @jest-environment jsdom
+ */
+```
+
+That docblock is widespread — `498` client test files carry it:
+
+```console
+$ grep -rl '@jest-environment jsdom' client | wc -l
+498
+```
+
+This matches the official Jest documentation, which
 states the default environment is a Node.js environment and that a `@jest-environment` docblock
 selects another environment for a given file. (Observed behavior remains the source of truth;
 the docs merely corroborate it.) The example test used in Q5 has **no** `@jest-environment`
@@ -181,13 +224,73 @@ The client suite is launched with `TZ=UTC` [`package.json`:L122]:
 "test-client": "TZ=UTC jest -c=test/client/jest.config.js",
 ```
 
-and Jest sets `NODE_ENV=test` by default. I confirmed both from inside a running test (probe
-executed through the client Jest config, deleted afterward):
+and Jest sets `NODE_ENV=test` by default. To confirm both — and to gather the evidence quoted in
+Q3, Q4, Q6, and Q7 — I wrote one temporary probe test, ran it through the **client** Jest config,
+then deleted it (it never entered the tracked tree; `git status --porcelain` stayed clean). The
+complete probe source (temporary file `client/blitzy_adhoc_probe/test/blitzy_adhoc_test_probe.js`)
+was:
+
+```js
+import config from '@automattic/calypso-config';
+import https from 'node:https';
+
+describe( 'blitzy investigation probe', () => {
+	it( 'Q2/Q3: test-only env vars and injected globals under Jest', () => {
+		console.log( 'PROBE process.env.NODE_ENV=', process.env.NODE_ENV );
+		console.log( 'PROBE process.env.TZ=', process.env.TZ );
+		console.log( 'PROBE typeof global.TextEncoder=', typeof global.TextEncoder );
+		console.log( 'PROBE typeof global.TextDecoder=', typeof global.TextDecoder );
+		console.log( 'PROBE typeof global.CSS=', typeof global.CSS, '| CSS.supports:', typeof global.CSS.supports );
+		console.log( 'PROBE typeof global.ResizeObserver=', typeof global.ResizeObserver );
+		console.log( 'PROBE typeof global.fetch=', typeof global.fetch );
+		console.log( 'PROBE typeof global.matchMedia=', typeof global.matchMedia );
+		console.log( 'PROBE typeof global.crypto.randomUUID=', typeof global.crypto.randomUUID );
+		console.log( 'PROBE typeof global.ReadableStream=', typeof global.ReadableStream );
+		console.log( 'PROBE typeof global.TransformStream=', typeof global.TransformStream );
+		console.log( 'PROBE typeof global.Worker=', typeof global.Worker );
+		console.log( 'PROBE typeof global.structuredClone=', typeof global.structuredClone );
+		console.log( 'PROBE typeof google=', typeof google, '| typeof __i18n_text_domain__=', typeof __i18n_text_domain__, '=', __i18n_text_domain__ );
+	} );
+
+	it( 'Q6/Q7: config env + feature flags via @automattic/calypso-config', () => {
+		console.log( 'PROBE env_id=', config( 'env_id' ) );
+		console.log( 'PROBE process.env.NODE_ENV=', process.env.NODE_ENV );
+		console.log( 'PROBE isEnabled(google-my-business)=', config.isEnabled( 'google-my-business' ) );
+		console.log( 'PROBE isEnabled(ssr/prefetch-timebox)=', config.isEnabled( 'ssr/prefetch-timebox' ) );
+	} );
+
+	it( 'Q4: an unmocked network request is blocked by nock', async () => {
+		const err = await new Promise( ( resolve ) => {
+			const req = https.get( 'https://public-api.wordpress.com/rest/v1.1/me', ( res ) => {
+				res.resume();
+				resolve( null );
+			} );
+			req.on( 'error', ( e ) => resolve( e ) );
+		} );
+		console.log( 'PROBE net.errName=', err && err.name );
+		console.log( 'PROBE net.errMsg=', err && err.message );
+	} );
+} );
+```
+
+I ran it with the command (the client config aliases `@automattic/calypso-config` to the server
+config module — see Q6):
+
+```console
+$ TZ=UTC NODE_OPTIONS=--max-old-space-size=8192 yarn jest -c=test/client/jest.config.js \
+    client/blitzy_adhoc_probe/test/blitzy_adhoc_test_probe.js --ci --runInBand --verbose
+```
+
+The suite reported `Tests: 3 passed, 3 total`. The first two `PROBE` lines from the
+`it( 'Q2/Q3: …' )` block answer this section:
 
 ```text
 PROBE process.env.NODE_ENV= test
 PROBE process.env.TZ= UTC
 ```
+
+The remaining `PROBE …` lines from this **single** run are quoted, slice by slice, in Q3
+(injected globals), Q4 (the blocked network request), Q6 (`env_id`), and Q7 (`isEnabled`).
 
 The dev server, by contrast, runs with `NODE_ENV=development`. That single variable changes
 boot-time behavior. In [`client/server/index.js`:L73-L76]:
@@ -234,11 +337,19 @@ dev bundle.
 **Question:** *"Run some tests and show me which globals, environment variables, and polyfills
 only exist during test execution."*
 
-I ran a probe test through the **client** Jest config and, separately, the same checks in a
-**plain `node -e`** process (no Jest, no setup files). The contrast shows exactly what the test
-setup injects. The probe was created under a temporary path, run, and **deleted** afterward.
+I used the **same** temporary Jest probe as Q2 (its complete source and the invocation are shown
+in §2b) and, separately, ran the same checks in a **plain `node -e`** process (no Jest, no setup
+files). The contrast shows exactly what the test setup injects.
 
-**Under Jest (client config):**
+**Under Jest (client config)** — the `it( 'Q2/Q3: …' )` block of the §2b probe, run with the
+command shown in §2b:
+
+```console
+$ TZ=UTC NODE_OPTIONS=--max-old-space-size=8192 yarn jest -c=test/client/jest.config.js \
+    client/blitzy_adhoc_probe/test/blitzy_adhoc_test_probe.js --ci --runInBand --verbose
+```
+
+prints these `PROBE` lines (quoted verbatim; extracted from the `--verbose` console output):
 
 ```text
 PROBE process.env.NODE_ENV= test
@@ -257,9 +368,11 @@ PROBE typeof global.structuredClone= function
 PROBE typeof google= object | typeof __i18n_text_domain__= string = default
 ```
 
-**In plain `node -e` (no Jest):**
+**In plain `node -e` (no Jest)** — the exact runnable one-liner, with its verbatim output
+immediately below it:
 
-```text
+```console
+$ node -e 'const g=globalThis; console.log("PLAIN process.env.NODE_ENV=", process.env.NODE_ENV); console.log("PLAIN process.env.TZ=", process.env.TZ); console.log("PLAIN typeof globalThis.TextEncoder=", typeof g.TextEncoder); console.log("PLAIN typeof globalThis.CSS=", typeof g.CSS); console.log("PLAIN typeof globalThis.ResizeObserver=", typeof g.ResizeObserver); console.log("PLAIN typeof globalThis.fetch=", typeof g.fetch); console.log("PLAIN typeof globalThis.matchMedia=", typeof g.matchMedia); console.log("PLAIN typeof globalThis.crypto.randomUUID=", typeof g.crypto.randomUUID); console.log("PLAIN typeof globalThis.ReadableStream=", typeof g.ReadableStream); console.log("PLAIN typeof globalThis.TransformStream=", typeof g.TransformStream); console.log("PLAIN typeof globalThis.Worker=", typeof g.Worker); console.log("PLAIN typeof globalThis.structuredClone=", typeof g.structuredClone); console.log("PLAIN typeof globalThis.google=", typeof g.google); console.log("PLAIN typeof globalThis.__i18n_text_domain__=", typeof g.__i18n_text_domain__);'
 PLAIN process.env.NODE_ENV= undefined
 PLAIN process.env.TZ= undefined
 PLAIN typeof globalThis.TextEncoder= function
@@ -286,7 +399,7 @@ PLAIN typeof globalThis.__i18n_text_domain__= undefined
 ### 3b. Globals injected only during tests
 
 These are `undefined` in plain Node and only exist because a setup file defines them. They come
-from the client setup file `test/client/setup-test-framework.js` [L24-L79]:
+from the client setup file [`test/client/setup-test-framework.js`:L24-L79]:
 
 | Global | Definition | Source |
 | --- | --- | --- |
@@ -368,8 +481,25 @@ nock.disableNetConnect();
 
 ### 4a. The exact error on an unmocked request
 
-I triggered an **unmocked** HTTPS request from inside a Jest test and captured the failure
-verbatim (probe run through the client Jest config, then deleted):
+I triggered an **unmocked** HTTPS request from inside a Jest test — the `it( 'Q4: …' )` block of
+the §2b probe. It uses Node's `https` module rather than `fetch` (the client setup replaces
+`fetch` with a mock, Q3, so `fetch` would not reach `nock`):
+
+```js
+	it( 'Q4: an unmocked network request is blocked by nock', async () => {
+		const err = await new Promise( ( resolve ) => {
+			const req = https.get( 'https://public-api.wordpress.com/rest/v1.1/me', ( res ) => {
+				res.resume();
+				resolve( null );
+			} );
+			req.on( 'error', ( e ) => resolve( e ) );
+		} );
+		console.log( 'PROBE net.errName=', err && err.name );
+		console.log( 'PROBE net.errMsg=', err && err.message );
+	} );
+```
+
+Run as part of the §2b probe (same command), it printed the failure verbatim:
 
 ```text
 PROBE net.errName= NetConnectNotAllowedError
@@ -593,10 +723,23 @@ names the config layer that is loaded:
   `development` → `config/development.json`, whose `"env_id": "development"`
   [`config/development.json`:L3].
 
-For context, the other layers carry their own `env_id`: `config/_shared.json` (`"shared"`, L3)
-and `config/production.json` (`"production"`, L3).
+For context, the other layers carry their own `env_id`: `"shared"` [`config/_shared.json`:L3]
+and `"production"` [`config/production.json`:L3].
 
-I confirmed the resolved values from inside a running test (probe, deleted afterward):
+I confirmed the resolved values from inside a running test — the `it( 'Q6/Q7: …' )` block of the
+§2b probe, which reads `config( 'env_id' )` through the aliased `@automattic/calypso-config`
+(§6a), run with the §2b command:
+
+```js
+	it( 'Q6/Q7: config env + feature flags via @automattic/calypso-config', () => {
+		console.log( 'PROBE env_id=', config( 'env_id' ) );
+		console.log( 'PROBE process.env.NODE_ENV=', process.env.NODE_ENV );
+		console.log( 'PROBE isEnabled(google-my-business)=', config.isEnabled( 'google-my-business' ) );
+		console.log( 'PROBE isEnabled(ssr/prefetch-timebox)=', config.isEnabled( 'ssr/prefetch-timebox' ) );
+	} );
+```
+
+Its first two `PROBE` lines answer Q6 (the two `isEnabled` lines are used in Q7 below):
 
 ```text
 PROBE env_id= test
@@ -607,7 +750,7 @@ PROBE process.env.NODE_ENV= test
 
 The browser config package `@automattic/calypso-config` would normally read *client* data, but
 the client Jest config **remaps** it to the *server* config module
-[`test/client/jest.config.js`:L10-L12]:
+[`test/client/jest.config.js`:L10-L13]:
 
 ```js
 	moduleNameMapper: {
@@ -679,7 +822,12 @@ const enable = ( data: ConfigData ) => ( feature: string ) => {
 		data.features[ feature ] = true;
 	}
 };
-...
+
+/**
+ * Disables a specific feature.
+ * @param data the json environment configuration to use for getting config values
+ */
+
 const disable = ( data: ConfigData ) => ( feature: string ) => {
 	if ( data.features ) {
 		data.features[ feature ] = false;
@@ -702,7 +850,16 @@ if (
 	if ( cookies.flags ) {
 		applyFlags( cookies.flags, 'cookie' );
 	}
-	...
+
+	try {
+		const session = window.sessionStorage.getItem( 'flags' );
+		if ( session ) {
+			applyFlags( session, 'sessionStorage' );
+		}
+	} catch ( e ) {
+		// in private context, accessing session storage can throw
+	}
+
 	const match =
 		document.location.search && document.location.search.match( /[?&]flags=([^&]+)(&|$)/ );
 	if ( match ) {
@@ -714,7 +871,25 @@ if (
 ### 7b. Proof: a flag resolves to a *different* value in test vs. dev
 
 From inside a running test I resolved two flags through `@automattic/calypso-config` (which the
-client suite aliases to the server config, Q6a):
+client suite aliases to the server config, Q6a). The four `PROBE` lines below are the complete
+output of the `it( 'Q6/Q7: …' )` block of the §2b probe — the same block quoted verbatim in
+§2b and Q6:
+
+```js
+	it( 'Q6/Q7: config env + feature flags via @automattic/calypso-config', () => {
+		console.log( 'PROBE env_id=', config( 'env_id' ) );
+		console.log( 'PROBE process.env.NODE_ENV=', process.env.NODE_ENV );
+		console.log( 'PROBE isEnabled(google-my-business)=', config.isEnabled( 'google-my-business' ) );
+		console.log( 'PROBE isEnabled(ssr/prefetch-timebox)=', config.isEnabled( 'ssr/prefetch-timebox' ) );
+	} );
+```
+
+produced by the §2b run:
+
+```console
+$ TZ=UTC NODE_OPTIONS=--max-old-space-size=8192 yarn jest -c=test/client/jest.config.js \
+    client/blitzy_adhoc_probe/test/blitzy_adhoc_test_probe.js --ci --runInBand --verbose
+```
 
 ```text
 PROBE env_id= test
@@ -740,7 +915,7 @@ resolves `true`; and `isEnabled('ssr/prefetch-timebox') = true` in tests versus 
 I recomputed the difference between the two `features` maps with a read-only script:
 
 ```console
-$ node -e '<compare config/test.json vs config/development.json features>'
+$ node -e 'const t=require("./config/test.json").features,d=require("./config/development.json").features; const common=Object.keys(t).filter((k)=>k in d); const diff=common.filter((k)=>t[k]!==d[k]); console.log("COMMON_FLAGS=",common.length); console.log("DIFFERING_FLAGS=",diff.length); console.log("--- differing (flag: test -> dev) ---"); diff.sort().forEach((k)=>console.log(k+": "+t[k]+" -> "+d[k]));'
 COMMON_FLAGS= 96
 DIFFERING_FLAGS= 10
 --- differing (flag: test -> dev) ---
@@ -765,13 +940,15 @@ resolve to a different value between the two environments. The two flags proven 
 
 ## Coverage pass (Q1–Q7)
 
-Each sub-question is answered above with a command that was actually run, the verbatim output it
-produced, and exact `file:line` citations.
+Each sub-question is answered above with the exact command(s) that were actually run — Q2, Q3,
+Q4, Q6, and Q7 all draw from the single §2b probe run (its source and command are quoted in
+full there), while Q1 and Q5 have their own commands — the verbatim output they produced, and
+exact `file:line` citations.
 
 - **Q1 — Start the dev server.** ✅ Ran the boot chain: engine gate `EXIT=0`
   [`package.json`:L110, L57]; cyan `calypso` banner with `ESC[36m` proof [`bin/welcome.js`:L6-L11];
   `build-server` `BUILD_EXIT=0` → `build/server.js` `7935308` bytes [`package.json`:L81]; and a
-  **successful live boot** (`wp-calypso booted in 1015ms`, HTTP `200`) via the `server.listen`
+  **successful live boot** (`wp-calypso booted in 1024ms`, HTTP `200`) via the `server.listen`
   ready path [`client/server/index.js`:L83-L86], with the holding-page nuance disclosed honestly.
 - **Q2 — Test env vs. development at boot.** ✅ Jest `testEnvironment: 'node'`
   [`packages/calypso-jest/jest-preset.js`:L11] with `NODE_ENV=test` / `TZ=UTC`
@@ -798,7 +975,7 @@ produced, and exact `file:line` citations.
   [`test/client/jest.config.js`:L11].
 - **Q7 — Tests control config + proof of a different value.** ✅ `isEnabled` order
   [`packages/create-calypso-config/src/index.ts`:L69-L86] and `enable`/`disable`
-  [L107-L122]; proof that `isEnabled('google-my-business')` is `false` in tests
+  [`packages/create-calypso-config/src/index.ts`:L107-L122]; proof that `isEnabled('google-my-business')` is `false` in tests
   [`config/test.json`:L47] but `true` in dev [`config/development.json`:L67], and
   `isEnabled('ssr/prefetch-timebox')` is `true` in tests [`config/test.json`:L116] but `false` in
   dev [`config/development.json`:L188]; `10` of `96` common flags differ.
