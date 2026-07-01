@@ -7,7 +7,7 @@
 
 ## Context / framing
 
-`wp-calypso` runs **seven distinct Jest execution contexts** — `client`, `server`, `packages`, `apps`, `integration`, `build-tools`, and `e2e` — six of which are unified by the shared preset `@automattic/calypso-jest` (`packages/calypso-jest/jest-preset.js`). The contexts differ along five axes that, together, explain why a test can pass by itself and then fail when the whole suite runs:
+`wp-calypso` runs **seven distinct Jest execution contexts** — `client`, `server`, `packages`, `apps`, `integration`, `build-tools`, and `e2e` — of which **five** extend the shared preset `@automattic/calypso-jest` (`packages/calypso-jest/jest-preset.js`) by spreading it: `client` (`test/client/jest.config.js:5` `...base`), `server` (`test/server/jest.config.js:5` `...base`), `build-tools` (`test/build-tools/jest.config.js:5` `...base`), `packages` (via `test/packages/jest-preset.js:9` `...base`), and `apps` (via `test/apps/jest-preset.js:5` `...base`). `integration` is **standalone**: it does not spread the preset and instead reuses only the shared resolver (`test/integration/jest.config.js:8` `resolver: require.resolve( '@automattic/calypso-jest/src/module-resolver.js' )`). `e2e` uses a **custom Playwright config** (`test/e2e/jest.config.js:1` `require( '@automattic/calypso-e2e/src/jest-playwright-config' )`), not the shared preset. The contexts differ along five axes that, together, explain why a test can pass by itself and then fail when the whole suite runs:
 
 1. the resolved **`testEnvironment`** (`jest-environment-node` vs `jest-environment-jsdom`) — Q1;
 2. the injected **`globals`** and the polyfilled/mocked global surface installed by `setupFiles`/`setupFilesAfterEnv` — Q2;
@@ -73,7 +73,12 @@ For `e2e`, the environment is a **custom** one rather than a built‑in package 
 client       => /tmp/…/node_modules/jest-environment-node/build/index.js
 ```
 
-At this commit, **498** client test files carry that docblock (observed via `grep -rl "@jest-environment jsdom" client`), i.e. per‑file jsdom opt‑in is the norm, not the base.
+At this commit, **498** client test files carry that docblock — per‑file jsdom opt‑in is the norm, not the base.
+Command: `grep -rl "@jest-environment jsdom" client | wc -l`
+
+```
+498
+```
 
 - **server** spreads the base (`test/server/jest.config.js:5` `...base`) with no override → `jest-environment-node`:
 
@@ -105,7 +110,35 @@ apps         total projects (configs) = 3  ; {"jest-environment-jsdom":3}
 packages     total projects (configs) = 58 ; {"jest-environment-node":36,"jest-environment-jsdom":22}
 ```
 
-A concrete jsdom example is `packages/block-renderer/jest.config.js:3` `testEnvironment: 'jsdom'`. The 22 jsdom packages observed (via `grep -rl "testEnvironment: 'jsdom'" packages/*/jest.config.js`) are: `block-renderer`, `calypso-products`, `calypso-sentry`, `calypso-url`, `command-palette`, `composite-checkout`, `dataviews`, `design-picker`, `design-preview`, `domain-picker`, `global-styles`, `help-center`, `launchpad`, `odie-client`, `onboarding`, `search`, `shopping-cart`, `site-admin`, `sites`, `subscriber`, `verbum-block-editor`, `wpcom-checkout`. (Node‑default packages may additionally opt into jsdom per file via docblock.)
+A concrete jsdom example is `packages/block-renderer/jest.config.js:3` `testEnvironment: 'jsdom'`. The full set of **22** jsdom package projects is the verbatim output of:
+Command: `grep -rl "testEnvironment: 'jsdom'" packages/*/jest.config.js`
+
+```
+packages/block-renderer/jest.config.js
+packages/calypso-products/jest.config.js
+packages/calypso-sentry/jest.config.js
+packages/calypso-url/jest.config.js
+packages/command-palette/jest.config.js
+packages/composite-checkout/jest.config.js
+packages/dataviews/jest.config.js
+packages/design-picker/jest.config.js
+packages/design-preview/jest.config.js
+packages/domain-picker/jest.config.js
+packages/global-styles/jest.config.js
+packages/help-center/jest.config.js
+packages/launchpad/jest.config.js
+packages/odie-client/jest.config.js
+packages/onboarding/jest.config.js
+packages/search/jest.config.js
+packages/shopping-cart/jest.config.js
+packages/site-admin/jest.config.js
+packages/sites/jest.config.js
+packages/subscriber/jest.config.js
+packages/verbum-block-editor/jest.config.js
+packages/wpcom-checkout/jest.config.js
+```
+
+(22 package projects; Node‑default packages may additionally opt into jsdom per file via docblock.)
 
 - **e2e** (the 7th context) requires a Playwright config: `test/e2e/jest.config.js:1` `require( '@automattic/calypso-e2e/src/jest-playwright-config' )`. That config points `testEnvironment` at a **custom** environment file — `packages/calypso-e2e/src/jest-playwright-config/index.js:7` `testEnvironment: path.join( __dirname, 'environment.ts' )` — i.e. it resolves to `packages/calypso-e2e/src/jest-playwright-config/environment.ts`, neither of the two built‑ins. (This context is named for completeness; running Playwright is not required to answer Q1–Q5.)
 
@@ -342,7 +375,12 @@ plain Node require.resolve('calypso/server/config')  => client/server/config/ind
 - **server** → `test/server/jest.config.js:10` `'^@automattic/calypso-config$': 'calypso/server/config'` plus the subpath variant `test/server/jest.config.js:11` `'^@automattic/calypso-config/(.*)$': 'calypso/server/config/$1'`. The bare specifier `calypso/server/config` resolves via the workspace symlink `node_modules/calypso -> ../client` (verified: `readlink node_modules/calypso` → `../client`) to **the same** file `client/server/config/index.js`. That symlink exists because `client/package.json:2` `"name": "calypso"`.
 - **packages / apps / build-tools** have **no** `@automattic/calypso-config` mapper, so the specifier resolves to the **real package** `packages/calypso-config/src/index.ts` via `calypso:src` (`packages/calypso-config/package.json:11` `"calypso:src": "src/index.ts"`). Under a bundler/Node it would instead be `main` `dist/cjs/index.js` (`packages/calypso-config/package.json:9`) or `module` `dist/esm/index.js` (`:10`).
 
-**Reported exactly (an honest divergence from the calypso‑url case in Q3):** for `@automattic/calypso-config`, plain Node `require.resolve` does **not** throw — `packages/calypso-config/dist/cjs/index.js` _was_ built at this checkout (`ls` shows a 3394‑byte file). So the calypso‑config `dist` exists whereas the calypso‑url `dist` (Q3) does not; in both cases Jest still selects the `src` file via `calypso:src`.
+**Reported exactly (an honest divergence from the calypso‑url case in Q3):** for `@automattic/calypso-config`, plain Node `require.resolve` does **not** throw — `packages/calypso-config/dist/cjs/index.js` _was_ built at this checkout. So the calypso‑config `dist` exists whereas the calypso‑url `dist` (Q3) does not; in both cases Jest still selects the `src` file via `calypso:src`.
+Command: `stat -c '%s bytes' packages/calypso-config/dist/cjs/index.js`
+
+```
+3394 bytes
+```
 
 ### Same specifier → different absolute files (direct answer to Q4)
 
@@ -450,7 +488,7 @@ Each item below is answered above with adjacent verbatim evidence and a `file:li
 - [x] Every `test-*` command enumerated: `test` (`package.json:120`), `test-client` (`:122`), `test-packages` (`:129`), `test-server` (`:131`), `test-build-tools` (`:121`), `test-integration` (`:125`), `test-apps` (`:127`).
 - [x] Resolved `testEnvironment` per context via `--showConfig`: `client`/`server`/`integration`/`build-tools` = `jest-environment-node`; `apps` = 3× `jest-environment-jsdom`; `packages` = 36 node / 22 jsdom; `e2e` = custom `packages/calypso-e2e/src/jest-playwright-config/environment.ts`.
 - [x] Both built‑in env packages named: `jest-environment-node`, `jest-environment-jsdom`.
-- [x] Documented divergence reported: client BASE = node (not jsdom); jsdom is per‑file via docblock (498 client files).
+- [x] Documented divergence reported: client BASE = node (not jsdom); jsdom is per‑file via docblock (client docblock count shown with its producing command and verbatim output in Q1).
 
 **Q2 — Global surface differences**
 
@@ -471,7 +509,7 @@ Each item below is answered above with adjacent verbatim evidence and a `file:li
 - [x] Overridden specifier `@automattic/calypso-config` traced per context via `--showConfig`.
 - [x] Same specifier → different absolute files: `client/server/config/index.js` (client/integration/server) vs `packages/calypso-config/src/index.ts` (packages/apps/build-tools).
 - [x] Symlink mechanism shown: `node_modules/calypso -> ../client` (because `client/package.json:2` `"name": "calypso"`).
-- [x] Honest divergence reported: calypso-config `dist` exists (plain Node does not throw), unlike calypso-url.
+- [x] Honest divergence reported: calypso-config `dist` exists (plain Node does not throw), unlike calypso-url; the calypso-config dist presence and byte size are shown with their producing command and verbatim output in Q4.
 
 **Q5 — Initialization order & browser‑API provider**
 
