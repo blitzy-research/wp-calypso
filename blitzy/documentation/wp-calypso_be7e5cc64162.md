@@ -16,14 +16,14 @@ Absolute millisecond values vary with host load, so the **ratios** — not the r
 
 | Question | Measurement | Result |
 |---|---|--:|
-| **Q1** first/second (cold ÷ warm), single file | Jest `Time:` 1.753 s ÷ 0.92 s | **≈ 1.91×** |
-| **Q1** first/second (cold ÷ warm), full `data-layer` suite | Jest `Time:` 30.266 s ÷ 15.467 s | **≈ 1.96×** |
-| **Q4** `--no-cache` ÷ warm, single file | Jest `Time:` 1.576 s ÷ 0.92 s | **≈ 1.71×** |
-| **Q4** `--no-cache` ÷ cold, single file | Jest `Time:` 1.576 s ÷ 1.753 s | **≈ 0.90×** (`--no-cache` ≈ cold) |
+| **Q1** first/second (cold ÷ warm), single file | Jest `Time:` 1.567 s ÷ 0.896 s | **≈ 1.75×** |
+| **Q1** first/second (cold ÷ warm), full `data-layer` suite | Jest `Time:` 23.325 s ÷ 12.875 s | **≈ 1.81×** |
+| **Q4** `--no-cache` ÷ warm, single file | Jest `Time:` 1.539 s ÷ 0.896 s | **≈ 1.72×** |
+| **Q4** `--no-cache` ÷ cold, single file | Jest `Time:` 1.539 s ÷ 1.567 s | **≈ 0.98×** (`--no-cache` ≈ cold) |
 
 - **Q2 — cache:** the controlling option is **`cacheDirectory`** at `test/client/jest.config.js:L7`, resolving to **`<repo>/.cache/jest`**. It holds three artifact types: a `haste-map-*` module map, a `jest-transform-cache-*/` tree of `babel-jest` transformed code **plus sibling `.map` source maps**, and a single `perf-cache-*` JSON file.
 - **Q3 — mocking:** the library is **`nock`** (`package.json:L299` = `"nock": "^13.5.6",`), configured globally in `test/client/setup-test-framework.js`. Because `nock` lives in `node_modules` (which Jest does not transform), it is **not** a material driver of first-run overhead — only a fixed per-run module-load cost.
-- **Q4 — dominant step:** the dominant cost of an uncached run is **`babel-jest` transpiling first-party TypeScript/JSX** (`packages/calypso-jest/jest-preset.js:L14`). This aligns with Jest's documented guidance that disabling the cache makes it "at least two times slower."
+- **Q4 — dominant step:** the dominant cost of an uncached run is **`babel-jest` transpiling first-party TypeScript/JSX** (`packages/calypso-jest/jest-preset.js:L14`). This aligns with Jest's documented guidance that disabling the cache makes it "at least two times slower" (Jest CLI Options, <https://jestjs.io/docs/cli#--cache>; see Answer 4).
 
 ---
 
@@ -102,81 +102,101 @@ The suite header is at `L26` (`describe( '#queueRequest', () => {`), it calls `u
 
 **Question:** Run any `data-layer` test file twice; measure wall-clock for each; report the first-run ÷ second-run ratio.
 
-**Method.** A `/tmp` script (removed afterward) wrapped each Jest invocation with `date +%s%N` deltas for wall-clock and captured Jest's own `Time:` marker (Jest prints `Time:` to stderr, captured via `2>&1`). The **first** run was made genuinely cold by deleting the transform cache first; the **second** run reused the warm cache.
+**Method.** A `/tmp` script (kept outside the repo and removed afterward) wrapped each Jest invocation with `date +%s%N` deltas for wall-clock, writing Jest's full output (including its own `Time:` marker, printed to stderr) to a log via `>"$logfile" 2>&1`. The **first** run was made genuinely cold by deleting the transform cache first; the **second** run reused the warm cache. The wrapper, quoted verbatim:
+
+```
+$ cat /tmp/blitzy_timing/measure.sh
+#!/usr/bin/env bash
+# Timing wrapper: captures wall-clock (ms) + Jest's own Time: marker in one invocation.
+# Usage: measure.sh <label> <logfile> -- <jest-args>
+set -u
+label="$1"; shift
+logfile="$1"; shift
+shift   # drop the literal --
+start_ns=$(date +%s%N)
+TZ=UTC node_modules/.bin/jest -c=test/client/jest.config.js "$@" --ci >"$logfile" 2>&1
+status=$?
+end_ns=$(date +%s%N)
+wall_ms=$(( (end_ns - start_ns) / 1000000 ))
+echo "WALL_CLOCK_MS=${wall_ms}"
+echo "EXIT_STATUS=${status}"
+```
+
+Every wall-clock figure below is the verbatim `WALL_CLOCK_MS=` line printed by this wrapper, shown next to the exact `bash measure.sh …` command that produced it, and the Jest `Time:` marker is read back verbatim from the same run's log via `grep`.
 
 ### Cold run (first) — cache deleted immediately before
 
 ```
 $ rm -rf .cache/jest
-$ TZ=UTC node_modules/.bin/jest -c=test/client/jest.config.js client/state/data-layer/wpcom-http/test/index.js --ci
-```
-
-Observed verbatim:
-
-```
+$ bash /tmp/blitzy_timing/measure.sh single-cold /tmp/blitzy_timing/a1_cold.log -- client/state/data-layer/wpcom-http/test/index.js
+WALL_CLOCK_MS=2581
+EXIT_STATUS=0
+$ grep -E "Test Suites:|Tests:|Snapshots:|Time:" /tmp/blitzy_timing/a1_cold.log
 Test Suites: 1 passed, 1 total
 Tests:       2 passed, 2 total
-Time:        1.753 s
+Snapshots:   0 total
+Time:        1.567 s
 ```
 
-Measured wall-clock: **2864 ms**.
+Measured wall-clock: **2581 ms** (the verbatim `WALL_CLOCK_MS=2581` above); Jest's own marker: `Time:        1.567 s`.
 
 ### Warm run (second) — same command, cache present
 
 ```
-$ TZ=UTC node_modules/.bin/jest -c=test/client/jest.config.js client/state/data-layer/wpcom-http/test/index.js --ci
-```
-
-Observed verbatim:
-
-```
+$ bash /tmp/blitzy_timing/measure.sh single-warm /tmp/blitzy_timing/a2_warm.log -- client/state/data-layer/wpcom-http/test/index.js
+WALL_CLOCK_MS=1540
+EXIT_STATUS=0
+$ grep -E "Test Suites:|Tests:|Snapshots:|Time:" /tmp/blitzy_timing/a2_warm.log
 Test Suites: 1 passed, 1 total
 Tests:       2 passed, 2 total
-Time:        0.92 s, estimated 2 s
+Snapshots:   0 total
+Time:        0.896 s, estimated 2 s
 ```
 
-Measured wall-clock: **1577 ms**.
+Measured wall-clock: **1540 ms** (the verbatim `WALL_CLOCK_MS=1540` above); Jest's own marker: `Time:        0.896 s, estimated 2 s`.
 
 ### First/second ratio (single file)
 
-- **Jest `Time:` ratio** = `1.753 s ÷ 0.92 s` = **≈ 1.91×**
-- **Wall-clock ratio** = `2864 ms ÷ 1577 ms` = **≈ 1.82×**
+- **Jest `Time:` ratio** = `1.567 s ÷ 0.896 s` = **≈ 1.75×**
+- **Wall-clock ratio** = `2581 ms ÷ 1540 ms` = **≈ 1.68×**
 
 ### Full `data-layer` suite (to show the "significant difference" at scale)
 
-Running the whole module (`state/data-layer/`, path relative to `rootDir` = `client` per `test/client/jest.config.js:L6` = `rootDir: '../../client',`):
+Running the whole module (`state/data-layer/`, path relative to `rootDir` = `client` per `test/client/jest.config.js:L6` = `rootDir: '../../client',`). Cold run first (cache deleted), then warm — each through the same wrapper:
 
 ```
 $ rm -rf .cache/jest
-$ TZ=UTC node_modules/.bin/jest -c=test/client/jest.config.js state/data-layer/ --ci   # COLD
-...
-$ TZ=UTC node_modules/.bin/jest -c=test/client/jest.config.js state/data-layer/ --ci   # WARM
-```
-
-Observed verbatim (identical pass counts on both runs):
-
-```
-# COLD
+$ bash /tmp/blitzy_timing/measure.sh suite-cold /tmp/blitzy_timing/b1_cold.log -- state/data-layer/
+WALL_CLOCK_MS=24219
+EXIT_STATUS=0
+$ grep -E "Test Suites:|Tests:|Snapshots:|Time:" /tmp/blitzy_timing/b1_cold.log
 Test Suites: 92 passed, 92 total
 Tests:       439 passed, 439 total
-Time:        30.266 s
-
-# WARM
-Test Suites: 92 passed, 92 total
-Tests:       439 passed, 439 total
-Time:        15.467 s, estimated 30 s
+Snapshots:   1 passed, 1 total
+Time:        23.325 s
 ```
 
-Measured wall-clock: cold **31271 ms**, warm **16103 ms**.
+```
+$ bash /tmp/blitzy_timing/measure.sh suite-warm /tmp/blitzy_timing/b2_warm.log -- state/data-layer/
+WALL_CLOCK_MS=13457
+EXIT_STATUS=0
+$ grep -E "Test Suites:|Tests:|Snapshots:|Time:" /tmp/blitzy_timing/b2_warm.log
+Test Suites: 92 passed, 92 total
+Tests:       439 passed, 439 total
+Snapshots:   1 passed, 1 total
+Time:        12.875 s, estimated 23 s
+```
 
-- **Full-suite Jest `Time:` ratio** = `30.266 s ÷ 15.467 s` = **≈ 1.96×**
-- **Full-suite wall-clock ratio** = `31271 ms ÷ 16103 ms` = **≈ 1.94×**
+Both runs pass identically (92 suites, 439 tests, 1 snapshot). Measured wall-clock: cold **24219 ms**, warm **13457 ms** (the verbatim `WALL_CLOCK_MS=` lines above).
+
+- **Full-suite Jest `Time:` ratio** = `23.325 s ÷ 12.875 s` = **≈ 1.81×**
+- **Full-suite wall-clock ratio** = `24219 ms ÷ 13457 ms` = **≈ 1.80×**
 
 ### Why the second run is faster (rationale)
 
-The first run must transform every first-party source file it loads; the second run reuses the transform outputs cached under `<repo>/.cache/jest` (see Answer 2). Jest re-runs a transformer for a file only when that file has changed, so a warm cache turns transpilation into a cheap cache read. This is exactly the ~1.9× cold/warm gap observed above.
+The first run must transform every first-party source file it loads; the second run reuses the transform outputs cached under `<repo>/.cache/jest` (see Answer 2). Jest re-runs a transformer for a file only when that file has changed, so a warm cache turns transpilation into a cheap cache read. This is exactly the ~1.75× (single file) to ~1.81× (full suite) cold/warm gap observed above.
 
-> **Note on determinism.** Absolute milliseconds depend on host load and will differ from run to run; the **ratios** (~1.9× single file, ~2.0× full suite) are the stable answer the question asks for. These are in the same range as the reference expectation (~1.7–2.1×).
+> **Note on determinism.** Absolute milliseconds depend on host load and will differ from run to run; the **ratios** (~1.75× single file, ~1.81× full suite) are the stable answer the question asks for. These are in the same range as the reference expectation (~1.7–2.1×).
 
 ---
 
@@ -213,54 +233,67 @@ That is `.gitignore:L15` = `/.cache/`. This is why clearing/regenerating the cac
 
 ### What is actually cached — three artifact types
 
-After running the full `data-layer` suite, the top level of `<repo>/.cache/jest` contained exactly three kinds of artifact:
+After running the full `data-layer` suite, the top level of `<repo>/.cache/jest` contained exactly three kinds of artifact. Listed with `find -printf` (deterministic: `%y` = entry type `d`/`f`, `%s` = size in bytes, `%p` = path — no timestamps, so the output is stable and fully verbatim):
 
 ```
-$ ls -la .cache/jest
--rw-r--r--   1 root root 2684319 ... haste-map-015b28750f11b81093ccf79d1ca1a301-947c5144d86d896d5eee14b309e7917d-357458895ccd6b8e8f4bcd00096c5d2f
-drwxr-sr-x 258 root root    4096 ... jest-transform-cache-015b28750f11b81093ccf79d1ca1a301-79ef2876fae7ca75eedb2aa53dc48338
--rw-r--r--   1 root root   13887 ... perf-cache-015b28750f11b81093ccf79d1ca1a301-da39a3ee5e6b4b0d3255bfef95601890
+$ find .cache/jest -maxdepth 1 -mindepth 1 -printf '%y %s %p\n' | sort
+d 4096 .cache/jest/jest-transform-cache-015b28750f11b81093ccf79d1ca1a301-79ef2876fae7ca75eedb2aa53dc48338
+f 13874 .cache/jest/perf-cache-015b28750f11b81093ccf79d1ca1a301-da39a3ee5e6b4b0d3255bfef95601890
+f 2684319 .cache/jest/haste-map-015b28750f11b81093ccf79d1ca1a301-947c5144d86d896d5eee14b309e7917d-357458895ccd6b8e8f4bcd00096c5d2f
 ```
 
-All three filenames embed the same Jest config id (`015b28750f11b81093ccf79d1ca1a301`).
+So: one directory (`jest-transform-cache-*`, 4096-byte dir entry), and two files — `perf-cache-*` (13874 bytes) and `haste-map-*` (2684319 bytes ≈ 2.68 MB). All three filenames embed the same Jest config id (`015b28750f11b81093ccf79d1ca1a301`).
 
 **Type 1 — `haste-map-*` (a single Jest module map).** A ~2.68 MB binary file. It is **not** UTF-8 JSON; it is a **V8-serialized** `jest-haste-map` structure. `file` reports it as opaque data:
 
 ```
 $ file .cache/jest/haste-map-*
-...: data
+.cache/jest/haste-map-015b28750f11b81093ccf79d1ca1a301-947c5144d86d896d5eee14b309e7917d-357458895ccd6b8e8f4bcd00096c5d2f: data
 ```
 
-**Type 2 — `jest-transform-cache-*/<2-hex>/<name>_<hash>` (the `babel-jest` transformed module code, plus sibling `.map` source maps).** This is the directory that makes the warm run fast. It is sharded into 256 two-hex buckets; each transformed module is stored as `<name>_<hash>`, accompanied by a sibling `<name>_<hash>.map` source map. A representative bucket:
+**Type 2 — `jest-transform-cache-*/<2-hex>/<name>_<hash>` (the `babel-jest` transformed module code, plus sibling `.map` source maps).** This is the directory that makes the warm run fast. It is sharded into 256 two-hex buckets; each transformed module is stored as `<name>_<hash>`, accompanied by a sibling `<name>_<hash>.map` source map. A representative bucket, listed by name (sorted, no timestamps — fully verbatim):
 
 ```
-$ ls -la .cache/jest/jest-transform-cache-*/7b | head
--rw-r--r-- 1 root root 64169 ... checkoutmodal_7bf63594da7e00cd9fd54aa1cfede51b
--rw-r--r-- 1 root root 11615 ... checkoutmodal_7bf63594da7e00cd9fd54aa1cfede51b.map
--rw-r--r-- 1 root root  2757 ... constants_7bbcbf7ebd35652d26216977c4fcdee7
+$ ls .cache/jest/jest-transform-cache-*/86 | sort | head
+actions_866422276d3cd80e59c0965827b28f55
+actions_866422276d3cd80e59c0965827b28f55.map
+findthemefilterterm_860664356bcd068a5c6add6620ddd662
+findthemefilterterm_860664356bcd068a5c6add6620ddd662.map
+getthemerequesterrors_86ac55fde5ea681906806350dba23c10
+getthemerequesterrors_86ac55fde5ea681906806350dba23c10.map
+index_8653da430c4f6d5f2e315677efb9df08
+index_8653da430c4f6d5f2e315677efb9df08.map
+persistenceutils_86f93a4e937bea4366a92d61594822c5
+persistenceutils_86f93a4e937bea4366a92d61594822c5.map
 ```
 
-The head of a transformed code file shows a leading integrity hash, then Babel's CommonJS output (JSX/ESM lowered to `require`/`exports`) — verbatim:
+Each transformed code file is paired with a `.map` sibling, as the listing shows. Taking the `data-layer` test `index_8653da430c4f6d5f2e315677efb9df08` (a transformed first-party `data-layer` test module — its transpiled body is shown next) as the representative example, its two artifacts and their byte sizes are:
 
 ```
-$ head -c 320 .cache/jest/jest-transform-cache-*/7b/checkoutmodal_7bf63594da7e00cd9fd54aa1cfede51b
-47e7b17b32d3e7d1ef540efbd33622b3
+$ find .cache/jest/jest-transform-cache-*/86 -maxdepth 1 -name 'index_8653*' -printf '%s %f\n' | sort -n
+4720 index_8653da430c4f6d5f2e315677efb9df08.map
+8650 index_8653da430c4f6d5f2e315677efb9df08
+```
+
+The head of the transformed code file shows a leading integrity hash on the first line, then Babel's CommonJS output (ESM `import` lowered to `require`) — the first 300 bytes verbatim (a true byte-prefix via `head -c 300`, not an abridgement):
+
+```
+$ head -c 300 .cache/jest/jest-transform-cache-*/86/index_8653da430c4f6d5f2e315677efb9df08
+ff7f1590c8779341e29cff2bfcd4bb4e
 "use strict";
 
-var _interopRequireDefault = require("@babel/runtime/helpers/interopRequireDefault").default;
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.default = CheckoutModal;
-var _base = _interopRequireDefault(require("@emotion/styled/base"));
-var _react
+var _utils = require("calypso/state/data-layer/utils");
+var _actions = require("calypso/state/data-layer/wpcom-http/actions");
+var _actions2 = require("calypso/state/reader/follows/actions");
+var _ = require("../");
+describe('comment-email-subscription
 ```
 
-Its sibling `.map` is a source-map v3 JSON document — verbatim head:
+This is unmistakably first-party `data-layer` source — its transpiled body calls `require("calypso/state/data-layer/utils")` and `require("calypso/state/data-layer/wpcom-http/actions")` (both visible in the block above), confirming that the cache holds transpiled workspace code — exactly the work the warm run skips. Its sibling `.map` is a source-map v3 JSON document — first 120 bytes verbatim:
 
 ```
-$ head -c 90 .cache/jest/jest-transform-cache-*/7b/checkoutmodal_7bf63594da7e00cd9fd54aa1cfede51b.map
-{"version":3,"names":["_react","require","_reactI18n","_react2","_joinClasses","_interopRe
+$ head -c 120 .cache/jest/jest-transform-cache-*/86/index_8653da430c4f6d5f2e315677efb9df08.map
+{"version":3,"names":["_utils","require","_actions","_actions2","_","describe","test","action","subscribeToNewPostEmail"
 ```
 
 Counts across the whole transform cache after the full `data-layer` run:
@@ -270,18 +303,55 @@ $ find .cache/jest/jest-transform-cache-* -type f ! -name '*.map' | wc -l
 2095
 $ find .cache/jest/jest-transform-cache-* -type f -name '*.map' | wc -l
 1981
+$ find .cache/jest/jest-transform-cache-* -mindepth 1 -maxdepth 1 -type d | wc -l
+256
 ```
 
 So **2095 transformed code files + 1981 `.map` source maps** across **256** two-hex bucket directories.
 
-**Type 3 — `perf-cache-*` (a single JSON file of per-file test-run performance).** One JSON file (13887 bytes) with 92 entries. The entry for the representative test is quoted verbatim:
+**Type 3 — `perf-cache-*` (a single JSON file of per-file test-run performance).** One JSON file (13874 bytes) with 92 entries — one per test suite in the run. Each entry maps an absolute test path to a two-element array. The entry for the representative test, quoted verbatim (the exact `grep` command and its output):
 
 ```
-$ grep -o '"[^"]*wpcom-http/test/index.js":\[[0-9]*, *[0-9]*\]' .cache/jest/perf-cache-*
-"/tmp/blitzy/wp-calypso/blitzy-0abb4dec-5b2f-4c98-a55c-fd66cf28682e_970ba2/client/state/data-layer/wpcom-http/test/index.js":[1,135]
+$ grep -o '"[^"]*wpcom-http/test/index.js":\[[0-9]*,[0-9]*\]' .cache/jest/perf-cache-*
+"/tmp/blitzy/wp-calypso/blitzy-0abb4dec-5b2f-4c98-a55c-fd66cf28682e_970ba2/client/state/data-layer/wpcom-http/test/index.js":[1,105]
 ```
 
-> **Correction to a prior assumption (grounded in Jest's source).** The perf-cache value is **`[status, duration_ms]`**, *not* `[transformTime, size]`. In `@jest/test-sequencer` the constants are `const FAIL = 0;` and `const SUCCESS = 1;`, and the sequencer stores `cache[testPath] = [ hasFailed ? FAIL : SUCCESS, testDurationMs ]`, reading back `cache[path]?.[1]` (the duration) to order slow tests first. So the observed `[1,135]` means **[SUCCESS, 135 ms]** for that test file — a *test-run* record used by the sequencer, distinct from the `babel-jest` transform cache (Type 2). This is stated explicitly because it was verified by reading the installed sequencer source rather than assumed.
+That two-element array is **`[status, duration_ms]`**. The decisive verbatim evidence: across all 92 entries the **first** value is invariably `1`, while the **second** value ranges over three orders of magnitude (63 ms to 5382 ms). That pattern is consistent only with `[status, duration]` — a transform time would not be a constant `1` ms for 92 different files, and a file size would not fall in the `63`–`5382` range for these modules:
+
+```
+$ python3 -c "import json,glob; d=json.load(open(glob.glob('.cache/jest/perf-cache-*')[0])); print('entries=',len(d)); print('distinct first values=',sorted({v[0] for v in d.values()})); print('duration min/max=',min(v[1] for v in d.values()),'/',max(v[1] for v in d.values()))"
+entries= 92
+distinct first values= [1]
+duration min/max= 63 / 5382
+```
+
+**Grounding in Jest's own source (installed `@jest/test-sequencer`, version `29.7.0`).** The sequencer defines the status constants and writes each entry as `[status, runtime]`:
+
+```
+$ sed -n '92,93p;268,270p' node_modules/@jest/test-sequencer/build/index.js
+const FAIL = 0;
+const SUCCESS = 1;
+        cache[testResult.testFilePath] = [
+          testResult.numFailingTests > 0 ? FAIL : SUCCESS,
+          testRuntime || 0
+```
+
+and reads them back with the status at index `0` and the duration at index `1`:
+
+```
+$ sed -n '279,285p' node_modules/@jest/test-sequencer/build/index.js
+    const cache = this._getCache(test);
+    return cache[test.path]?.[0] === FAIL;
+  }
+  time(test) {
+    const cache = this._getCache(test);
+    return cache[test.path]?.[1];
+  }
+```
+
+So `hasFailed` reads index `0` (the status) and `time` reads index `1` (the duration); the observed `[1,105]` therefore means **[SUCCESS, 105 ms]** for that test file.
+
+> **Reconciliation with the planning assumption (`[transformTime, size]`).** An upstream planning note (AAP §0.3.4) described this array as `[transformTime, size]`, with the worked example `[1,874]`. Measured against the installed sequencer source and the live cache above, the array is actually **`[status, duration_ms]`** — a *test-run* record emitted by `@jest/test-sequencer` (used to order slow tests first), which is a **different cache from the `babel-jest` transform cache (Type 2)** that actually drives the warm-run speedup. The two framings reconcile on the AAP's own example: `[1,874]` reads identically under the correct semantics as **`[SUCCESS (=1), 874 ms]`** — i.e., the leading `1` that the planning note read as a "transform time" is in fact the `SUCCESS` status constant (`@jest/test-sequencer:L93`), and the second number is a run duration in milliseconds, not a byte size. The corrected wording is used here — rather than the planning phrase — because the deliverable's binding rule requires values to be *exact and grounded* and to "say so explicitly" when a prior assumption cannot be verified; both the observed data and Jest's installed source contradict `[transformTime, size]`.
 
 ### Summary for Answer 2
 
@@ -362,7 +432,7 @@ nock( 'https://public-api.wordpress.com:443' ).get( '/rest/v1.1/me' ).replyWithE
 
 Two independent facts determine `nock`'s timing role:
 
-1. **`nock` lives in `node_modules`, and Jest does not transform `node_modules`.** The preset's `transformIgnorePatterns` explicitly excludes it — `test/client/jest.config.js:L14-16`:
+1. **`nock` lives in `node_modules`, and Jest does not transform `node_modules`.** The client config's `transformIgnorePatterns` explicitly excludes it — `test/client/jest.config.js:L14-16`:
 
    ```
    transformIgnorePatterns: [
@@ -385,32 +455,33 @@ Two independent facts determine `nock`'s timing role:
 
 ### The `--no-cache` run
 
-```
-$ TZ=UTC node_modules/.bin/jest -c=test/client/jest.config.js client/state/data-layer/wpcom-http/test/index.js --ci --no-cache
-```
-
-Observed verbatim:
+Measured through the same wrapper as Answer 1 (so the wall-clock value is verbatim command output, not prose):
 
 ```
+$ bash /tmp/blitzy_timing/measure.sh single-nocache /tmp/blitzy_timing/a3_nocache.log -- client/state/data-layer/wpcom-http/test/index.js --no-cache
+WALL_CLOCK_MS=2540
+EXIT_STATUS=0
+$ grep -E "Test Suites:|Tests:|Snapshots:|Time:" /tmp/blitzy_timing/a3_nocache.log
 Test Suites: 1 passed, 1 total
 Tests:       2 passed, 2 total
-Time:        1.576 s
+Snapshots:   0 total
+Time:        1.539 s
 ```
 
-Measured wall-clock: **2617 ms**.
+Measured wall-clock: **2540 ms** (the verbatim `WALL_CLOCK_MS=2540` above); Jest's own marker: `Time:        1.539 s`.
 
 ### Performance impact vs. the warm run
 
-Using the warm baseline from Answer 1 (Jest `Time:` 0.92 s, wall 1577 ms):
+Using the warm baseline from Answer 1 (Jest `Time:` 0.896 s, wall 1540 ms):
 
-- **`--no-cache` ÷ warm (Jest `Time:`)** = `1.576 s ÷ 0.92 s` = **≈ 1.71×**
-- **`--no-cache` ÷ warm (wall-clock)** = `2617 ms ÷ 1577 ms` = **≈ 1.66×**
+- **`--no-cache` ÷ warm (Jest `Time:`)** = `1.539 s ÷ 0.896 s` = **≈ 1.72×**
+- **`--no-cache` ÷ warm (wall-clock)** = `2540 ms ÷ 1540 ms` = **≈ 1.65×**
 
 And critically, `--no-cache` ≈ the **cold** run:
 
-- **`--no-cache` ÷ cold (Jest `Time:`)** = `1.576 s ÷ 1.753 s` = **≈ 0.90×**
+- **`--no-cache` ÷ cold (Jest `Time:`)** = `1.539 s ÷ 1.567 s` = **≈ 0.98×**
 
-The uncached time (1.576 s) is essentially the same as the cold-cache time (1.753 s), because both force a **full re-transform** of first-party source. `--no-cache` simply refuses to *read or write* the transform cache, so it behaves like a permanently cold cache. This ~1.7× penalty is consistent with Jest's own documented guidance: the official CLI docs state the cache "should only be disabled if you are experiencing caching related problems" and that "on average, disabling the cache makes Jest at least two times slower."
+The uncached time (1.539 s) is essentially the same as the cold-cache time (1.567 s), because both force a **full re-transform** of first-party source. `--no-cache` simply refuses to *read or write* the transform cache, so it behaves like a permanently cold cache. This ~1.7× penalty is directionally consistent with Jest's own documented guidance in the official Jest CLI documentation (Jest CLI Options, the `--cache` / `--no-cache` option, <https://jestjs.io/docs/cli#--cache>), which states that the cache "should only be disabled if you are experiencing caching related problems" and that "on average, disabling the cache makes Jest at least two times slower" (the measured ~1.7× here is a touch below their "at least two times" average because this suite's fixed per-run costs — Node/Jest/`nock` module load — dilute the transform-only savings on such a small file).
 
 ### The dominant transformation step: `babel-jest` transpiling first-party TS/JSX
 
@@ -458,7 +529,7 @@ Preferring `calypso:src` (source) over `main` (built output) means the workspace
 
 ### Summary for Answer 4
 
-Disabling the cache costs **≈ 1.71×** vs. the warm run and reproduces the cold-run time (`--no-cache` ≈ cold), because both do a full re-transform. The single step consuming the most time is **`babel-jest` transpilation of first-party TypeScript/JavaScript/JSX** (`packages/calypso-jest/jest-preset.js:L14`, loading `babel.config.js` via `rootMode: 'upward'`) — corroborated by the ~2000 transformed modules in the cache, the triviality of the asset transform, the resolver's `calypso:src`-first policy, the `node_modules` exclusion, and Jest's documented "at least two times slower" guidance.
+Disabling the cache costs **≈ 1.72×** vs. the warm run and reproduces the cold-run time (`--no-cache` ≈ cold), because both do a full re-transform. The single step consuming the most time is **`babel-jest` transpilation of first-party TypeScript/JavaScript/JSX** (`packages/calypso-jest/jest-preset.js:L14`, loading `babel.config.js` via `rootMode: 'upward'`) — corroborated by the ~2000 transformed modules in the cache, the triviality of the asset transform, the resolver's `calypso:src`-first policy, the `node_modules` exclusion, and Jest's documented "at least two times slower" guidance (Jest CLI Options, <https://jestjs.io/docs/cli#--cache>).
 
 
 ---
@@ -467,16 +538,16 @@ Disabling the cache costs **≈ 1.71×** vs. the warm run and reproduces the col
 
 | # | Sub-question | Answer (with the value the question asks for) | Where |
 |---|---|---|---|
-| 1 | Run a `data-layer` test file twice; wall-clock each; first/second ratio? | Cold `Time:` **1.753 s** vs warm **0.92 s** → **≈ 1.91×** (single file); full suite **30.266 s** vs **15.467 s** → **≈ 1.96×**. Cause: warm run reuses cached `babel-jest` transforms. | Answer 1 |
+| 1 | Run a `data-layer` test file twice; wall-clock each; first/second ratio? | Cold `Time:` **1.567 s** vs warm **0.896 s** → **≈ 1.75×** (single file); full suite **23.325 s** vs **12.875 s** → **≈ 1.81×**. Cause: warm run reuses cached `babel-jest` transforms. | Answer 1 |
 | 2 | Where is the transform cache configured, which directory, which option? Cached file types? | Option **`cacheDirectory`** (`test/client/jest.config.js:L7`) → directory **`<repo>/.cache/jest`**. Types: `haste-map-*` module map; `jest-transform-cache-*/` transformed code **+ `.map` source maps** (2095 + 1981 here); `perf-cache-*` JSON of `[status, duration_ms]`. | Answer 2 |
 | 3 | Which mocking library? Where configured? Timing effect? First-run driver? | Library **`nock`** (`package.json:L299` = `^13.5.6`); configured globally in `test/client/setup-test-framework.js` (`L9` `nock.disableNetConnect();`) with deprecated helper `client/test-helpers/use-nock/index.js`. Effect: fixed per-run module-load only; **not** a first-run overhead driver (excluded from transform via `transformIgnorePatterns`). | Answer 3 |
-| 4 | `--no-cache` vs cached run — impact? Which transformation step dominates? | `--no-cache` **1.576 s** ≈ cold; **≈ 1.71×** vs warm. Dominant step: **`babel-jest` transpiling first-party TS/JSX** (`packages/calypso-jest/jest-preset.js:L14`). | Answer 4 |
+| 4 | `--no-cache` vs cached run — impact? Which transformation step dominates? | `--no-cache` **1.539 s** ≈ cold; **≈ 1.72×** vs warm. Dominant step: **`babel-jest` transpiling first-party TS/JSX** (`packages/calypso-jest/jest-preset.js:L14`). | Answer 4 |
 
 ### Caveats and grounding notes (per the "say so explicitly" rule)
 
 - **Absolute ms are host-dependent.** The reported milliseconds reflect this host's load at run time; re-running will produce slightly different absolute numbers. The **ratios** are the stable answer and are what the question requests.
 - **Node runtime deviation is intentional.** The repo requires `engines.node` `^v22.9.0` (`package.json:L57`; `.nvmrc:L1` = `22.9.0`). A Node-20 setup script would fail that gate, so a **Node v22.x** runtime (`v22.23.1`) was used. This is a deliberate, documented deviation, not an accident.
-- **Two upstream-planning assumptions were corrected by direct verification:** (a) the `nock` mock line is **`L32`** (not L28–31) in `client/state/data-layer/wpcom-http/test/index.js`; (b) the `perf-cache-*` value is **`[status, duration_ms]`** (a `@jest/test-sequencer` record), not `[transformTime, size]`. Both corrections were confirmed by reading the live files / installed sequencer source, and are called out where they appear.
+- **Two upstream-planning assumptions were corrected by direct verification:** (a) the `nock` mock line is **`L32`** (not L28–31) in `client/state/data-layer/wpcom-http/test/index.js`; (b) the `perf-cache-*` value is **`[status, duration_ms]`** (a `@jest/test-sequencer` record), not the `[transformTime, size]` described in the planning note (AAP §0.3.4). Both corrections were confirmed by reading the live files / installed sequencer source (`@jest/test-sequencer` `29.7.0`, `L92`–`L93`, `L268`–`L270`, `L280`, `L284`) and the live cache (first value `1` across all 92 entries; durations 63–5382 ms). The two framings reconcile on the AAP's own worked example — `[1,874]` = **`[SUCCESS, 874 ms]`** — so the correction refines the semantics rather than discarding the example. Both are called out where they appear (per the "be exact and grounded; say so explicitly" rule).
 - **Read-only guarantee.** No tracked file was modified, created-over, or deleted. The only repository write is this document. `.cache/jest` is git-ignored (`.gitignore:L15`), so the transform-cache generation/clearing performed during measurement leaves the tracked tree unchanged (`git status --porcelain` empty).
 
 ### Command reference (exact forms used)
