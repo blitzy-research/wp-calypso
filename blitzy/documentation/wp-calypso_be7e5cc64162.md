@@ -35,7 +35,7 @@ The runtime is pinned by the repository:
   "yarn": "^4.0.0",     // [package.json:L58]
   ```
 
-- **Observed** Node during evidence capture was `v22.22.2`, which satisfies `^v22.9.0`. (Reported
+- **Observed** Node during evidence capture was `v22.23.1`, which satisfies `^v22.9.0`. (Reported
   as observed — not an assumed value.)
 - Yarn `4.0.2` is used via corepack:
 
@@ -78,7 +78,7 @@ $ echo "exit=$?"
 exit=0
 ```
 
-Exit code `0` — Node `v22.22.2` satisfies `engines.node = "^v22.9.0"` [package.json:L57].
+Exit code `0` — Node `v22.23.1` satisfies `engines.node = "^v22.9.0"` [package.json:L57].
 
 **Claim: `bin/welcome.js` prints the Calypso ASCII banner.** The verbatim captured stdout is below
 (the art is rendered in cyan via `chalk.cyan(...)` [bin/welcome.js:L6-L11]; ANSI color is emitted
@@ -116,7 +116,7 @@ building and running it is not a repository change.
 ```console
 $ BROWSERSLIST_ENV=evergreen node build/server.js | node_modules/.bin/bunyan -o short
 Failed to load ./.env.
-20:36:23.825Z  INFO calypso: wp-calypso booted in 996ms - http://calypso.localhost:3000
+01:20:14.223Z  INFO calypso: wp-calypso booted in 999ms - http://calypso.localhost:3000
 Compiling assets... Wait until you see Ready! and then try http://calypso.localhost:3000/ again.
 ```
 
@@ -142,7 +142,7 @@ Connection: keep-alive
 A direct probe against the loopback address confirms the same:
 
 ```console
-HTTP_STATUS=200 SIZE=630 TIME=0.035142s
+HTTP_STATUS=200 SIZE=630 TIME=0.033985s
 ```
 
 **Claim: the 630-byte body is Calypso's dev "waiting" page** (served while webpack compiles the
@@ -160,7 +160,7 @@ into the real application.
 Node), prints the banner via `bin/welcome.js`, runs the webpack build to emit `build/server.js`,
 then serves it through Express behind `bunyan` log formatting [package.json:L110, L113]. On the
 first load it returns a lightweight 630-byte "waiting" page until the client assets finish
-compiling. **Conclusion: the dev server works — it boots in ~1 s (`booted in 996ms`) and returns
+compiling. **Conclusion: the dev server works — it boots in ~1 s (`booted in 999ms`) and returns
 HTTP 200.**
 
 ---
@@ -417,7 +417,7 @@ PASS client/state/user-suggestions/test/actions.js
     #receiveUserSuggestions()
       ✓ should return an action object (2 ms)
     #requestUserSuggestions
-      ✓ should dispatch properly when receiving a valid response (13 ms)
+      ✓ should dispatch properly when receiving a valid response (11 ms)
 Test Suites: 1 passed, 1 total
 Tests:       2 passed, 2 total
 ```
@@ -685,7 +685,7 @@ genuinely resolves a **different value** than the dev server would.
 
 Every named item in the request is answered by name:
 
-- [x] **Dev server boots & serves** — R1 (`wp-calypso booted in 996ms`, `HTTP/1.1 200 OK`; host/port
+- [x] **Dev server boots & serves** — R1 (`wp-calypso booted in 999ms`, `HTTP/1.1 200 OK`; host/port
   [config/development.json:L7-L8])
 - [x] **Test env vs development** — R2 (`node` base env [packages/calypso-jest/jest-preset.js:L11],
   `NODE_ENV=test` vs `development`, seven suites)
