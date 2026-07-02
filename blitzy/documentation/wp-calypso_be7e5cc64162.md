@@ -40,25 +40,27 @@ The 7th context, `e2e`, has its own config at `test/e2e/jest.config.js` and is n
 ### Command run to observe each environment
 
 ```
-CI=true node_modules/.bin/jest -c=test/<suite>/jest.config.js --showConfig
+for s in client server integration build-tools; do CI=true node_modules/.bin/jest -c=test/$s/jest.config.js --showConfig 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>process.stdout.write(process.argv[1].padEnd(12)+" => "+JSON.parse(d).configs[0].testEnvironment+"\n"))' "$s"; done
 ```
 
-and the resolved value read from `.configs[].testEnvironment`.
+The one-liner reads each suite's `.configs[0].testEnvironment` (the file Jest resolves the `testEnvironment` option to at runtime); `.padEnd(12)` only aligns the suite label.
 
 ### Verbatim observed output — single‑project suites
 
 ```
-client       => /tmp/…/node_modules/jest-environment-node/build/index.js
-server       => /tmp/…/node_modules/jest-environment-node/build/index.js
-integration  => /tmp/…/node_modules/jest-environment-node/build/index.js
-build-tools  => /tmp/…/node_modules/jest-environment-node/build/index.js
+client       => /tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d/node_modules/jest-environment-node/build/index.js
+server       => /tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d/node_modules/jest-environment-node/build/index.js
+integration  => /tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d/node_modules/jest-environment-node/build/index.js
+build-tools  => /tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d/node_modules/jest-environment-node/build/index.js
 ```
 
 ### Verbatim observed output — multi‑project suites (summarized over `.configs[]`)
 
+Command: `for s in packages apps; do CI=true node_modules/.bin/jest -c=test/$s/jest.config.js --showConfig 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const j=JSON.parse(d);const c={};j.configs.forEach(x=>{const k=x.testEnvironment.includes("jsdom")?"jest-environment-jsdom":"jest-environment-node";c[k]=(c[k]||0)+1});process.stdout.write(process.argv[1].padEnd(12)+" total configs="+j.configs.length+" "+JSON.stringify(c)+"\n")})' "$s"; done`
+
 ```
-packages     total projects (configs) = 58 ; {"jest-environment-node":36,"jest-environment-jsdom":22}
-apps         total projects (configs) = 3  ; {"jest-environment-jsdom":3}
+packages     total configs=58 {"jest-environment-node":36,"jest-environment-jsdom":22}
+apps         total configs=3 {"jest-environment-jsdom":3}
 ```
 
 For `e2e`, the environment is a **custom** one rather than a built‑in package (see below).
@@ -70,7 +72,7 @@ For `e2e`, the environment is a **custom** one rather than a built‑in package 
 - **client** spreads the base preset (`test/client/jest.config.js:5` `...base`) and does **not** override `testEnvironment`, so its base environment is `jest-environment-node`. This is a **documented divergence worth stating explicitly**: the client suite is commonly _thought of_ as "jsdom", but the empirical base is node — jsdom is opted into **per file** via a `/** @jest-environment jsdom */` docblock (proven in Q2 and Q5). Observed behavior is authoritative:
 
 ```
-client       => /tmp/…/node_modules/jest-environment-node/build/index.js
+client       => /tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d/node_modules/jest-environment-node/build/index.js
 ```
 
 At this commit, **498** client test files carry that docblock — per‑file jsdom opt‑in is the norm, not the base.
@@ -83,31 +85,31 @@ Command: `grep -rl "@jest-environment jsdom" client | wc -l`
 - **server** spreads the base (`test/server/jest.config.js:5` `...base`) with no override → `jest-environment-node`:
 
 ```
-server       => /tmp/…/node_modules/jest-environment-node/build/index.js
+server       => /tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d/node_modules/jest-environment-node/build/index.js
 ```
 
 - **build-tools** spreads the base (`test/build-tools/jest.config.js:5` `...base`) with no override → `jest-environment-node`:
 
 ```
-build-tools  => /tmp/…/node_modules/jest-environment-node/build/index.js
+build-tools  => /tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d/node_modules/jest-environment-node/build/index.js
 ```
 
 - **integration** sets it explicitly: `test/integration/jest.config.js:7` `testEnvironment: 'node'` → `jest-environment-node`. Note it does **not** spread the base preset, so it also has **no** `setupFilesAfterEnv` (confirmed in Q2):
 
 ```
-integration  => /tmp/…/node_modules/jest-environment-node/build/index.js
+integration  => /tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d/node_modules/jest-environment-node/build/index.js
 ```
 
 - **apps** sets it globally in the apps preset: `test/apps/jest-preset.js:7` `testEnvironment: 'jsdom'`. The aggregator `test/apps/jest.config.js:4` `projects: [ '<rootDir>/apps/*/jest.config.js' ]` produces 3 app projects, all jsdom:
 
 ```
-apps         total projects (configs) = 3  ; {"jest-environment-jsdom":3}
+apps         total configs=3 {"jest-environment-jsdom":3}
 ```
 
 - **packages** uses the base (default node) via `test/packages/jest-preset.js:9` `...base`, aggregated by `test/packages/jest.config.js:4` `projects: [ '<rootDir>/packages/*/jest.config.js' ]`. **Reported exactly:** of 58 package projects, **36 resolve to `jest-environment-node` and 22 set `testEnvironment: 'jsdom'` at the project level**:
 
 ```
-packages     total projects (configs) = 58 ; {"jest-environment-node":36,"jest-environment-jsdom":22}
+packages     total configs=58 {"jest-environment-node":36,"jest-environment-jsdom":22}
 ```
 
 A concrete jsdom example is `packages/block-renderer/jest.config.js:3` `testEnvironment: 'jsdom'`. The full set of **22** jsdom package projects is the verbatim output of:
@@ -156,15 +158,15 @@ The environment is chosen _per test file_ (docblock) but _defaults per project_ 
 
 ### Evidence source 1 — injected `globals` (from `--showConfig`, `.configs[].globals`)
 
-Command: `CI=true node_modules/.bin/jest -c=test/<suite>/jest.config.js --showConfig`
+Command: `for s in client server integration build-tools packages apps; do CI=true node_modules/.bin/jest -c=test/$s/jest.config.js --showConfig 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const j=JSON.parse(d);const n=j.configs.length;const g=JSON.stringify(j.configs[0].globals);const s=process.argv[1];const suffix=n>1?("  (configs[0] of "+n+")"):"";process.stdout.write(s.padEnd(12)+" globals = "+g+suffix+"\n")})' "$s"; done`
 
 ```
 client       globals = {"google":{},"__i18n_text_domain__":"default"}
 server       globals = {}
 integration  globals = {}
 build-tools  globals = {}
-packages     globals = {"__i18n_text_domain__":"default"}   (sample project)
-apps         globals = {}                                   (sample project)
+packages     globals = {"__i18n_text_domain__":"default"}  (configs[0] of 58)
+apps         globals = {}  (configs[0] of 3)
 ```
 
 Citations for the injected values:
@@ -206,16 +208,11 @@ PROBE_GLOBALS_SERVER google=undefined window=undefined document=undefined
 
 ### The concrete delta (direct answer to Q2)
 
-The **`google` global** exists in the client context but not in the server context:
+The **`google` global** exists in the client context but not in the server context. This is the single-token contrast in the two verbatim probe lines shown above: the *Client globals actually present at runtime* probe prints `google=object`, whereas the *Server globals actually present at runtime* probe prints `google=undefined`.
 
-```
-PROBE_GLOBALS_CLIENT google=object …
-PROBE_GLOBALS_SERVER google=undefined …
-```
+It is injected only by `test/client/jest.config.js:22-25` (`globals: { google: {}, __i18n_text_domain__: 'default' }`); the server config declares no such global (`server globals = {}`).
 
-It is injected only by `test/client/jest.config.js:22-25` (`globals: { google: {}, … }`); the server config declares no such global (`server globals = {}`).
-
-A second, structural delta is **`window`/`document`**, which are provided only by the jsdom environment. They are `object` under a jsdom‑docblock client file (`PROBE_ENV_JSDOM typeof_window=object typeof_document=object`) and `undefined` in every node context — the client base (`PROBE_ENV_DEFAULT typeof_window=undefined typeof_document=undefined`) and the server suite (`PROBE_GLOBALS_SERVER … window=undefined document=undefined`).
+A second, structural delta is **`window`/`document`**, which are provided only by the jsdom environment. They are `object` under a jsdom‑docblock client file (`PROBE_ENV_JSDOM typeof_window=object typeof_document=object`) and `undefined` in every node context — the client base (`PROBE_ENV_DEFAULT typeof_window=undefined typeof_document=undefined`) and the server suite (`PROBE_GLOBALS_SERVER google=undefined window=undefined document=undefined`).
 
 ### Polyfilled/mocked APIs enumerated by name, per context
 
@@ -226,10 +223,10 @@ A second, structural delta is **`window`/`document`**, which are provided only b
 - `global.TextEncoder` / `global.TextDecoder` — `:25-26`
 - `global.CSS = { supports: jest.fn() }` — `:30-32`
 - `global.ResizeObserver = require( 'resize-observer-polyfill' )` — `:34`
-- `global.fetch = jest.fn( … )` — `:36-40`
-- `jest.mock( 'wpcom-proxy-request', … )` — `:44-49`
+- `global.fetch` mock (a `jest.fn`) — `:36-40`
+- `jest.mock` of `'wpcom-proxy-request'` — `:44-49`
 - `global.crypto.randomUUID = () => nodeCrypto.randomUUID()` — `:52`
-- `global.matchMedia = jest.fn( … )` — `:54-63`
+- `global.matchMedia` mock (a `jest.fn`) — `:54-63`
 - `global.ReadableStream` / `global.TransformStream` / `global.Worker` — `:66-68`
 - `global.structuredClone` fallback — `:71-73`
 - `global.crypto.subtle` — `:76-78`
@@ -243,21 +240,23 @@ A second, structural delta is **`window`/`document`**, which are provided only b
 - `@testing-library/jest-dom` — `test/packages/setup.js:1`
 - `global.crypto.randomUUID = () => 'fake-uuid'` — `test/packages/setup.js:3` — **reported exactly:** unlike the client (which delegates to `nodeCrypto.randomUUID()`), the packages setup returns the literal string `'fake-uuid'`.
 - `global.ResizeObserver = require( 'resize-observer-polyfill' )` — `:5`
-- `global.matchMedia = jest.fn( … )` — `:7-16`
+- `global.matchMedia` mock (a `jest.fn`) — `:7-16`
 
 **Server `setupFilesAfterEnv` → `test/server/setup-test-framework.js`** (minimal):
 
 - `nock.disableNetConnect()` — `test/server/setup-test-framework.js:1-4`
-- `jest.mock( 'wpcom-proxy-request', … )` — `:21`
+- `jest.mock` of `'wpcom-proxy-request'` — `:21`
 
 **apps** reuse the client setup file: `test/apps/jest-preset.js:13` `setupFilesAfterEnv: [ require.resolve( '../client/setup-test-framework.js' ) ]`.
 
 An important **inheritance nuance** observed in `--showConfig`'s resolved `setupFilesAfterEnv`:
 
+Command: `for s in client server build-tools integration; do CI=true node_modules/.bin/jest -c=test/$s/jest.config.js --showConfig 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>process.stdout.write(process.argv[1].padEnd(12)+" => "+JSON.stringify(JSON.parse(d).configs[0].setupFilesAfterEnv)+"\n"))' "$s"; done`
+
 ```
-client       => ['test/client/setup-test-framework.js']
-server       => ['test/server/setup-test-framework.js']
-build-tools  => ['packages/calypso-jest/src/setup.js']
+client       => ["/tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d/test/client/setup-test-framework.js"]
+server       => ["/tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d/test/server/setup-test-framework.js"]
+build-tools  => ["/tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d/packages/calypso-jest/src/setup.js"]
 integration  => []
 ```
 
@@ -265,7 +264,7 @@ integration  => []
 
 ### Rationale
 
-Because the client context injects `google` and installs a large set of `global.*` mocks (`fetch`, `matchMedia`, `CSS`, `ResizeObserver`, `structuredClone`, `TextEncoder`, …) that persist for the whole test file/worker, a test that (accidentally) relies on any of them passes under the client suite but fails under `server`/`integration`/`build-tools`, where those globals are absent — and conversely a test may only collide with a leaked mock when run alongside others in the same worker. This is the "global surface" ingredient of "passes alone, fails in suite."
+Because the client context injects `google` and installs a large set of `global.*` mocks (`fetch`, `matchMedia`, `CSS`, `ResizeObserver`, `structuredClone`, `TextEncoder`/`TextDecoder`) that persist for the whole test file/worker, a test that (accidentally) relies on any of them passes under the client suite but fails under `server`/`integration`/`build-tools`, where those globals are absent — and conversely a test may only collide with a leaked mock when run alongside others in the same worker. This is the "global surface" ingredient of "passes alone, fails in suite."
 
 ---
 
@@ -286,57 +285,67 @@ Because the client context injects `google` and installs a large set of `global.
 Jest is wired to this resolver at `packages/calypso-jest/jest-preset.js:9` `resolver: require.resolve( './src/module-resolver.js' )`. Invoked directly:
 
 ```
-node -e "const r=require('<REPO>/packages/calypso-jest/src/module-resolver.js'); console.log(r('@automattic/calypso-url',{basedir:'<REPO>/packages/components/src'}))"
+node -e "const r=require('$PWD/packages/calypso-jest/src/module-resolver.js'); console.log('[Jest custom resolver] @automattic/calypso-url =>', r('@automattic/calypso-url',{basedir:'$PWD/packages/components/src'}))"
 ```
 
-Verbatim output:
+Verbatim output (the `[Jest custom resolver]` prefix and the ` =>` arrow are printed by the command's own `console.log`; `$PWD` expands to the repository root shown below):
 
 ```
-[Jest custom resolver] @automattic/calypso-url => packages/calypso-url/src/index.ts
+[Jest custom resolver] @automattic/calypso-url => /tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d/packages/calypso-url/src/index.ts
 ```
 
 ### Command 2 — inside an actual Jest run
 
-A probe test placed in `@automattic/components` (which imports the dependency and prints `require.resolve`), run under the components config:
-Command: `CI=true node_modules/.bin/jest -c=packages/components/jest.config.js "__blitzy_probe__/test/resolve"`
+A temporary probe test was written to `packages/components/src/__blitzy_probe__/test/resolve.js` (this path matches the base preset `testMatch` `<rootDir>/**/test/*.[jt]s?(x)`), with exactly this content:
 
 ```
-PROBE_RESOLVE_INSIDE_JEST @automattic/calypso-url => /tmp/…/packages/calypso-url/src/index.ts
+test( '__blitzy_probe_resolve__', () => {
+	const p = require.resolve( '@automattic/calypso-url' );
+	const mod = require( '@automattic/calypso-url' );
+	// eslint-disable-next-line no-console
+	console.log( 'PROBE_RESOLVE_INSIDE_JEST @automattic/calypso-url => ' + p );
+	// eslint-disable-next-line no-console
+	console.log( 'PROBE_RESOLVE_IMPORT_OK getUrlParts=' + typeof mod.getUrlParts );
+} );
+```
+
+Command (Jest prefixes each `console.log` with indentation, stripped with `sed`): `CI=true node_modules/.bin/jest -c=packages/components/jest.config.js "__blitzy_probe__/test/resolve" 2>&1 | grep -a "PROBE_RESOLVE" | sed 's/^[[:space:]]*//'`
+
+```
+PROBE_RESOLVE_INSIDE_JEST @automattic/calypso-url => /tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d/packages/calypso-url/src/index.ts
 PROBE_RESOLVE_IMPORT_OK getUrlParts=function
 ```
 
-So at test runtime the **actual file loaded is `packages/calypso-url/src/index.ts`** — the untranspiled TypeScript source — and the named export `getUrlParts` is a live function.
+The probe file was deleted immediately after capture (read‑only scope). So at test runtime the **actual file loaded is `packages/calypso-url/src/index.ts`** — the untranspiled TypeScript source — and the named export `getUrlParts` is a live function.
 
 ### Command 3 — plain Node (bundler‑equivalent) resolution, for contrast
 
 ```
-node -e "require.resolve('@automattic/calypso-url',{paths:['<REPO>/packages/components/src']})"
+node -e "try{const p=require.resolve('@automattic/calypso-url',{paths:['$PWD/packages/components/src']});console.log('[plain Node require.resolve] =>', p)}catch(e){console.log('[plain Node require.resolve] THROWS:', e.message)}"
 ```
 
-Verbatim output:
+Verbatim output (the `try/catch` prints the resolver's own `Error.message`; `$PWD` expands to the repository root shown below):
 
 ```
-[plain Node require.resolve] THROWS: Cannot find module '/tmp/…/node_modules/@automattic/calypso-url/dist/cjs/index.js'. Please verify that the package.json has a valid "main" entry
+[plain Node require.resolve] THROWS: Cannot find module '/tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d/node_modules/@automattic/calypso-url/dist/cjs/index.js'. Please verify that the package.json has a valid "main" entry
 ```
 
 ### Interpretation with `file:line` citations
 
 - Under **Jest**, the internal dependency loads as **untranspiled source** `packages/calypso-url/src/index.ts`, selected via the `calypso:src` field: `packages/calypso-url/package.json:8` `"calypso:src": "src/index.ts"`.
-- Under **plain Node / a bundler using Node semantics**, resolution follows `main`: `packages/calypso-url/package.json:5` `"main": "dist/cjs/index.js"` (or `module` at `:6` `"dist/esm/index.js"`). **Reported exactly:** here plain Node `require.resolve` **throws**, because `dist/cjs/index.js` was never built for this package (verified: `ls packages/calypso-url/dist/cjs/index.js` → `No such file or directory`, while `packages/calypso-url/src/index.ts` exists). This empirically confirms the resolver's own comment that `main` "points to a file that usually _does not_ exist … but it doesn't matter because all packages in the monorepo have `calypso:src`" (`packages/calypso-jest/src/module-resolver.js:11-12`).
+- Under **plain Node / a bundler using Node semantics**, resolution follows `main`: `packages/calypso-url/package.json:5` `"main": "dist/cjs/index.js"` (or `module` at `:6` `"dist/esm/index.js"`). **Reported exactly:** here plain Node `require.resolve` **throws**, because `dist/cjs/index.js` was never built for this package (verified: `ls packages/calypso-url/dist/cjs/index.js` → `No such file or directory`, while `packages/calypso-url/src/index.ts` exists). This empirically confirms the resolver's own comment that `main` "points to a file that usually _does not_ exists, but it doesn't matter because all packages in the monorepo have `calypso:src`" (`packages/calypso-jest/src/module-resolver.js:11-12`).
 - **Cause** — the custom resolver's field priority, built with `enhanced-resolve`:
   - `packages/calypso-jest/src/module-resolver.js:18` `mainFields: [ 'calypso:src', 'main' ]`
   - `packages/calypso-jest/src/module-resolver.js:19` `conditionNames: [ 'calypso:src', 'node', 'require' ]`
-  - constructed at `packages/calypso-jest/src/module-resolver.js:16-20` `enhancedResolve.create.sync( { … } )`.
+  - constructed at `packages/calypso-jest/src/module-resolver.js:16-20` `enhancedResolve.create.sync( { extensions, mainFields, conditionNames } )` (the three option keys at `:17`, `:18`, `:19` respectively).
     A byte‑identical duplicate exists at `test/module-resolver.js` (used by the integration suite via `test/integration/jest.config.js:8`).
 
 ### Does execution mode matter? — Yes.
 
-Same specifier `@automattic/calypso-url`, two different actual files:
+Same specifier `@automattic/calypso-url`, two different actual files (summary of the verbatim Command 1–Command 3 output above; interpretive, not raw output):
 
-```
-Jest        => packages/calypso-url/src/index.ts   (calypso:src field, untranspiled source)
-plain Node  => THROWS on packages/calypso-url/dist/cjs/index.js (main field, dist not built)
-```
+- **Jest** (Command 1 & Command 2) → loads `packages/calypso-url/src/index.ts` (the `calypso:src` field; untranspiled source).
+- **plain Node / bundler‑equivalent** (Command 3) → **throws** seeking `packages/calypso-url/dist/cjs/index.js` (the `main` field; `dist` not built here).
 
 Jest consumes source; a bundler/Node consumes `dist` (or fails when `dist` is absent). A test relying on source‑only behavior (e.g. TS types, source‑level exports, un‑built code) works under Jest and would break under a `dist`‑based execution — the "context‑dependent resolution" ingredient of "passes alone, fails in suite."
 
@@ -348,24 +357,38 @@ Jest consumes source; a bundler/Node consumes `dist` (or fails when `dist` is ab
 
 ### The overridden specifier: `@automattic/calypso-config`
 
-Command: `CI=true node_modules/.bin/jest -c=test/<suite>/jest.config.js --showConfig`, reading `.configs[].moduleNameMapper`.
+The resolved `.configs[].moduleNameMapper` is an **array of `[pattern, target]` pairs**; the client/integration `<rootDir>` targets are pre-resolved by Jest to absolute paths, while `server` keeps the bare specifier `calypso/server/config`.
 
-Verbatim observed `moduleNameMapper` (absolute targets as resolved by Jest):
+Command: `for s in client integration server build-tools; do CI=true node_modules/.bin/jest -c=test/$s/jest.config.js --showConfig 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const m=JSON.parse(d).configs[0].moduleNameMapper||[];const s=process.argv[1];const hits=m.filter(([k])=>k.includes("calypso-config"));if(!hits.length){console.log(s.padEnd(12)+" (no calypso-config moduleNameMapper entry)")}else{hits.forEach(([k,v])=>console.log(s.padEnd(12)+" "+JSON.stringify(k)+" => "+v))}})' "$s"; done`
+
+Verbatim observed output:
 
 ```
-client       '^@automattic/calypso-config$'      => /tmp/…/client/server/config/index.js
-integration  '^@automattic/calypso-config$'      => /tmp/…/client/server/config/index.js
-server       '^@automattic/calypso-config$'      => 'calypso/server/config'
-server       '^@automattic/calypso-config/(.*)$' => 'calypso/server/config/$1'
+client       "^@automattic/calypso-config$" => /tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d/client/server/config/index.js
+integration  "^@automattic/calypso-config$" => /tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d/client/server/config/index.js
+server       "^@automattic/calypso-config$" => calypso/server/config
+server       "^@automattic/calypso-config/(.*)$" => calypso/server/config/$1
 build-tools  (no calypso-config moduleNameMapper entry)
 ```
 
 Resolution of the server bare specifier, and of the no‑mapper suites:
 
+Command: `node -e "console.log('[plain Node require.resolve calypso/server/config] =>', require.resolve('calypso/server/config',{paths:['$PWD']}))"`
+
 ```
-plain Node require.resolve('calypso/server/config')  => client/server/config/index.js   (via node_modules/calypso -> ../client symlink)
-[Jest resolver]  @automattic/calypso-config (no mapper) => packages/calypso-config/src/index.ts
-[plain Node]     @automattic/calypso-config (no mapper) => packages/calypso-config/dist/cjs/index.js
+[plain Node require.resolve calypso/server/config] => /tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d/client/server/config/index.js
+```
+
+Command: `node -e "const r=require('$PWD/packages/calypso-jest/src/module-resolver.js'); console.log('[Jest custom resolver] @automattic/calypso-config =>', r('@automattic/calypso-config',{basedir:'$PWD/packages'}))"`
+
+```
+[Jest custom resolver] @automattic/calypso-config => /tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d/packages/calypso-config/src/index.ts
+```
+
+Command: `node -e "console.log('[plain Node require.resolve] @automattic/calypso-config =>', require.resolve('@automattic/calypso-config',{paths:['$PWD/packages']}))"`
+
+```
+[plain Node require.resolve] @automattic/calypso-config => /tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d/packages/calypso-config/dist/cjs/index.js
 ```
 
 ### Interpretation with `file:line` citations
@@ -384,10 +407,10 @@ Command: `stat -c '%s bytes' packages/calypso-config/dist/cjs/index.js`
 
 ### Same specifier → different absolute files (direct answer to Q4)
 
-```
-client / integration / server  =>  client/server/config/index.js
-packages / apps / build-tools  =>  packages/calypso-config/src/index.ts
-```
+Summary of the verbatim mapper/resolution output above (interpretive, not raw output):
+
+- **client / integration / server** → `client/server/config/index.js`
+- **packages / apps / build-tools** → `packages/calypso-config/src/index.ts`
 
 These are **distinct modules**, not two builds of the same source. The override target `client/server/config/index.js` builds _server_ configuration: it requires `@automattic/create-calypso-config` (`client/server/config/index.js:2`) and a local `./parser` (`client/server/config/index.js:3`), then exports `createConfig( serverData )` (`client/server/config/index.js:11`) plus a `.clientData` property (`client/server/config/index.js:12`). It is **not** the `@automattic/calypso-config` package source (`packages/calypso-config/src/index.ts:1` `import createConfig from '@automattic/create-calypso-config';`). This is a **second, independent mechanism** — distinct from Q3's `mainFields` priority — by which the same import diverges across contexts.
 
@@ -401,57 +424,71 @@ These are **distinct modules**, not two builds of the same source. The override 
 
 **Question restated:** When a test runs, investigate what loads first. Some tests have access to browser‑like APIs — determine what provides those capabilities and when that provider becomes available, and verify the initialization order by observing what is accessible at different points.
 
-### Command — a jsdom probe logging `typeof` at each lifecycle stage
+### Command — a self‑contained jsdom probe logging `typeof` at each lifecycle stage
 
-A self‑contained jsdom config wired with custom `setupFiles`, `setupFilesAfterEnv`, and a test module, each logging `typeof` for `window`, `document`, `jest`, `jest.fn`, `describe`, `beforeAll`:
+The probe is five ephemeral files under a scratch directory (created, run, then deleted). Each lifecycle stage logs `typeof` for `window`, `document`, `jest`, `jest.fn`, `describe`, `beforeAll`. The exact files:
 
 ```
-CI=true node_modules/.bin/jest -c=<probe>/order.config.js
+// file: /tmp/blitzy_adhoc_test_q5/line.js
+module.exports = ( stage ) =>
+	'PROBE_ORDER [' + stage + '] ' +
+	'window=' + typeof window + ' document=' + typeof document + ' ' +
+	'jest=' + typeof jest + ' jestfn=' + ( typeof jest !== 'undefined' ? typeof jest.fn : 'undefined' ) + ' ' +
+	'describe=' + typeof describe + ' beforeAll=' + typeof beforeAll;
+
+// file: /tmp/blitzy_adhoc_test_q5/setupFiles.js
+console.log( require( './line.js' )( '1:setupFiles' ) );
+
+// file: /tmp/blitzy_adhoc_test_q5/setupAfter.js
+console.log( require( './line.js' )( '2:setupFilesAfterEnv' ) );
+
+// file: /tmp/blitzy_adhoc_test_q5/order.test.js
+const line = require( './line.js' );
+console.log( line( '3:testModuleTopLevel' ) );
+test( 'probe', () => console.log( line( '4:testBody' ) ) );
+
+// file: /tmp/blitzy_adhoc_test_q5/order.config.js
+const path = require( 'path' );
+module.exports = {
+	rootDir: __dirname,
+	testEnvironment: 'jsdom',
+	setupFiles: [ path.join( __dirname, 'setupFiles.js' ) ],
+	setupFilesAfterEnv: [ path.join( __dirname, 'setupAfter.js' ) ],
+	testMatch: [ path.join( __dirname, 'order.test.js' ) ],
+	transform: {},
+};
 ```
+
+Command (run from the repository root so the repo's `jest` and `jest-environment-jsdom` resolve): `CI=true node_modules/.bin/jest -c=/tmp/blitzy_adhoc_test_q5/order.config.js 2>&1 | grep -a PROBE_ORDER | sed 's/^[[:space:]]*//'`
 
 ### Verbatim observed output
 
 ```
-PROBE_ORDER [1:setupFiles]         window=object document=object jest=object jestfn=function describe=undefined beforeAll=undefined
+PROBE_ORDER [1:setupFiles] window=object document=object jest=object jestfn=function describe=undefined beforeAll=undefined
 PROBE_ORDER [2:setupFilesAfterEnv] window=object document=object jest=object jestfn=function describe=function beforeAll=function
-PROBE_ORDER [3:testModuleTopLevel] window=object document=object jest=object describe=function
-PROBE_ORDER [4:testBody]           window=object document=object jest=object describe=function
+PROBE_ORDER [3:testModuleTopLevel] window=object document=object jest=object jestfn=function describe=function beforeAll=function
+PROBE_ORDER [4:testBody] window=object document=object jest=object jestfn=function describe=function beforeAll=function
 ```
+
+The probe files were deleted after capture (read‑only scope).
 
 ### Interpretation with `file:line` citations (the order, with rationale)
 
-1. **`testEnvironment` is constructed first — it is the provider of browser‑like APIs.** The provider of `window`/`document` is the **jsdom test environment (`jest-environment-jsdom`)**, and it installs those globals **before any setup code runs** — proven because already at the earliest stage:
-
-```
-PROBE_ORDER [1:setupFiles] window=object document=object …
-```
+1. **`testEnvironment` is constructed first — it is the provider of browser‑like APIs.** The provider of `window`/`document` is the **jsdom test environment (`jest-environment-jsdom`)**, and it installs those globals **before any setup code runs** — proven because the earliest stage line `[1:setupFiles]` already reports `window=object document=object`.
 
 The environment is selected by `testEnvironment` (globally for apps at `test/apps/jest-preset.js:7` `testEnvironment: 'jsdom'`, or per file via a `/** @jest-environment jsdom */` docblock in client/packages). In a **node** context, `window`/`document` are never installed (Q2: `PROBE_ENV_DEFAULT typeof_window=undefined typeof_document=undefined`).
 
-2. **`setupFiles` run next.** They are configured at `test/client/jest.config.js:20` `setupFiles: [ 'jest-canvas-mock' ]` and `test/apps/jest-preset.js:11` `setupFiles: [ 'jest-canvas-mock' ]`. **Reported exactly:** at this stage the `jest` object **is already present** (`jest=object`, `jestfn=function`), but the **test‑framework globals are not** — `describe=undefined`, `beforeAll=undefined`:
-
-```
-PROBE_ORDER [1:setupFiles] … jest=object jestfn=function describe=undefined beforeAll=undefined
-```
+2. **`setupFiles` run next.** They are configured at `test/client/jest.config.js:20` `setupFiles: [ 'jest-canvas-mock' ]` and `test/apps/jest-preset.js:11` `setupFiles: [ 'jest-canvas-mock' ]`. **Reported exactly:** at this stage the `jest` object **is already present** but the **test‑framework globals are not** — the `[1:setupFiles]` line reports `jest=object jestfn=function describe=undefined beforeAll=undefined`.
 
 So the true `setupFiles`‑vs‑`setupFilesAfterEnv` distinction is the installation of the **test framework** (`describe`/`it`/`beforeAll`), not the `jest` object.
 
 3. **The test framework is installed** (`describe`/`it`/`expect`/`beforeAll`) between the two setup stages.
 
-4. **`setupFilesAfterEnv` run** — proven because `describe`/`beforeAll` are now functions:
+4. **`setupFilesAfterEnv` run** — proven because the `[2:setupFilesAfterEnv]` line now reports `describe=function beforeAll=function`.
 
-```
-PROBE_ORDER [2:setupFilesAfterEnv] … describe=function beforeAll=function
-```
+The base preset wires this at `packages/calypso-jest/jest-preset.js:10` `setupFilesAfterEnv: [ require.resolve( './src/setup.js' ) ]`; the client adds its own at `test/client/jest.config.js:21` `setupFilesAfterEnv: [ '<rootDir>/../test/client/setup-test-framework.js' ]`. These files legitimately call `jest.fn()`/`jest.mock()` at module top level (e.g. `packages/calypso-jest/src/setup.js:4` `supports: jest.fn()`; `test/client/setup-test-framework.js:44-49` `jest.mock` of `'wpcom-proxy-request'`), which is consistent with the observation that the `jest` object already exists by this stage.
 
-The base preset wires this at `packages/calypso-jest/jest-preset.js:10` `setupFilesAfterEnv: [ require.resolve( './src/setup.js' ) ]`; the client adds its own at `test/client/jest.config.js:21` `setupFilesAfterEnv: [ '<rootDir>/../test/client/setup-test-framework.js' ]`. These files legitimately call `jest.fn()`/`jest.mock()` at module top level (e.g. `packages/calypso-jest/src/setup.js:4` `supports: jest.fn()`; `test/client/setup-test-framework.js:44-49` `jest.mock( 'wpcom-proxy-request', … )`), which is consistent with the observation that the `jest` object already exists by this stage.
-
-5. **The test module is loaded and executed** — everything is available at module top level and in the test body:
-
-```
-PROBE_ORDER [3:testModuleTopLevel] window=object document=object jest=object describe=function
-PROBE_ORDER [4:testBody]           window=object document=object jest=object describe=function
-```
+5. **The test module is loaded and executed** — everything is available at module top level and in the test body: the `[3:testModuleTopLevel]` and `[4:testBody]` lines report the identical full field set, ending `describe=function beforeAll=function`.
 
 ### Order diagram
 
@@ -530,4 +567,12 @@ Tests:       83 passed, 83 total
 
 ### Note on method and scope
 
-All observations reflect the repository exactly at commit `be7e5cc641622d153040491fd5625c6cb83e12eb` under Node `v22.12.0` / Jest `29.7.0` / Yarn `4.0.2`. The investigation was read‑only: temporary probe tests were created solely to capture the runtime output quoted above and were removed afterward, leaving the source tree unchanged apart from this document. Paths shown as `/tmp/…/` are the machine‑absolute prefix of the repository root and are elided for readability; the trailing repository‑relative portion is exact.
+All observations reflect the repository exactly at commit `be7e5cc641622d153040491fd5625c6cb83e12eb` under Node `v22.12.0` / Jest `29.7.0` / Yarn `4.0.2`. The investigation was read‑only: temporary probe tests were created solely to capture the runtime output quoted above and were removed afterward, leaving the source tree unchanged apart from this document. All file paths in the observed‑output blocks above are shown in full; the machine‑absolute repository root is `/tmp/blitzy/wp-calypso/blitzy-ed2784c1-b099-4179-9de0-2723a6468976_1a4a2d`, and nothing is elided.
+
+**Commit provenance.** This document is delivered on a branch whose HEAD is a *descendant* of the source commit `be7e5cc641622d153040491fd5625c6cb83e12eb`, not that commit itself. Committing the deliverable necessarily adds a commit on top of the source, so `git rev-parse HEAD` reports the delivery commit rather than `be7e5cc641622d153040491fd5625c6cb83e12eb`. That source commit remains an ancestor of HEAD — `git merge-base --is-ancestor be7e5cc641622d153040491fd5625c6cb83e12eb HEAD` exits `0` — and the only tree difference from it is this document, verified with `git diff --name-status be7e5cc641622d153040491fd5625c6cb83e12eb`:
+
+```
+A	blitzy/documentation/wp-calypso_be7e5cc64162.md
+```
+
+Every source, configuration, and test file under investigation is therefore byte-for-byte identical to its state at `be7e5cc641622d153040491fd5625c6cb83e12eb` (zero non-deliverable files differ), satisfying the read-only requirement.
