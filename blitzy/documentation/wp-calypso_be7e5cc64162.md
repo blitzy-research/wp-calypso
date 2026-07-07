@@ -1147,7 +1147,7 @@ flowchart TD
 
 # OBJ‑4 — Responsive sidebar design: header margin/padding, custom properties, breakpoints
 
-**Direct answer.** There are **two distinct sidebar‑header selectors**, and it matters which one the Reader actually renders. **The header the Reader renders is `.sidebar-header`** (single hyphen) — a Reader‑specific `<li>` (`client/reader/sidebar/index.jsx:168`) holding the "Reader" title, the "Keep up with your interests." subtitle, and a search button. Its box model — **`margin: 0 12px 44px`** and **`padding: 0 10px`**, with **`display: flex`** / **`justify-content: space-between`** — comes from `.is-section-reader .sidebar-header` (`client/reader/sidebar/style.scss:113-117`) and was **observed constant across all eight widths** (only the *rendered width* changes with the container; the box model does not). The *other* header — the global‑sidebar BEM header **`.sidebar__header`** (double underscore) — uses **`gap: 8px`** and **`padding: 30px 24px 29px`** with `display: none` while the masterbar is visible (`client/layout/global-sidebar/style.scss:70-75`), but it is **not rendered in the Reader at any width** (observed `present: false`). The layout math is driven by three CSS custom properties defined on `:root` in `client/assets/stylesheets/shared/_variables.scss`: **`--sidebar-width-max: 272px`** (`:15`), **`--sidebar-width-min: 228px`** (`:16`), and **`--masterbar-height: 46px`** (`:7`) which drops to **`32px`** at `min-width: 782px` (`:11`); these feed `calc()` content‑padding expressions and the sidebar‑container width. The layout changes at **`<960px`** (the classic container switches from `--sidebar-width-max` to `--sidebar-width-min`, `client/layout/style.scss:191-192`), **`<660px`** (container becomes `100%` / off‑canvas, `:195-196` + the `:231` transform), and **`>1400px`** in SCSS (`breakpoint-deprecated`), plus the JavaScript thresholds **`>=782px`** (desktop), **`<660px`** (narrow), and **`>800px`** (collapsed) via `@automattic/viewport`.
+**Direct answer.** There are **two distinct sidebar‑header selectors**, and it matters which one the Reader actually renders. **The header the Reader renders is `.sidebar-header`** (single hyphen) — a Reader‑specific `<li>` (`client/reader/sidebar/index.jsx:168`) holding the "Reader" title, the "Keep up with your interests." subtitle, and a search button. Its box model — **`margin: 0 12px 44px`** and **`padding: 0 10px`**, with **`display: flex`** / **`justify-content: space-between`** — comes from `.is-section-reader .sidebar-header` (`client/reader/sidebar/style.scss:113-117`) and was **observed constant across all eight widths** (only the *rendered width* changes with the container; the box model does not). The *other* header — the global‑sidebar BEM header **`.sidebar__header`** (double underscore) — uses **`gap: 8px`** and **`padding: 30px 24px 29px`** with `display: none` while the masterbar is visible (`client/layout/global-sidebar/style.scss:70-75`), but it is **not rendered in the Reader at any width** (observed `present: false`). The layout math is driven by three CSS custom properties defined on `:root` in `client/assets/stylesheets/shared/_variables.scss`: **`--sidebar-width-max: 272px`** (`:15`), **`--sidebar-width-min: 228px`** (`:16`), and **`--masterbar-height: 46px`** (`:7`) which drops to **`32px`** at `min-width: 782px` (`:11`); these feed `calc()` content‑padding expressions and the sidebar‑container width. The layout changes at **`<960px`** (the classic container switches from `--sidebar-width-max` to `--sidebar-width-min`, `client/layout/style.scss:191-192`), **`<660px`** (container becomes `100%` / off‑canvas — the `width: 100%` at `:195-196`, and the observed container `transform: translateX(-100%)` from `.layout.focus-content .layout__secondary` at `client/layout/style.scss:347`, **not** the `.site-selector` `:231` rule; see §4.4), and **`>1400px`** in SCSS (`breakpoint-deprecated`), plus the JavaScript thresholds **`>=782px`** (desktop), **`<660px`** (narrow), and **`>800px`** (collapsed) via `@automattic/viewport`.
 
 > **Runtime observation status.** The **logged‑out** Discover page renders **no** reader sidebar (`sidebar()` gates on `isUserLoggedIn` — OBJ‑3), so the header box model cannot be observed there. It **was** observed by forcing a logged‑in render (§3.4 — auth *trigger* **(non‑canonical)**, computed CSS **real**): at that point the Reader renders the `.sidebar-header` `<li>`, and its computed padding/margin/display were captured **at all eight widths** (§4.3). The global BEM `.sidebar__header` was checked at every width and is **`present: false`** — it is **not** in the Reader DOM (the Reader uses `.sidebar-header`; `.sidebar__header` is also `display: none` whenever the masterbar is visible). So the `.sidebar__header` values in §4.1 are **source‑verified** (and correctly **not** the rendered Reader header), while the `.sidebar-header` values, the `:root` custom properties, the `.layout__secondary` container width/top, the off‑canvas transform, and the breakpoint transitions are **all observed at runtime**.
 
@@ -1257,7 +1257,7 @@ Captured with `resize_page` + `getComputedStyle` at the **eight named widths** c
 The decisive result: the `.sidebar-header` **box model is invariant** — `padding: 0px 10px` and `margin: 0px 12px 44px` and `display: flex` **at every width** (no `@media` touches `.sidebar-header`; its rule at `client/reader/sidebar/style.scss:113-117` has no responsive override). Its `gap` is **not set** (it uses `justify-content: space-between`, so the computed `gap` is `normal`); the only header that declares `gap: 8px` is the global `.sidebar__header`, which is **not rendered here** (§4.1b). What *does* change with width is the **rendered width** of the header (251px on‑canvas → the full off‑canvas panel width 600/480/280 minus padding at `<660px`) and the **container** it sits in — i.e., the responsive shift is entirely on `.layout__secondary`, not the header box.
 
 **Observed transitions & their `file:line` cause:**
-- **Off‑canvas at `<660px`.** At `600/480/280`, the container `transform` becomes `translateX(-<viewport>px)` (i.e. `translateX(calc(-1 * var(--sidebar-width-max)))` resolved against the widened panel), its `position` is `fixed`, its `top` is `46px`, and its width fills the viewport — `@include breakpoint-deprecated("<660px") { width: 100%; }` (`client/layout/style.scss:195-196`) + the transform at `:231`. `"<660px"` ≡ `@media (max-width: 660px)`.
+- **Off‑canvas at `<660px`.** At `600/480/280`, the container `transform` becomes `translateX(-<viewport>px)` — i.e. **`translateX(-100%)`** of the now‑full‑width panel. Its `position` is `fixed`, its `top` is `46px`, and its width fills the viewport. The **width** comes from `@include breakpoint-deprecated("<660px") { width: 100%; }` (`client/layout/style.scss:195-196`); the **transform** comes from `.layout.focus-content .layout__secondary { @media only screen and (max-width: 781px) { transform: translateX(-100%); } }` (**`client/layout/style.scss:345-349`**, transform at `:347`), **verified at runtime via the CSSOM** (see §4.4) — **not** the `.site-selector` rule at `:231` (a distinct, un‑rendered element here that would resolve to `-272px`, not the observed `-<viewport>px`). The transform gate is `max-width: 781px` (hence `transform: none` at `782`, present at `600/480/280`); the `width: 100%` gate is `<660px`. `"<660px"` ≡ `@media (max-width: 660px)`.
 - **`--masterbar-height`: 32px → 46px below `782px`.** `@media (min-width: 782px) { --masterbar-height: 32px; }` (`client/assets/stylesheets/shared/_variables.scss:11`); default `46px` (`:7`). `.layout__secondary` `top: var(--masterbar-height)` (`client/layout/style.scss:180`) tracks it (32px → 46px), matching the observed `top` flip at `<660px`.
 - **The `.global-sidebar` container stays ~295px at `≥660px`** (it does **not** shrink to `--sidebar-width-min` at `<960px`) — the `272px → 228px` shrink applies to the **classic** `.layout__secondary` (Table B), not the logged‑in global sidebar.
 - The `--sidebar-width-max`/`--sidebar-width-min` values themselves are **constant** (`272px`/`228px`); what changes is **which** one a given container consumes.
@@ -1280,17 +1280,51 @@ The decisive result: the `.sidebar-header` **box model is invariant** — `paddi
 
 *(Nuance: the masterbar **element’s** own computed height was `50px` at `>=782px` and `46px` below — distinct from the `--masterbar-height` layout variable which is `32px`/`46px`.)*
 
-## 4.4 The off‑canvas transform (`<660px`) — observed via CSSOM
+## 4.4 The off‑canvas transform (`≤781px`; full‑width panel at `<660px`) — observed via CSSOM
 
-The site‑selector sits off‑canvas by default; the CSSOM at runtime confirms the exact rule (`client/layout/style.scss:222-233`):
+**Direct answer.** In the running Reader the sidebar goes off‑canvas because its container **`.layout__secondary`** receives **`transform: translateX(-100%)`** at `≤781px` — observed as `matrix(1, 0, 0, 1, -<viewport>, 0)` on `.layout__secondary` at each `<660px` width (§4.3 Table A). The **observed** rule (authored at **`client/layout/style.scss:345-349`**, transform at `:347`) is:
+```text
+.layout.focus-content .layout__secondary {
+    @media only screen and (max-width: 781px) {   // :346
+        transform: translateX(-100%);             // :347
+    }
+}
+```
+Because `.layout__secondary` is `width: 100%` at `<660px` (`:195-196`), `translateX(-100%)` equals `translateX(-<viewport>px)` — matching the observed `-600px / -480px / -280px` in Table A; the `max-width: 781px` gate is why the transform is already `none` at `782` and engaged at `600/480/280`.
+
+Command + unedited output — Chrome DevTools `evaluate_script` on the live logged‑in `/reader` at 480px, walking `document.styleSheets` for `transform` rules on `.layout__secondary` / `.site-selector`:
+```json
+{
+  "layout_secondary_transform_rules": [
+    { "selector": ".layout.focus-content .layout__secondary", "media": "@media only screen and (max-width: 781px)", "transform": "translateX(-100%)" },
+    { "selector": ".layout.is-section-checkout .layout__secondary", "media": "@media (max-width: 660px)", "transform": "none" }
+  ],
+  "site_selector_transform_rules": [
+    { "selector": ".layout__secondary .site-selector", "media": "(none)", "transform": "translateX(calc(-1 * var(--sidebar-width-max)))" },
+    { "selector": ".layout__secondary .site-selector", "media": "@media (max-width: 660px)", "transform": "translateX(-100%)" },
+    { "selector": ".layout.focus-sites .layout__secondary .site-selector", "media": "(none)", "transform": "translateX(0px)" }
+  ],
+  "focus_content_present": true,
+  "media_781_matches": true,
+  "media_660_matches": true,
+  "observed": {
+    "layout__secondary": { "transform": "matrix(1, 0, 0, 1, -480, 0)", "position": "fixed", "width": "480px", "top": "46px" },
+    "global_sidebar": { "transform": "none", "position": "relative", "width": "480px" },
+    "site_selector": "ABSENT",
+    "viewport": "480x900"
+  }
+}
+```
+
+**Divergence from a static read (called out per the run‑first rule).** Reading the SCSS alone points to a *different* rule — the site‑selector overlay's default off‑screen position (`client/layout/style.scss:222-233`), which the CSSOM also confirms verbatim:
 ```text
 .layout__secondary .site-selector {
     position: absolute; inset: 0px; pointer-events: none;
-    transform: translateX(calc(-1 * var(--sidebar-width-max)));   // :231
+    transform: translateX(calc(-1 * var(--sidebar-width-max)));   // :231  → resolves to translateX(-272px)
     height: calc(100vh - var(--masterbar-height));                // :232
 }
 ```
-Combined with `.layout__secondary { width: 100% }` under `<660px` (`client/layout/style.scss:195-196`), the sidebar transitions to a full‑width, off‑canvas panel on narrow viewports.
+That `.site-selector` rule is real, but it governs the **site‑switcher sub‑panel** (it slides in via `.layout.focus-sites .layout__secondary .site-selector { transform: translateX(0); }`, `client/layout/style.scss:321-323`), and `calc(-1 * var(--sidebar-width-max))` resolves to **`-272px`** — *not* the observed `-<viewport>px`. In the Reader that `.site-selector` element is **not rendered** (`"site_selector": "ABSENT"` above) and the inner `.global-sidebar` itself carries `transform: none`; so the site‑selector rule is **not** the source of the observed whole‑sidebar off‑canvas shift. The authoritative, runtime‑observed mechanism is the `.layout.focus-content .layout__secondary` transform at **`:347`**. (The same un‑rendered `.site-selector` also has a `<660px` `translateX(-100%)` at `:281`.)
 
 ## 4.5 Breakpoints — SCSS and JavaScript
 
@@ -1359,7 +1393,7 @@ A final check that every named item in each question is answered with its **valu
 - [x] **Custom properties** — `--sidebar-width-max: 272px` (`client/assets/stylesheets/shared/_variables.scss:15`), `--sidebar-width-min: 228px` (`client/assets/stylesheets/shared/_variables.scss:16`), `--masterbar-height: 46px`→`32px@782` (`client/assets/stylesheets/shared/_variables.scss:7,11`); **observed** resolved values; `client/layout/style.scss:169-170` `0px` correctly identified as the `is-mobile-app-view` reset, not the default.
 - [x] **`calc()` expressions** — `client/layout/style.scss:52,98,106,114,119`.
 - [x] **Cross‑product** — metric × 8 named widths, **observed**: Table A = `.sidebar-header` box model (`padding 0 10px`, `margin 0 12px 44px`, `display flex`) **constant at every width** + rendered width + container transform + `--masterbar-height` + active `@media`; Table B = classic `.layout__secondary` width. Transitions at `960px` (272→228, classic), `<660px` (→100% + off‑canvas `translateX`), `<782px` (masterbar 32→46).
-- [x] **Off‑canvas transform** — `translateX(calc(-1 * var(--sidebar-width-max)))` + `height: calc(100vh - var(--masterbar-height))` (`client/layout/style.scss:231-232`); **observed via CSSOM**.
+- [x] **Off‑canvas transform** — **observed** container `transform: translateX(-100%)` on `.layout__secondary` from `.layout.focus-content .layout__secondary @media (max-width: 781px)` (`client/layout/style.scss:345-349`, `:347`), rendering as `translateX(-<viewport>px)` at `600/480/280` (§4.3 Table A, §4.4). The `.site-selector` overlay rule `translateX(calc(-1 * var(--sidebar-width-max)))` + `height: calc(100vh - var(--masterbar-height))` (`client/layout/style.scss:231-232`; resolves to `-272px`; element **not rendered** in the Reader) is documented as the static‑read divergence; **all observed via CSSOM**.
 - [x] **SCSS breakpoints** — `<960px` (`client/layout/style.scss:41,118,191`), `<660px` (`client/layout/style.scss:141,195,279,307,330,362,445`), `>1400px` (`client/layout/style.scss:162`), `>660px` (`client/layout/style.scss:336,384`).
 - [x] **JS breakpoints** — `>=782px`, `<660px`, `>800px` (`client/layout/index.jsx:146,76,221`); `@automattic/viewport` map (`packages/viewport/src/index.ts:43-45,97-118`); **observed** via `matchMedia`.
 - [x] **8 named widths** — `.storybook/preview.js:18,25,32,39,46,53,60,67`.
@@ -1383,19 +1417,19 @@ $ git diff --name-status be7e5cc641622d153040491fd5625c6cb83e12eb -- .
 A	blitzy/documentation/wp-calypso_be7e5cc64162.md
 ```
 
-**Proof 2 — the working tree carries no other change.** `git status --porcelain` (one machine-readable line per changed path) reports exactly one path — the deliverable — and nothing else (no untracked temporary scripts, no modified source):
+**Proof 2 — the working tree carries no other change.** On the delivered branch every change is committed, so `git status --porcelain` (one machine-readable line per changed path) reports a **clean working tree** — no modified source, no untracked temporary script, nothing else:
 
 ```console
 $ git status --porcelain
- M blitzy/documentation/wp-calypso_be7e5cc64162.md
+$        # (empty — clean working tree; the sole change since the base commit, this document, is committed)
 ```
 
-The leading ` M` marks the file as *modified in the working tree* while this document was being authored; `git diff --stat` correspondingly reports `1 file changed` — only this document.
+While the corrections in this document were being authored the same command reported exactly one dirty path — ` M blitzy/documentation/wp-calypso_be7e5cc64162.md` — confirming that only this deliverable was ever modified; committing it leaves the tree clean (the empty output above), and that commit is recorded as the single `A` addition by Proof 1's `git diff --name-status` against the base commit.
 
-**Proof 3 — no source repository file is touched.** Filtering the deliverable out of the status output returns nothing, confirming zero source-file additions, modifications, or deletions:
+**Proof 3 — no source repository file is touched.** Filtering the deliverable out of the complete change-set since the base commit returns nothing, confirming zero source-file additions, modifications, or deletions:
 
 ```console
-$ git status --porcelain | grep -v 'blitzy/documentation/wp-calypso_be7e5cc64162.md'
+$ git diff --name-status be7e5cc641622d153040491fd5625c6cb83e12eb HEAD | grep -v 'blitzy/documentation/wp-calypso_be7e5cc64162.md'
 $        # (empty — no source repository file added, modified, or deleted)
 ```
 
