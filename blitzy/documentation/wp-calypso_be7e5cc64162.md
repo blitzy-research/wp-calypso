@@ -512,7 +512,7 @@ The component's `componentDidMount` (`client/reader/stream/index.jsx:L221`) call
 
 ### Direct answer
 
-The render decision reads Redux via **`isUserLoggedIn(state)`**, which is **`getCurrentUserId(state) !== null`** — i.e., true iff the current-user id is non-null. That id is populated either by **server-side `/me` bootstrap** (gated on the **`wordpress_logged_in`** cookie) or by **client hydration** from **`window.initialReduxState`**. In OAuth mode (desktop/dev), the app additionally checks the **`wpcom_token`** — **cookie first, then `localStorage`** — and redirects to `/login` if neither exists. Persistent Redux state lives in **IndexedDB** (database **`calypso`**, object store **`calypso_store`**), keyed **`redux-state-<userId | 'logged-out'>`** (with optional `:subkey`). A separate in-memory **storage-bypass** path exists for the **support-user** sandbox (not private/incognito).
+The render decision reads Redux via **`isUserLoggedIn(state)`**, which is **`getCurrentUserId(state) !== null`** — i.e., true iff the current-user id is non-null. That id is populated either by **server-side `/me` bootstrap** (gated on the **`wordpress_logged_in`** cookie) or by **client hydration** from **`window.initialReduxState`**. In OAuth mode (desktop/dev), the app additionally checks the **`wpcom_token`** — **cookie first, then `localStorage`** — and redirects to `/login` if neither exists. Persistent Redux state lives in **IndexedDB** (database **`calypso`**, object store **`calypso_store`**), keyed **`redux-state-<userId | 'logged-out'>`** (with optional `:subkey`); when IndexedDB is unavailable it **falls back to `window.localStorage`** under the same `redux-state-*` keys (`client/lib/browser-storage/index.ts:L280-L364`). A separate in-memory **storage-bypass** path exists for the **support-user** sandbox (not private/incognito).
 
 ### The render decision
 
@@ -552,7 +552,7 @@ id reducer AFTER CURRENT_USER_RECEIVE  => 12345   (reducer.js:L26-27)
 ### The OAuth token check (`wpcom_token`): cookie → localStorage → false
 
 - `packages/oauth-token/src/index.js:L7` — `TOKEN_NAME = 'wpcom_token'`.
-- `packages/oauth-token/src/index.js:L9-L24` — `getToken()` parses `document.cookie` for `wpcom_token` **first** (`L10-L14`), then falls back to `store.get( TOKEN_NAME )` (**localStorage**, `L16`; `TOKEN_NAME` = `'wpcom_token'`), returning the token if found (`L18-L20`) or **`false`** if neither is present (`L22`).
+- `packages/oauth-token/src/index.js:L10-L24` — `getToken()` parses `document.cookie` for `wpcom_token` **first** (`L11-L14`), then falls back to `store.get( TOKEN_NAME )` (**localStorage**, `L17`; `TOKEN_NAME` = `'wpcom_token'`), returning the token if found (`L19-L20`) or **`false`** if neither is present (`L23`).
 - `client/boot/common.js:L154` — `oauthTokenMiddleware`; when `config.isEnabled( 'oauth' )` (`L155`) and the route is not a logged-out route (`L156`), a missing token (`getToken() === false`, `L176`) triggers the redirect `window.location = authorizePath()` (`L177`).
 
 **Synthetic-harness output** (verbatim `getToken()`/`setToken()` logic from `packages/oauth-token/src/index.js:L10-L28`, run against the **real `cookie` package** — the same dependency the module imports at `L1` — with a mocked `store` and a settable `document.cookie`; the browser OAuth flow was not driven live). Command: `NODE_PATH=<repo>/node_modules node /tmp/blitzy_evidence/q5_oauth_token_harness.js`. Complete, unedited output:
@@ -640,6 +640,7 @@ calypso_store keys  = [
   "redux-state-logged-out:signup",
   "redux-state-logged-out:siteSettings",
   "redux-state-logged-out:teams",
+  "redux-state-logged-out:ui",
   "redux-state-logged-out:userSuggestions"
 ]
 window.initialReduxState present = true   (topKeys = ["documentHead"])
@@ -649,27 +650,28 @@ layoutClass = "layout is-group-reader is-section-reader focus-content has-header
 
 - The IndexedDB database is exactly `calypso` at version 2 (`client/lib/browser-storage/index.ts:L20-L21`); its object store is `calypso_store` (`L22`).
 - `browser-storage-sanity-test` is the availability-probe key `SANITY_TEST_KEY` written by the storage layer itself (`client/lib/browser-storage/index.ts:L24`), not a persisted Redux slice.
-- The remaining keys are exactly the `redux-state-<userId | 'logged-out'>[:subkey]` scheme (`client/state/initial-state.js:L75-L76`), here with `userId` absent → `'logged-out'`.
+- The remaining keys are exactly the `redux-state-<userId | 'logged-out'>[:subkey]` scheme (`client/state/initial-state.js:L75-L76`), here with `userId` absent → `'logged-out'`. Persisted subkeys accumulate as their state subtrees are first written, so the exact set is **timing-dependent**; the enumeration above is the reproducible set observed here, stable across two runs — **16** `redux-state-logged-out*` keys (the base key plus 15 subkeys), i.e. 17 `calypso_store` keys once the `browser-storage-sanity-test` probe is included.
 - **No** `wordpress_logged_in` and **no** `wpcom_token` cookies exist in the logged-out branch (`hasAuthCookie = false`, `hasWpcomTokenCookie = false`) — consistent with `isUserLoggedIn = false` and with the server-bootstrap gate not firing.
 - `layoutClass` contains `has-no-sidebar` and no Reader sidebar header is present in the DOM — because the Reader sidebar mounts only when logged in (`client/reader/controller.js:L37-L44`); see Q6.
 
 ### The two render branches (cross-product)
 
 - **Logged-in** *(inferred from source — not observed live; no credentials were available to drive a logged-in session):* `wordpress_logged_in` cookie present → server `/me` (`rest/v1/me`) bootstrap populates `currentUser.id` → `isUserLoggedIn = true` → logged-in UI; persisted state keyed `redux-state-<userId>`; in OAuth mode `getToken()` returns the token (cookie or localStorage).
-- **Logged-out** *(observed live):* no auth cookie (`hasAuthCookie = false`) → no bootstrap → the client `rest/v1.1/me` fetch returns 403 → `currentUser.id = null` → `isUserLoggedIn = false`; persisted state keyed `redux-state-logged-out` (observed 15 such keys above); in OAuth mode `getToken()` returns `false` and `oauthTokenMiddleware` redirects via `window.location = authorizePath()` (`client/boot/common.js:L176-L177`). The Reader still renders logged-out because its section sets `enableLoggedOut: true` (`client/sections.js:L396`).
+- **Logged-out** *(observed live):* no auth cookie (`hasAuthCookie = false`) → no bootstrap → the client `rest/v1.1/me` fetch returns 403 → `currentUser.id = null` → `isUserLoggedIn = false`; persisted state keyed `redux-state-logged-out` (observed 16 such keys above — the base key + 15 subkeys); in OAuth mode `getToken()` returns `false` and `oauthTokenMiddleware` redirects via `window.location = authorizePath()` (`client/boot/common.js:L176-L177`). The Reader still renders logged-out because its section sets `enableLoggedOut: true` (`client/sections.js:L396`).
 
 ### Cause → effect
 
-Rendering keys off Redux `currentUser.id` (`client/state/current-user/selectors.js:L16`). That id is set from either the server `/me` bootstrap — which only runs when the `wordpress_logged_in` cookie is present (`client/server/user-bootstrap/index.js:L8,L32-L34`) — or client hydration from `window.initialReduxState` (`client/state/initial-state.js:L149`). In OAuth mode the additional `wpcom_token` check (cookie then localStorage, `packages/oauth-token/src/index.js:L10-L22`) decides whether to redirect to `/login`. Between visits, state is rehydrated from IndexedDB `calypso/calypso_store` under `redux-state-<userId|'logged-out'>` (`client/lib/browser-storage/index.ts:L20-L22`; `client/state/initial-state.js:L75-L76`), which is why the logged-out session shows `redux-state-logged-out*` keys and no auth cookies.
+Rendering keys off Redux `currentUser.id` (`client/state/current-user/selectors.js:L16`). That id is set from either the server `/me` bootstrap — which only runs when the `wordpress_logged_in` cookie is present (`client/server/user-bootstrap/index.js:L8,L32-L34`) — or client hydration from `window.initialReduxState` (`client/state/initial-state.js:L149`). In OAuth mode the additional `wpcom_token` check (cookie then localStorage, `packages/oauth-token/src/index.js:L10-L23`) decides whether to redirect to `/login`. Between visits, state is rehydrated from IndexedDB `calypso/calypso_store` under `redux-state-<userId|'logged-out'>` (`client/lib/browser-storage/index.ts:L20-L22`; `client/state/initial-state.js:L75-L76`; or, when `supportsIDB()` returns `false`, from `window.localStorage` under the same `redux-state-*` keys — `client/lib/browser-storage/index.ts:L307-L310,L339-L342`), which is why the logged-out session shows `redux-state-logged-out*` keys and no auth cookies.
 
 ### Storage mechanisms checked (exhaustive, by name)
 
 1. **`wordpress_logged_in` cookie** — gates server `/me` bootstrap (`client/server/user-bootstrap/index.js:L8,L13`).
 2. **`wpcom_token` cookie** — first source in OAuth `getToken()` (`packages/oauth-token/src/index.js:L10-L14`).
-3. **`localStorage` (`wpcom_token`)** — fallback in `getToken()` via `store.get` (`packages/oauth-token/src/index.js:L16`).
+3. **`localStorage` (`wpcom_token`)** — fallback in `getToken()` via `store.get` (`packages/oauth-token/src/index.js:L17`).
 4. **`window.initialReduxState`** — SSR-injected client hydration (`client/state/initial-state.js:L149`).
 5. **IndexedDB `calypso` / `calypso_store`** — persisted Redux state (`client/lib/browser-storage/index.ts:L20-L22`), keyed `redux-state-<userId|'logged-out'>[:subkey]` (`client/state/initial-state.js:L75-L76`; matched by `client/state/persisted-state.js:L17`).
 6. **In-memory bypass store** — the **support-user** sandbox (not private/incognito): an in-memory `Map` used while support-user is active (`client/lib/browser-storage/bypass.ts:L6-L10,L12`), switched on by `bypassPersistentStorage( true )` at `client/lib/user/support-user-interop.js:L90,L108`.
+7. **`window.localStorage` (persisted Redux-state fallback)** *(non-canonical — not exercised in this environment, where IndexedDB was available)* — when `supportsIDB()` returns `false` (i.e. `window.indexedDB` is absent (`L37`), `shouldDisableIDB` is set (`L42`), or the IDB sanity-write throws (`L52-L54`); all in `client/lib/browser-storage/index.ts:L36-L56`), the **same `redux-state-*` keys** are read/written through `window.localStorage` instead of IndexedDB: `getStoredItem` (`client/lib/browser-storage/index.ts:L283`), `getAllStoredItems` (`L310`), `setStoredItem` (`L342`), `clearStorage` (`L364`). In the observed logged-out session `supportsIDB()` was `true` (the `calypso`/`calypso_store` database was present — mechanism 5), so this fallback path did not run.
 
 ---
 
@@ -1086,7 +1088,7 @@ Each row below re-enumerates a distinct thing the six questions asked for, with 
 | Server `/me` bootstrap | gated on `wordpress_logged_in` | `client/server/user-bootstrap/index.js:L8,L13,L32-L34` | (inferred) — server path not exercised (no creds); client `/me` observed **403** |
 | Client hydration | `window.initialReduxState` | `client/state/initial-state.js:L149` | Observed (present in SSR HTML) |
 | IndexedDB store | `calypso` (v2) / `calypso_store` | `client/lib/browser-storage/index.ts:L20-L22` | Observed (live) |
-| Persistence key | `redux-state-<userId\|'logged-out'>[:subkey]` | `client/state/initial-state.js:L75-L76` | Observed (15 `redux-state-logged-out*` keys) |
+| Persistence key | `redux-state-<userId\|'logged-out'>[:subkey]` | `client/state/initial-state.js:L75-L76` | Observed (16 `redux-state-logged-out*` keys, stable across 2 runs) |
 | Logged-out Reader | `enableLoggedOut: true` | `client/sections.js:L396` | Observed (Reader renders) |
 | Bypass store | support-user sandbox (in-memory) | `client/lib/browser-storage/bypass.ts:L6,L12` | (inferred) |
 
