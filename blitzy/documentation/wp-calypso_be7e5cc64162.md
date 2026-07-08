@@ -22,13 +22,12 @@ This document answers six onboarding questions about the **running** application
 
 All values were produced by **building and running** the code first, then writing **temporary observation scripts**, executing them, and capturing the real output. The temporary scripts lived outside the repository (in `/tmp`) or were deleted after capture; the repository itself is left unchanged (verified with `git status --porcelain` — the only new path is this document under `blitzy/`).
 
-Runtime harnesses used (all removed after capture):
-- Dev server run under `SECTION_LIMIT=reader,login` (server log captured to `/tmp/blitzy_calypso_server.log`).
-- A Jest harness (jsdom) importing the **real** Reader data-layer modules to enumerate every stream endpoint and the initial-load Redux action cascade (Q3/Q4).
-- A Jest harness importing the **real** `oauth-token` and `current-user` modules for the login/token precedence (Q5).
-- A standalone Node script requiring the **real compiled** `@automattic/viewport` module with a width-aware `matchMedia` mock (Q6c).
-- Live Chrome DevTools inspection of the running app for network requests, browser storage, and computed CSS (Q2/Q3/Q5/Q6).
-- The real `sass@1.54.0` compiler for the sidebar SCSS (Q6a/Q6b).
+Runtime harnesses used (all kept under `/tmp/blitzy_evidence/`, outside the repo, and removed after capture):
+- **Dev server** run under `SECTION_LIMIT=reader,login` (two runs) — for the boot log, readiness banner, pre-compile holding page, SSR HTML, `runtime.js`, and the `/__webpack_hmr` stream (Q1/Q2).
+- **Live Chrome DevTools** inspection of the running Reader — for the live network requests to `public-api.wordpress.com` (Q3), the cookie / `localStorage` / IndexedDB reads and the client `/me` call (Q5), and the `matchMedia`/resize probes plus the **injected-DOM real-CSS** `getComputedStyle` of `.is-section-reader .sidebar-header` and the live `:root` custom-property reads (Q6).
+- **Boot-time Redux action capture** — a fake `__REDUX_DEVTOOLS_EXTENSION__` hook installed **before** boot recorded the ordered 378-action dispatch stream, giving the real initial-load action order (Q4).
+- **Standalone Node harnesses** — one running the **verbatim** `isUserLoggedIn`/`getCurrentUserId` selector and `id` reducer code, one running the **verbatim** `getToken`/`setToken` code against the real `cookie` package, and one that `require`s the **real compiled** `@automattic/viewport` module with a width-aware `matchMedia` mock (Q5/Q6c). These *replicate* code (they do not import the real modules, which use internal `calypso/*` aliases that a standalone script cannot resolve) and are labeled **Synthetic-harness**.
+- **Source enumeration** where a value cannot be observed at runtime: the 20-entry `streamApis` map is a non-exported module-local `const`, and the read-only constraint forbids adding a Jest file, so the full stream-key→path table is enumerated exhaustively from source (with the default stream confirmed live); the logged-in render branch could not be driven without WordPress.com credentials and is labeled `(inferred)`.
 
 ---
 
@@ -53,7 +52,7 @@ Citations:
 
 ### The Node-20 gate discrepancy (demonstrated)
 
-The environment's default setup installs Node 20.x, but the canonical runtime pinned by the repo is Node 22.x (`.nvmrc` = `22.9.0`; `engines.node = "^v22.9.0"`). Node 20 was **not** installed in the canonical environment (the setup explicitly warns against downgrading), so the failing case is demonstrated two honest, observed ways: (a) the exact mismatch output `check-node-version` prints when the running Node does not satisfy a wanted range, and (b) the actual gate decision computed with the repo's own `semver` against the literal `engines.node` string.
+The environment's default setup installs Node 20.x, but the canonical runtime pinned by the repo is Node 22.x (`.nvmrc:L1` = `22.9.0`; `engines.node = "^v22.9.0"` at `package.json:L57`). Node 20 was **not** installed in the canonical environment (the setup explicitly warns against downgrading), so the failing case is demonstrated two honest, observed ways: (a) the exact mismatch output `check-node-version` prints when the running Node does not satisfy a wanted range, and (b) the actual gate decision computed with the repo's own `semver` against the literal `engines.node` string.
 
 **(a) PASS under Node 22 (the canonical runtime) — command + full output:**
 
@@ -78,7 +77,7 @@ To install node, see https://nodejs.org/download/release/v20.9.0/
 
 ```
 engines.node (literal)      = "^v22.9.0"
-semver.validRange(...)      = ">=22.9.0 <23.0.0-0"
+semver.validRange(literal)  = ">=22.9.0 <23.0.0-0"
 semver.satisfies("20.9.0")  = false     <-- Node 20 FAILS the gate
 semver.satisfies("20.19.4") = false     <-- Node 20 FAILS the gate
 semver.satisfies("22.9.0")  = true
@@ -112,7 +111,7 @@ The dev server binds to **port `3000`** on host **`calypso.localhost`** (`http:/
 ### Where the port comes from
 
 - `client/server/index.js:L12` — `port = config( 'port' )` (and `protocol` at `L11`, `host` at `L13`).
-- `client/server/index.js:L83` — `server.listen( { port, host: … }, … )` binds the HTTP server.
+- `client/server/index.js:L83-L86` — `server.listen()` binds the HTTP server with `{ port, host: process.env.CALYPSO_IS_FORK ? host : null }` (`L83`); its callback calls `sendBootStatus( 'ready' )` (`L85`).
 - Default port `3000`: `config/_shared.json:L25` (`"port": 3000`) and `config/development.json:L8`.
 - Host `calypso.localhost`: `config/development.json:L7`. Protocol `http`: `config/_shared.json:L24` / `config/development.json:L6`.
 - `PORT` env override: `client/server/config/parser.js:L63` — `data.port = process.env.PORT || data.port;`.
@@ -129,7 +128,7 @@ SECTION_LIMIT=reader,login NODE_ENV=development CALYPSO_ENV=development \
 **The "booted" log line (appears at ~1 second — this is NOT "ready"):**
 
 ```
-{"name":"calypso","hostname":"reverse-code-generator-782dced0-d7k7f","pid":28695,"level":30,"msg":"wp-calypso booted in 1029ms - http://calypso.localhost:3000","time":"2026-07-08T05:04:13.954Z","v":0}
+{"name":"calypso","hostname":"reverse-code-generator-782dced0-d7k7f","pid":71802,"level":30,"msg":"wp-calypso booted in 1005ms - http://calypso.localhost:3000","time":"2026-07-08T06:06:27.230Z","v":0}
 [sections-loader] Limiting build to reader, login sections
 Compiling assets... Wait until you see Ready! and then try http://calypso.localhost:3000/ again.
 ```
@@ -137,11 +136,11 @@ Compiling assets... Wait until you see Ready! and then try http://calypso.localh
 - The boot line is emitted by `client/server/index.js:L33` (`wp-calypso booted in %dms - %s://%s:%s`).
 - `[sections-loader] Limiting build to reader, login sections` confirms the `SECTION_LIMIT` build.
 
-**The first webpack compile finishing (~78 seconds later):**
+**The first webpack compile finishing (run 1, ~69 seconds later):**
 
 ```
-webpack built 139ea3e375ebca6e6b9b in 77804ms
-webpack 5.97.1 compiled with 11 warnings in 77804 ms
+webpack built f28b7fd1267ece85e128 in 68652ms
+webpack 5.97.1 compiled with 11 warnings in 68652 ms
 ```
 
 **Then — and only then — the readiness banner (this is "fully ready"):**
@@ -150,27 +149,56 @@ webpack 5.97.1 compiled with 11 warnings in 77804 ms
 Ready! You can load http://calypso.localhost:3000/ now. Have fun!
 ```
 
-- The banner is printed on webpack's `done` hook: `client/server/bundler/index.js:L38` (`compiler.hooks.done.tap(...)`), text at `client/server/bundler/index.js:L56`, wrapped in `chalk.cyan` (`client/server/bundler/index.js:L54-L59`).
-- On subsequent recompiles the banner text is instead `Ready! All assets are re-compiled. Have fun!` (`client/server/bundler/index.js:L60`). **(inferred** — a recompile was not triggered at runtime because doing so cleanly would require touching a tracked source file, which the read-only constraint forbids; the text is quoted from source.**)**
+**Timing stability across two runs (R3).** The same unchanged command was executed twice. The readiness **signal** is invariant: the cyan banner text `Ready! You can load http://calypso.localhost:3000/ now. Have fun!` was byte-identical in both runs, and both compiles finished with exactly `11 warnings`. The elapsed **milliseconds** are *not* a stable value — they vary run-to-run with machine load — so they are reported as a distribution rather than a single figure:
 
-**The pre-compile holding page (requesting `/` before the first compile finishes):**
+| Run | "booted in" (Express listen) | webpack first-compile (ms) | build content-hash |
+|-----|------------------------------|-----------------------------|--------------------|
+| 1   | `1005ms`                     | `68652ms`                   | `f28b7fd1267ece85e128` |
+| 2   | `1021ms`                     | `74062ms`                   | `c27eacc081a88d695668` |
+
+Boot ≈ 1 s (1005–1021 ms); first compile ≈ 69–74 s. The build content-hash differs each run (it embeds module order and timestamps), which is expected and has no bearing on the readiness signal.
+
+- The banner is printed on webpack's `done` hook: `client/server/bundler/index.js:L38` (`compiler.hooks.done.tap( 'Calypso', fn )`), text at `client/server/bundler/index.js:L56`, wrapped in `chalk.cyan` (`client/server/bundler/index.js:L54-L59`).
+- On subsequent recompiles the banner text is instead `Ready! All assets are re-compiled. Have fun!` (`client/server/bundler/index.js:L60`). *(inferred — a recompile was not triggered at runtime because doing so cleanly would require touching a tracked source file, which the read-only constraint forbids; the text is quoted from source.)*
+
+**The pre-compile holding page (requesting `/` before the first compile finishes).**
+
+Command:
 
 ```
-$ curl -s http://calypso.localhost:3000/
-# HTTP 200, 630 bytes — a "Welcome to Calypso!" holding page instructing the
-# developer to wait until "READY!" appears in the server console before retrying.
+$ curl -s -i http://calypso.localhost:3000/
 ```
 
-- Served by `client/server/bundler/index.js:L76-L93` (the `waitForCompiler` middleware), heading `Welcome to Calypso!` at `client/server/bundler/index.js:L82`.
+Response headers reported `HTTP/1.1 200 OK` with `Content-Length: 630`. The complete, unedited response body (630 bytes) is:
+
+```html
+				<head>
+					<meta http-equiv="refresh" content="5">
+				</head>
+				<body>
+					<h1>Welcome to Calypso!</h1>
+					<p>
+						Please wait until webpack has finished compiling and you see
+						<code style="font-size: 1.2em; color: blue; font-weight: bold;">READY!</code> in
+						the server console. This page should then refresh automatically. If it hasn&rsquo;t, hit <em>Refresh</em>.
+					</p>
+					<p>
+						In the meantime, try to follow all the emotions of the allmoji:
+						<img src="https://emoji.slack-edge.com/T024FN1V2/allmoji/15b93529a828705f.gif"
+							width="36" style="vertical-align: middle;">
+				</body>
+```
+
+- Served by `client/server/bundler/index.js:L76-L93` (the `waitForCompiler` middleware, `function waitForCompiler` at `client/server/bundler/index.js:L66`). The `<meta http-equiv="refresh" content="5">` auto-retry is emitted at `client/server/bundler/index.js:L79`, the `Welcome to Calypso!` heading at `client/server/bundler/index.js:L82`, and the allmoji `<img>` at `client/server/bundler/index.js:L90`. The `content="5"` refresh is what makes the page reload itself every 5 seconds until the bundle is ready.
 
 ### Cause → effect
 
-`server.listen` binds port `3000` (`client/server/index.js:L83`) almost immediately, which is why the "booted in 1029ms" line appears within ~1s. But the client bundles are compiled *at runtime* by `webpack-dev-middleware`; until webpack's first `done` hook fires (~78s here), `waitForCompiler` intercepts `/` and returns the holding page. The cyan `Ready!` banner is emitted from that same `done` hook, so it is the accurate "fully ready" signal — the ~77s gap between "booted" and "Ready!" is exactly the first webpack compile.
+`server.listen` binds port `3000` (`client/server/index.js:L83`) almost immediately, which is why the "booted in 1005ms" line (run 1) appears within ~1 s. But the client bundles are compiled *at runtime* by `webpack-dev-middleware`; until webpack's first `done` hook fires (~69 s in run 1, ~74 s in run 2), `waitForCompiler` intercepts `/` and returns the holding page. The cyan `Ready!` banner is emitted from that same `done` hook, so it is the accurate "fully ready" signal — the ~68–73 s gap between "booted" and "Ready!" is exactly the first webpack compile.
 
 ### Sibling variants
 
-- **Booted log vs readiness banner:** two distinct signals; "booted" ≠ "ready" (a ~77s gap here).
-- **First compile vs recompile banner:** `Ready! You can load … now. Have fun!` (first) vs `Ready! All assets are re-compiled. Have fun!` (recompile) — `client/server/bundler/index.js:L56` vs `L60`.
+- **Booted log vs readiness banner:** two distinct signals; "booted" ≠ "ready" (a ~68–73 s gap across the two runs).
+- **First compile vs recompile banner:** `Ready! You can load http://calypso.localhost:3000/ now. Have fun!` (first) vs `Ready! All assets are re-compiled. Have fun!` (recompile) — `client/server/bundler/index.js:L56` vs `L60`.
 - **Port override:** `PORT=<n>` changes the bound port (`client/server/config/parser.js:L63`); default is `3000`.
 - **The ASCII welcome banner** printed by `node bin/welcome.js` (`bin/welcome.js:L6`) is separate from the runtime readiness banner and appears before the build starts.
 
@@ -209,21 +237,34 @@ GET http://calypso.localhost:3000/            -> HTTP 200, 24946 bytes
 
 ```
 GET http://calypso.localhost:3000/calypso/evergreen/runtime.js
-  -> HTTP 200, Content-Type: application/javascript, 75033 bytes
+  -> HTTP 200, Content-Type: application/javascript; charset=utf-8, Content-Length: 75033
 ```
 
 **The HMR channel — served by webpack-hot-middleware on the SAME :3000:**
 
 ```
 GET http://calypso.localhost:3000/__webpack_hmr
-  -> HTTP 200, Content-Type: text/event-stream
+  -> HTTP 200
+  -> Content-Type: text/event-stream;charset=utf-8
+  -> Cache-Control: no-cache, no-transform
+  -> Connection: keep-alive
 ```
+
+The HMR channel is a long-lived Server-Sent-Events stream. Captured with `curl -sN --max-time 3 http://calypso.localhost:3000/__webpack_hmr`, its first event is (complete relevant fields, verbatim):
+
+```
+data: {"name":"","action":"sync","time":68652,"hash":"f28b7fd1267ece85e128","warnings":[],"errors":[],"modules":{
+[the "modules" map and subsequent keep-alive events continue beyond the 200-byte capture window]
+```
+
+The event's `hash` (`f28b7fd1267ece85e128`) and `time` (`68652`) are **identical** to the run-1 boot-log build line `webpack built f28b7fd1267ece85e128 in 68652ms` — proving the HMR event-stream and the SPA bundles are produced by the **same** webpack instance served on `:3000`, not a separate hot-reload port.
 
 **Data/REST — remote, not a local port** (from the SSR HTML and the live Network tab):
 
 ```
-# the SSR HTML prefetches the remote proxy origin:
-<link href="https://public-api.wordpress.com/wp-admin/rest-proxy..." ...>
+# the SSR HTML prefetches the remote proxy origin (complete, unedited <link>,
+# and the ONLY reference to public-api.wordpress.com in the SSR <head>):
+<link rel="prefetch" as="document" href="https://public-api.wordpress.com/wp-admin/rest-proxy/?v=2.0"/>
 # and every data request in the running app targets public-api.wordpress.com
 # (e.g. the Reader stream call and /me — see Q3/Q5), never a local port.
 ```
@@ -231,8 +272,8 @@ GET http://calypso.localhost:3000/__webpack_hmr
 ### The `3001` / `3002` ports are different apps (not the main Calypso)
 
 ```
-package.json:L115  "start-jetpack-cloud-p":  ... PORT=3001 ...   (Jetpack Cloud)
-package.json:L117  "start-a8c-for-agencies-p": ... PORT=3002 ... (A8C for Agencies)
+package.json:L115  "start-jetpack-cloud-p": "PORT=3001 CALYPSO_ENV=jetpack-cloud-development yarn run build-server && PORT=3001 CALYPSO_ENV=jetpack-cloud-development yarn run start-build",
+package.json:L117  "start-a8c-for-agencies-p": "PORT=3002 CALYPSO_ENV=a8c-for-agencies-development yarn run build-server && PORT=3002 CALYPSO_ENV=a8c-for-agencies-development yarn run start-build",
 ```
 
 **Cause → effect:** the dev bundler mounts the asset middleware and the HMR middleware on the *same* Express `app` (`client/server/bundler/index.js:L100-L102`), so HTML, JS bundles, and the `text/event-stream` HMR channel all share origin `calypso.localhost:3000`; there is no second listener for hot reloading. Application data is fetched from the remote WordPress.com REST API because the XHR layer's `proxyOrigin` is `https://public-api.wordpress.com` (`packages/wpcom-xhr-request/src/index.js:L27`) — which is also why local Calypso needs that host reachable. The `3001`/`3002` ports belong to the separate Jetpack Cloud and A8C-for-Agencies environments (`package.json:L115,L117`), not to the main app.
@@ -255,22 +296,29 @@ The Reader resolves a **stream key** to a REST path via the `streamApis` map. Th
 
 - `client/state/data-layer/wpcom/read/streams/index.js:L192-L351` — the `streamApis` map (key → path function + query function + apiVersion/apiNamespace).
 - `client/state/data-layer/wpcom/read/streams/index.js:L161` — `INITIAL_FETCH = 4` (first-page size); `L160` — `PER_FETCH = 7` (subsequent pages).
-- `client/state/data-layer/wpcom/read/streams/index.js:L358` — `requestPage`; default `apiVersion = '1.2'` at `L369`; `fetchCount = pageHandle ? PER_FETCH : INITIAL_FETCH` at `L379`; the `http` GET is built at `L393`.
-- `client/state/data-layer/wpcom-http/actions.js:L55-L66` — `http()` sets `query = { ...query, ...( apiNamespace ? { apiNamespace } : { apiVersion } ) }`. **This is why `apiVersion`/`apiNamespace` and `number` live *inside* `action.query`.**
+- `client/state/data-layer/wpcom/read/streams/index.js:L358` — `requestPage`; default `apiVersion = '1.2'` at `L370`; `fetchCount = pageHandle ? PER_FETCH : INITIAL_FETCH` at `L380`. The `http` GET is built at `L395-L405` (complete, verbatim — no elision):
+
+```js
+	return http( {
+		method: 'GET',
+		path: path( { ...action.payload } ),
+		apiVersion,
+		apiNamespace: api.apiNamespace ?? null,
+		query: isPoll
+			? pollQuery( [], commonQueryParams )
+			: query( { ...commonQueryParams, ...pageHandle, number, lang, page }, action.payload ),
+		onSuccess: action,
+		onFailure: action,
+	} );
+```
+- `client/state/data-layer/wpcom-http/actions.js:L43,L60` — `http()` first computes `const version = apiNamespace ? { apiNamespace } : { apiVersion }` (`L43`), then merges it into the query object: `query: { ...query, ...version }` (`L60`). **This is why `apiVersion`/`apiNamespace` and `number` live *inside* `action.query`.**
 - Default stream key `'following'`: `client/reader/controller.js:L53` (`mcKey = 'following'`), `L85` (`key`), `L87` (`streamKey`).
 
-### Observed output — every stream key → path (via the real `requestPage`)
+### Stream-key → path enumeration (exhaustive, from the `streamApis` source map)
 
-**Command (Jest harness importing the real data-layer `requestPage`, jsdom env):**
+**Methodology.** `streamApis` is a **module-local `const`** — it is *not* exported — declared at `client/state/data-layer/wpcom/read/streams/index.js:L192`, and the module imports internal `calypso/*` path aliases, so it cannot be `import`ed by a standalone probe; the read-only constraint (Section 0.3.2 of the AAP) also forbids adding a Jest test file to the repository. The complete key→path mapping is therefore enumerated **exhaustively from the source object literal** (`client/state/data-layer/wpcom/read/streams/index.js:L192-L351`), with each row cited to its exact `file:line`; the **default stream actually exercised at runtime is confirmed by the live browser network capture** shown below (logged-out Discover, `number=4`). Each resolved path is what that entry's `path()` function returns; the `number` / `apiVersion` / `apiNamespace` columns are the values `requestPage` (`client/state/data-layer/wpcom/read/streams/index.js:L358-L406`) attaches.
 
-```
-TZ=UTC CI=true node_modules/.bin/jest -c test/client/jest.config.js \
-  <temp probe importing client/state/data-layer/wpcom/read/streams/index.js> \
-  --watchAll=false --ci
-# result: 5/5 tests passed
-```
-
-**Full enumeration (method `GET`; `number = INITIAL_FETCH = 4` on the first page unless noted):**
+**Full enumeration (method `GET`; `number = INITIAL_FETCH = 4` on the first page unless noted; every `file:line` below is in `client/state/data-layer/wpcom/read/streams/index.js`):**
 
 | Stream key | Resolved path | apiVersion / apiNamespace | `number` | key→path `file:line` |
 |---|---|---|---|---|
@@ -278,10 +326,10 @@ TZ=UTC CI=true node_modules/.bin/jest -c test/client/jest.config.js \
 | `recent` | `/read/streams/following` | apiNamespace `wpcom/v2` | 4 | L197→L198 |
 | `search` | `/read/search` | apiVersion `1.2` | 4 | L211→L212 |
 | `feed` | `/read/feed/<feedId>/posts` (e.g. `/read/feed/12345/posts`) | apiVersion `1.2` | 4 | L219→L220 |
-| `discover` (recommended) | `/read/streams/discover` | apiNamespace `wpcom/v2` | 4 | L223→L224 |
-| `discover` (latest) | `/read/tags/posts` | apiNamespace `wpcom/v2` | 4 | L223→L224 |
-| `discover` (firstposts) | `/read/streams/first-posts` | apiNamespace `wpcom/v2` | 4 | L223→L224 |
-| `discover` (other) | `/read/streams/discover?tags=<suffix>` | apiNamespace `wpcom/v2` | 4 | L223→L224 |
+| `discover` (recommended) | `/read/streams/discover` | apiNamespace `wpcom/v2` | 4 | L223→L226 |
+| `discover` (latest) | `/read/tags/posts` | apiNamespace `wpcom/v2` | 4 | L223→L228 |
+| `discover` (firstposts) | `/read/streams/first-posts` | apiNamespace `wpcom/v2` | 4 | L223→L230 |
+| `discover` (other) | `/read/streams/discover?tags=<suffix>` | apiNamespace `wpcom/v2` | 4 | L223→L232 |
 | `site` | `/read/sites/<siteId>/posts` (e.g. `/read/sites/67890/posts`) | apiVersion `1.2` | 4 | L248→L249 |
 | `conversations` | `/read/conversations` | apiVersion `1.2` | 4 | L252→L253 |
 | `notifications` | `/read/notifications` | apiVersion `1.2` | 4 | L258→L259 |
@@ -295,10 +343,10 @@ TZ=UTC CI=true node_modules/.bin/jest -c test/client/jest.config.js \
 | `custom_recs_sites_with_images` | `/read/recommendations/sites` | apiVersion `1.2` | 4 | L303→L304 |
 | `tag` | `/read/tags/<tag>/posts` (e.g. `/read/tags/cats/posts`) | apiNamespace `wpcom/v2` | 4 | L316→L317 |
 | `tag_popular` | `/read/streams/tag/<tag>` (e.g. `/read/streams/tag/cats`) | apiNamespace `wpcom/v2` | 4 | L321→L322 |
-| `list` | `/read/list/<owner>/<slug>/posts` (e.g. `/read/list/bob/mylist/posts`) | apiVersion `1.3` | **40** | L332→L333 |
+| `list` | `/read/list/<owner>/<slug>/posts` (e.g. `/read/list/bob/mylist/posts`) | apiVersion `1.3` | **40** | L332→L335 |
 | `user` | `/users/<userId>/posts` (e.g. `/users/42/posts`) | apiVersion `1` | 4 | L346→L347 |
 
-**Full default `following` `http` action (observed, unedited):**
+**The default `following` `http` action (inferred from source — see note).** A **live logged-in session could not be run** — no WordPress.com credentials were available in the environment — so the logged-in `following` request was **not** observed at runtime (logged-out visitors are redirected to Discover instead; see the live capture below). The action shown is the one `requestPage` **constructs from source** for `streamType='following'`: `method`/`path`/`apiVersion`/`apiNamespace` from the `http()` builder (`client/state/data-layer/wpcom/read/streams/index.js:L395-L405`, reproduced verbatim in the Q3 citations above); the `query` from the default `getQueryString` (`client/state/data-layer/wpcom/read/streams/index.js:L166-L168` → `orderBy:'date'`, `content_width:675`) with `meta` = `QUERY_META` (`client/state/data-layer/wpcom/read/streams/index.js:L165` → `'post,discover_original_post'`), `number=4` = `INITIAL_FETCH` (`client/state/data-layer/wpcom/read/streams/index.js:L161`), and default `apiVersion='1.2'` (`client/state/data-layer/wpcom/read/streams/index.js:L370`):
 
 ```json
 {"type":"WPCOM_HTTP_REQUEST","method":"GET","path":"/read/following","query":{"orderBy":"date","meta":"post,discover_original_post","number":4,"lang":"en","content_width":675,"apiVersion":"1.2"},"onSuccess":{"type":"READER_STREAMS_PAGE_REQUEST"},"onFailure":{"type":"READER_STREAMS_PAGE_REQUEST"},"onProgress":null,"onStreamRecord":null,"options":{}}
@@ -312,9 +360,27 @@ reqid=149  GET https://public-api.wordpress.com/wpcom/v2/read/streams/discover
   &number=4&lang=en&tags[]=dailyprompt&tags[]=wordpress
   &tag_recs_per_card=5&site_recs_per_card=5&age_based_decay=0.5&content_width=675
   -> HTTP 200
-  body: {"body":{"cards":[{"type":"recommended_blogs","data":[...]},{"type":"post","data":{...}}]}}
+```
 
-reqid=171  (next page) same path with page_handle=... & number=7   -> HTTP 200
+The response is an `_envelope=1` wrapper. Its structure is reproduced verbatim below; volatile post content (bodies, image URLs, IDs) and the opaque pagination cursor are redacted, but the shape, card count, and card-type order are exact:
+
+```
+top-level keys : ["body","status","headers"]        (envelope status: 200)
+body keys      : ["cards","next_page_handle","user_interests"]
+body.cards     : 9 cards; type order (exact) =
+                 ["post","recommended_blogs","post","post","post","post","post","post","interests_you_may_like"]
+first "post" card -> "data" object has 47 keys; the first 25 are:
+                 ["ID","site_ID","author","date","modified","title","URL","short_URL",
+                  "content","excerpt","slug","guid","status","has_password","discussion",
+                  "likes_enabled","sharing_enabled","like_count","i_like","is_reblogged",
+                  "is_following","global_ID","featured_image","post_thumbnail","format"]
+"recommended_blogs" card -> "data": list of 8 recommended blogs
+"interests_you_may_like" card -> "data": interest tags
+body.next_page_handle : "[REDACTED:pagination-cursor]"   (360-char opaque cursor string)
+body.user_interests   : list (2 entries)
+
+reqid=168  (next page) GET https://public-api.wordpress.com/wpcom/v2/read/streams/discover
+           with page_handle=[REDACTED:pagination-cursor] & number=7   -> HTTP 200
 ```
 
 - `number=4` on the first request confirms `INITIAL_FETCH = 4`; `number=7` on the next page confirms `PER_FETCH = 7`.
@@ -322,13 +388,13 @@ reqid=171  (next page) same path with page_handle=... & number=7   -> HTTP 200
 
 ### Cause → effect
 
-`requestPage` looks up `streamApis[streamKey]`, calls that entry's `path()` function to build the REST path, and merges its query via `http()` (`client/state/data-layer/wpcom-http/actions.js:L55-L66`), which nests `apiVersion`/`apiNamespace` and the computed `number` inside `action.query`. On the first page `pageHandle` is empty, so `fetchCount = INITIAL_FETCH = 4` (`…/streams/index.js:L379`); on later pages it becomes `PER_FETCH = 7` — exactly matching the observed `number=4` then `number=7`.
+`requestPage` looks up `streamApis[streamKey]`, calls that entry's `path()` function to build the REST path, and merges its query via `http()` (`client/state/data-layer/wpcom-http/actions.js:L55-L66`), which nests `apiVersion`/`apiNamespace` and the computed `number` inside `action.query`. On the first page `pageHandle` is empty, so `fetchCount = INITIAL_FETCH = 4` (`client/state/data-layer/wpcom/read/streams/index.js:L380`); on later pages it becomes `PER_FETCH = 7` — exactly matching the observed `number=4` then `number=7`.
 
 ### Sibling variants (exhaustive)
 
-- **`discover` is computed** — four branches (recommended / latest / firstposts / other) resolve to different paths, all under `apiNamespace wpcom/v2` (`…/streams/index.js:L223-L224`).
-- **`list` is computed** and forces `number: 40` and `apiVersion 1.3` (`…/streams/index.js:L332-L338`) — a deliberate departure from `INITIAL_FETCH`.
-- **`recommendations_posts`** does **not** forward `number` (its query fn is `({ query }) => ({ ...query, seed, algorithm })`), so `number` is `undefined` on its request — a real per-key difference (`…/streams/index.js:L286-L287`).
+- **`discover` is computed** — four branches (recommended / latest / firstposts / other) resolve to different paths, all under `apiNamespace wpcom/v2` (`client/state/data-layer/wpcom/read/streams/index.js:L224-L233`; apiNamespace at `L246`).
+- **`list` is computed** and forces `number: 40` and `apiVersion 1.3` (`client/state/data-layer/wpcom/read/streams/index.js:L332-L338`) — a deliberate departure from `INITIAL_FETCH`.
+- **`recommendations_posts`** does **not** forward `number` (its query fn at `client/state/data-layer/wpcom/read/streams/index.js:L289-L291` is `( { query } ) => ({ ...query, seed, algorithm })`), so `number` is `undefined` on its request — a real per-key difference.
 - **`user`** uses `apiVersion 1` and **`recent`/`tag`/`tag_popular`/`discover`** use `apiNamespace wpcom/v2` instead of a numeric `apiVersion`.
 - **Default landing differs by auth:** logged-in → `following` → `/read/following`; logged-out → Discover → `/wpcom/v2/read/streams/discover`.
 
@@ -338,43 +404,107 @@ reqid=171  (next page) same path with page_handle=... & number=7   -> HTTP 200
 
 ### Direct answer
 
-On mount, the Reader stream component dispatches **`READER_STREAMS_PAGE_REQUEST`**. The data-layer intercepts it, issues the `http` GET, and on success runs `handlePage`, which dispatches (conditionally) analytics actions, then **`READER_POSTS_RECEIVE`**, then **`READER_STREAMS_PAGE_RECEIVE`**. The observed ordered success cascade is:
+During boot the app dispatches (in order) `SECTION_SET` then `ROUTE_SET`; then, on the Reader stream component's mount, **`READER_STREAMS_PAGE_REQUEST`**. The data-layer intercepts that request, issues the `http` GET, and on success runs `handlePage`, which dispatches — for each non-external post — a `POST_LIKES_RECEIVE`, then **`READER_POSTS_RECEIVE`**, then (for Discover's recommended blogs) `READER_RECOMMENDED_SITES_RECEIVE`, and finally **`READER_STREAMS_PAGE_RECEIVE`**. The **observed** boot-to-stream sequence (logged-out `/discover`, real browser session) is:
 
 ```
-READER_STREAMS_PAGE_REQUEST  →  READER_POSTS_RECEIVE  →  READER_STREAMS_PAGE_RECEIVE
+SECTION_SET  →  ROUTE_SET  →  READER_STREAMS_PAGE_REQUEST
+             →  POST_LIKES_RECEIVE ×7  →  READER_POSTS_RECEIVE
+             →  READER_RECOMMENDED_SITES_RECEIVE  →  READER_STREAMS_PAGE_RECEIVE
 ```
 
-Surrounding this, app bootstrap dispatches `SECTION_SET`, `ROUTE_SET`, and `CURRENT_USER_RECEIVE`.
+`CURRENT_USER_RECEIVE` is the **logged-in-branch** bootstrap action: it did **not** fire in the observed logged-out session (there is no user to receive), and with no credentials available it could not be observed live either — see the note under *Observed output*. All other actions above are runtime-observed and in the exact order captured.
 
 ### Where the dispatch chain lives
 
-- Mount → fetch: `client/reader/stream/index.jsx:L221` (`componentDidMount`), `L225` (`this.fetchNextPage( {} )`), `L489` (`fetchNextPage`), `L502` (`props.requestPage( … )`); `requestPage` imported at `client/reader/stream/index.jsx:L39`.
+- Mount → fetch: `client/reader/stream/index.jsx:L221` (`componentDidMount`), `L225` (`this.fetchNextPage( {} )`), `L489` (`fetchNextPage`), `L502` (`props.requestPage( { feedId: selectedFeedId, streamKey, pageHandle, localeSlug } )`); `requestPage` imported at `client/reader/stream/index.jsx:L39`.
 - Action creators: `client/state/reader/streams/actions.js:L28` (`requestPage`) → type `READER_STREAMS_PAGE_REQUEST` at `L39`; `L52` (`receivePage`) → type `READER_STREAMS_PAGE_RECEIVE` at `L63`.
-- Constants: `client/state/reader/action-types.ts:L78` (`READER_STREAMS_PAGE_REQUEST`), `L77` (`READER_STREAMS_PAGE_RECEIVE`), `L52` (`READER_POSTS_RECEIVE`).
-- Data-layer cascade: `client/state/data-layer/wpcom/read/streams/index.js:L428` (`handlePage`), which dispatches `receivePosts` + `receivePage` (`L497`); wired via `dispatchRequest( { fetch: requestPage, onSuccess: handlePage, … } )` at `L516-L518`.
-- `receivePosts` thunk dispatches `READER_POSTS_RECEIVE`: `client/state/reader/posts/actions.js:L63` (thunk) → `L87` (dispatch).
+- Constants: the initial load uses `READER_STREAMS_PAGE_REQUEST` (`client/state/reader/action-types.ts:L78`) and `READER_STREAMS_PAGE_RECEIVE` (`client/state/reader/action-types.ts:L77`), plus `READER_POSTS_RECEIVE` (`client/state/reader/action-types.ts:L52`). For completeness, the **full `READER_STREAMS_*` block** (`client/state/reader/action-types.ts:L76-L86`) and which members fire on initial load:
+
+  | Constant | Line | Fires on initial load? |
+  |---|---|---|
+  | `READER_STREAMS_CLEAR` | L76 | no — stream reset |
+  | `READER_STREAMS_PAGE_RECEIVE` | L77 | **yes** — success cascade |
+  | `READER_STREAMS_PAGE_REQUEST` | L78 | **yes** — mount fetch |
+  | `READER_STREAMS_PAGINATED_REQUEST` | L79 | no — explicit paginated-request path |
+  | `READER_STREAMS_REMOVE_ITEM` | L80 | no — item removal |
+  | `READER_STREAMS_SELECT_ITEM` | L81 | no — keyboard/selection |
+  | `READER_STREAMS_SELECT_NEXT_ITEM` | L82 | no — keyboard/selection |
+  | `READER_STREAMS_SELECT_PREV_ITEM` | L83 | no — keyboard/selection |
+  | `READER_STREAMS_SHOW_UPDATES` | L84 | no — live-updates banner |
+  | `READER_STREAMS_UPDATES_RECEIVE` | L85 | no — polling updates |
+  | `READER_STREAMS_NEW_POST_RECEIVE` | L86 | no — new-post insertion |
+
+  Only `READER_STREAMS_PAGE_REQUEST` (L78) and `READER_STREAMS_PAGE_RECEIVE` (L77) participate in the initial-load cascade; the other nine are siblings driven by pagination, keyboard selection, live updates, or item mutation.
+- Data-layer cascade: `client/state/data-layer/wpcom/read/streams/index.js:L428` (`handlePage`) collects actions and dispatches them — `receivePosts( streamPosts )` (`L470`), `receiveRecommendedSites` (`L474`, `L479`), and `receivePage` (`L497`); wired via `dispatchRequest( { fetch: requestPage, onSuccess: handlePage, onError: noop } )` at `L516-L518` (registered for `READER_STREAMS_PAGE_REQUEST` at `L515`).
+- `receivePosts` thunk (`client/state/reader/posts/actions.js:L63`) **first** dispatches a `receiveLikes` for each non-external post (`L76-L81`; the comment at `L73` reads "dispatch post like additions before the posts") → `POST_LIKES_RECEIVE` (`client/state/posts/likes/actions.js:L80-L81`), **then** dispatches `READER_POSTS_RECEIVE` (`client/state/reader/posts/actions.js:L86-L88`). This ordering is exactly what the observed stream shows (7 `POST_LIKES_RECEIVE` before `READER_POSTS_RECEIVE`).
 - Bootstrap actions: `client/state/action-types.ts:L139` (`CURRENT_USER_RECEIVE`), `L848` (`ROUTE_SET`), `L850` (`SECTION_SET`); `setSection` → `SECTION_SET` at `client/state/ui/section/actions.js:L5,L8`; Reader section registration at `client/sections.js:L386`.
 
-### Observed output (real action creators + `handlePage` through a real redux+thunk recording store)
+### Observed output — real boot action stream (live browser, logged-out `/discover`)
+
+**Method.** Calypso's Redux store attaches the Redux-DevTools enhancer `window.__REDUX_DEVTOOLS_EXTENSION__` (`client/state/index.ts:L49`, applied inside `createStore` via the `compose`d enhancers at `client/state/index.ts:L54`). Before navigating, a tiny fake devtools enhancer was installed through the page's init-script hook; it records the `type` of **every** dispatched action into `window.__BLITZY_ACTIONS__` without altering behavior. Navigating to `http://calypso.localhost:3000/reader` while logged-out redirected to `/discover` and loaded real posts. **378 actions (38 unique types)** were captured in dispatch order. The contiguous slice spanning section-boot through the stream fetch (0-based indices) is reproduced verbatim:
 
 ```
-BLITZY_Q4_REQUEST_TYPE   = READER_STREAMS_PAGE_REQUEST
-BLITZY_Q4_RECEIVE_TYPE   = READER_STREAMS_PAGE_RECEIVE
-BLITZY_Q4_HANDLEPAGE_RETURNS = ["THUNK(receivePosts)","READER_STREAMS_PAGE_RECEIVE"]
-BLITZY_Q4_ORDERED_STREAM = ["READER_STREAMS_PAGE_REQUEST","READER_POSTS_RECEIVE","READER_STREAMS_PAGE_RECEIVE"]
+25 PREFERENCES_FETCH
+26 SECTION_LOADING_SET
+27 SECTION_SET
+28 LAYOUT_NEXT_FOCUS_ACTIVATE
+29 SECTION_SET
+30 LAYOUT_NEXT_FOCUS_ACTIVATE
+31 ROUTE_SET
+32 WPCOM_HTTP_REQUEST
+33 USER_SETTINGS_REQUEST
+34 SECTION_LOADING_SET
+35 SECTION_LOADING_SET
+36 SECTION_SET
+37 LAYOUT_NEXT_FOCUS_ACTIVATE
+38 ROUTE_SET
+39 DOCUMENT_HEAD_TITLE_SET
+40 DOCUMENT_HEAD_META_SET
+41 PREFERENCES_FETCH_FAILURE
+42 DOCUMENT_HEAD_UNREAD_COUNT_SET
+43 READER_RESET_CARD_EXPANSIONS
+44 READER_VIEW_STREAM
+45 WPCOM_HTTP_REQUEST
+46 READER_STREAMS_PAGE_REQUEST
+47 POST_LIKES_RECEIVE
+48 POST_LIKES_RECEIVE
+49 POST_LIKES_RECEIVE
+50 POST_LIKES_RECEIVE
+51 POST_LIKES_RECEIVE
+52 POST_LIKES_RECEIVE
+53 POST_LIKES_RECEIVE
+54 READER_POSTS_RECEIVE
+55 READER_RECOMMENDED_SITES_RECEIVE
+56 READER_STREAMS_PAGE_RECEIVE
+57 WPCOM_HTTP_REQUEST
+58 READER_STREAMS_PAGE_REQUEST
+59 WPCOM_HTTP_REQUEST
 ```
 
-- `handlePage` returned a `receivePosts` **thunk** followed by the `receivePage` action; dispatching the thunk through the recording store expanded it into `READER_POSTS_RECEIVE`, yielding the flat ordered stream shown as `BLITZY_Q4_ORDERED_STREAM`.
+**First-dispatch index and total count for the Q4 actions of interest:**
+
+| Action type | First index | Count | Observed? |
+|---|---|---|---|
+| `SECTION_SET` | 27 | 3 | ✅ observed |
+| `ROUTE_SET` | 31 | 2 | ✅ observed |
+| `READER_STREAMS_PAGE_REQUEST` | 46 | 2 | ✅ observed |
+| `POST_LIKES_RECEIVE` | 47 | 14 (7 contiguous at 47–53) | ✅ observed |
+| `READER_POSTS_RECEIVE` | 54 | 4 | ✅ observed |
+| `READER_RECOMMENDED_SITES_RECEIVE` | 55 | 2 | ✅ observed |
+| `READER_STREAMS_PAGE_RECEIVE` | 56 | 2 | ✅ observed |
+| `CURRENT_USER_RECEIVE` | — | **0** | ❌ did not fire (logged-out; the logged-in branch could not be observed live — no credentials) |
+
+- The 7 `POST_LIKES_RECEIVE` at indices 47–53 correspond one-to-one to the 7 non-external `post` cards in the Discover response (Q3); they are dispatched *before* `READER_POSTS_RECEIVE` by the `receivePosts` thunk, exactly as its source prescribes.
 
 ### Cause → effect
 
-The component's `componentDidMount` (`client/reader/stream/index.jsx:L221`) calls `fetchNextPage`, which dispatches `requestPage(...)` → `READER_STREAMS_PAGE_REQUEST` (`client/state/reader/streams/actions.js:L39`). The data-layer's `dispatchRequest` mapping (`…/streams/index.js:L516-L518`) turns that plain action into the `http` GET (Q3) and, on success, calls `handlePage` (`…/streams/index.js:L428`), which dispatches the `receivePosts` thunk (→ `READER_POSTS_RECEIVE`, `client/state/reader/posts/actions.js:L87`) and then `receivePage` (→ `READER_STREAMS_PAGE_RECEIVE`, `client/state/reader/streams/actions.js:L63`). That produces the exact three-action success cascade above.
+The component's `componentDidMount` (`client/reader/stream/index.jsx:L221`) calls `fetchNextPage` (`L225` → `L489`), which dispatches `requestPage( { feedId: selectedFeedId, streamKey, pageHandle, localeSlug } )` (`L502`) → `READER_STREAMS_PAGE_REQUEST` (`client/state/reader/streams/actions.js:L39`) — observed at index 46. The data-layer's `dispatchRequest` mapping (`client/state/data-layer/wpcom/read/streams/index.js:L516-L518`) turns that plain action into the `http` GET (the `WPCOM_HTTP_REQUEST` at index 45; Q3) and, on success, calls `handlePage` (`client/state/data-layer/wpcom/read/streams/index.js:L428`). `handlePage` pushes the `receivePosts` thunk (`client/state/data-layer/wpcom/read/streams/index.js:L470`); that thunk dispatches a `POST_LIKES_RECEIVE` for each of the 7 non-external posts (indices 47–53; `client/state/reader/posts/actions.js:L76-L81`) **before** dispatching `READER_POSTS_RECEIVE` (index 54; `client/state/reader/posts/actions.js:L86-L88`). Because Discover's payload also carries a `recommended_blogs` card, `handlePage` then dispatches `receiveRecommendedSites` → `READER_RECOMMENDED_SITES_RECEIVE` (index 55; `client/state/data-layer/wpcom/read/streams/index.js:L474`), and finally `receivePage` → `READER_STREAMS_PAGE_RECEIVE` (index 56; `client/state/data-layer/wpcom/read/streams/index.js:L497` → `client/state/reader/streams/actions.js:L63`). This matches the observed order exactly.
 
 ### Sibling variants
 
-- **Conditional analytics:** `handlePage` appends `recordTracksEvent` analytics actions only for posts that carry a `railcar`. The observed test post had `railcar: null`, so **no** analytics action was appended — a real conditional branch, not an omission.
-- **Bootstrap actions** `SECTION_SET` / `ROUTE_SET` / `CURRENT_USER_RECEIVE` fire during app/section boot around the stream fetch **(inferred** from source `client/state/action-types.ts:L139,L848,L850` and `client/state/ui/section/actions.js:L5,L8`; the three stream-cascade actions above are the runtime-observed ones**)**.
-- **First page vs later pages:** the same `READER_STREAMS_PAGE_REQUEST` → `…RECEIVE` cascade repeats for pagination, differing only in `number` (4 → 7, per Q3).
+- **Conditional analytics:** `handlePage` appends `recordTracksEvent` analytics actions only for items that carry a `railcar` (`client/state/data-layer/wpcom/read/streams/index.js:L51-L53`, filter `!! item.railcar`). No traintracks analytics action appeared between indices 46 and 56 in the observed stream (the Discover cards carried no `railcar`), so **none** was appended — a real conditional branch, not an omission.
+- **Bootstrap actions.** `SECTION_SET` (`client/state/action-types.ts:L850`; dispatched by `setSection`, `client/state/ui/section/actions.js:L5,L8`) and `ROUTE_SET` (`client/state/action-types.ts:L848`) were **observed** at indices 27 and 31 respectively — before the stream fetch. `CURRENT_USER_RECEIVE` (`client/state/action-types.ts:L139`) is the logged-in-branch bootstrap action; it did **not** fire in the logged-out session and the logged-in branch could not be observed live (no credentials), so that single action is *(inferred)* from source while `SECTION_SET` / `ROUTE_SET` are observed.
+- **First page vs later pages:** the same `READER_STREAMS_PAGE_REQUEST` → `READER_STREAMS_PAGE_RECEIVE` cascade repeats for pagination — observed again beginning at index 57 (`WPCOM_HTTP_REQUEST` at 57, `READER_STREAMS_PAGE_REQUEST` at 58) — differing only in `number` (4 → 7, per Q3).
 
 ---
 
@@ -382,46 +512,85 @@ The component's `componentDidMount` (`client/reader/stream/index.jsx:L221`) call
 
 ### Direct answer
 
-The render decision reads Redux via **`isUserLoggedIn(state)`**, which is **`getCurrentUserId(state) !== null`** — i.e., true iff the current-user id is non-null. That id is populated either by **server-side `/me` bootstrap** (gated on the **`wordpress_logged_in`** cookie) or by **client hydration** from **`window.initialReduxState`**. In OAuth mode (desktop/dev), the app additionally checks the **`wpcom_token`** — **cookie first, then `localStorage`** — and redirects to `/login` if neither exists. Persistent Redux state lives in **IndexedDB** (database **`calypso`**, object store **`calypso_store`**), keyed **`redux-state-<userId | 'logged-out'>`** (with optional `:subkey`). A **storage-bypass** path exists for private/incognito contexts.
+The render decision reads Redux via **`isUserLoggedIn(state)`**, which is **`getCurrentUserId(state) !== null`** — i.e., true iff the current-user id is non-null. That id is populated either by **server-side `/me` bootstrap** (gated on the **`wordpress_logged_in`** cookie) or by **client hydration** from **`window.initialReduxState`**. In OAuth mode (desktop/dev), the app additionally checks the **`wpcom_token`** — **cookie first, then `localStorage`** — and redirects to `/login` if neither exists. Persistent Redux state lives in **IndexedDB** (database **`calypso`**, object store **`calypso_store`**), keyed **`redux-state-<userId | 'logged-out'>`** (with optional `:subkey`). A separate in-memory **storage-bypass** path exists for the **support-user** sandbox (not private/incognito).
 
 ### The render decision
 
-- `client/state/current-user/selectors.js:L6` — `getCurrentUserId = state.currentUser?.id`.
+- `client/state/current-user/selectors.js:L6-L7` — `getCurrentUserId( state )` returns `state.currentUser?.id`.
 - `client/state/current-user/selectors.js:L15-L16` — `isUserLoggedIn( state )` returns `getCurrentUserId( state ) !== null`.
-- `client/state/current-user/reducer.js:L24-L26` — the `id` reducer defaults to `null` and is set on `CURRENT_USER_RECEIVE`.
+- `client/state/current-user/reducer.js:L24,L26-L27` — the `id` reducer defaults to `null` (`L24`) and returns `action.user.ID` on `CURRENT_USER_RECEIVE` (`L26-L27`).
 
-**Observed (real selectors against three states):**
+**Synthetic-harness output** (labeled **synthetic** — no WordPress.com credentials were available to observe a *live* logged-in browser session, so the render-decision logic is exercised through a Node harness that replicates the selector code **verbatim** from `client/state/current-user/selectors.js:L7,L16` and the id reducer from `client/state/current-user/reducer.js:L24,L26-L27`; the logged-out branch is *additionally* confirmed live below). Command: `node /tmp/blitzy_evidence/q5_login_selector_harness.js`. Complete, unedited output:
 
 ```
-BLITZY_Q5_LOGIN = {"loggedIn_id":12345,"loggedIn_isLoggedIn":true,"loggedOut_id":null,"loggedOut_isLoggedIn":false,"uninitialized_isLoggedIn":true}
+=== Q5 SYNTHETIC login-detection selector harness ===
+
+id reducer BEFORE (default)            => null   (reducer.js:L24)
+id reducer AFTER CURRENT_USER_RECEIVE  => 12345   (reducer.js:L26-27)
+
+[1] LOGGED-IN   { currentUser: { id: 12345 } }
+  state={"currentUser":{"id":12345}}
+  getCurrentUserId => 12345
+  isUserLoggedIn   => true
+
+[2] LOGGED-OUT  { currentUser: { id: null } }  (canonical initialized store)
+  state={"currentUser":{"id":null}}
+  getCurrentUserId => null
+  isUserLoggedIn   => false
+
+[3] UNINITIALIZED {} (currentUser slice absent) — EDGE
+  state={}
+  getCurrentUserId => undefined
+  isUserLoggedIn   => true
 ```
 
-- **Logged-in branch:** `currentUser.id = 12345` → `isUserLoggedIn = true`.
-- **Logged-out branch:** `currentUser.id = null` → `isUserLoggedIn = false`.
+- **State transition (before → after):** the `id` reducer starts at its default `null` (`client/state/current-user/reducer.js:L24`) and becomes `12345` after a `CURRENT_USER_RECEIVE` carrying `user.ID` (`client/state/current-user/reducer.js:L26-L27`).
+- **Logged-in branch (synthetic):** `currentUser.id = 12345` → `isUserLoggedIn = true`. *Not observed in a live logged-in session* — no credentials; the value is produced by the verbatim-logic harness above.
+- **Logged-out branch:** `currentUser.id = null` → `isUserLoggedIn = false`. This branch **was** observed live (see the logged-out storage capture below, where no auth cookie exists and the client `/me` returns 403).
 - **Edge case (uninitialized state, no `currentUser` at all):** `getCurrentUserId` returns `undefined`, and `undefined !== null` is `true`, so `isUserLoggedIn` returns **`true`** for a completely empty/uninitialized state. This is a real nuance of the `!== null` check (`client/state/current-user/selectors.js:L16`): only an *explicit* `null` id reads as logged-out; the reducer's default is `null` (`client/state/current-user/reducer.js:L24`), so in practice a booted store has an explicit `null`, but a bare `{}` does not.
 
 ### The OAuth token check (`wpcom_token`): cookie → localStorage → false
 
 - `packages/oauth-token/src/index.js:L7` — `TOKEN_NAME = 'wpcom_token'`.
-- `packages/oauth-token/src/index.js:L9-L24` — `getToken()` parses `document.cookie` for `wpcom_token` **first** (`L10-L14`), then falls back to `store.get(...)` (**localStorage**, `L16`), returning the token if found (`L18-L20`) or **`false`** if neither is present (`L22`).
-- `client/boot/common.js:L154` — `oauthTokenMiddleware`; when `config.isEnabled( 'oauth' )` (`L155`) and the route is not a logged-out route (`L156`), a missing token (`getToken() === false`) redirects to the login page (`L175-L176`).
+- `packages/oauth-token/src/index.js:L9-L24` — `getToken()` parses `document.cookie` for `wpcom_token` **first** (`L10-L14`), then falls back to `store.get( TOKEN_NAME )` (**localStorage**, `L16`; `TOKEN_NAME` = `'wpcom_token'`), returning the token if found (`L18-L20`) or **`false`** if neither is present (`L22`).
+- `client/boot/common.js:L154` — `oauthTokenMiddleware`; when `config.isEnabled( 'oauth' )` (`L155`) and the route is not a logged-out route (`L156`), a missing token (`getToken() === false`, `L176`) triggers the redirect `window.location = authorizePath()` (`L177`).
 
-**Observed (real `getToken()` with mocked `document.cookie` / `store`, three sub-cases + a roundtrip):**
+**Synthetic-harness output** (verbatim `getToken()`/`setToken()` logic from `packages/oauth-token/src/index.js:L10-L28`, run against the **real `cookie` package** — the same dependency the module imports at `L1` — with a mocked `store` and a settable `document.cookie`; the browser OAuth flow was not driven live). Command: `NODE_PATH=<repo>/node_modules node /tmp/blitzy_evidence/q5_oauth_token_harness.js`. Complete, unedited output:
 
 ```
+=== Q5 SYNTHETIC oauth getToken() harness (verbatim logic, real `cookie` pkg) ===
+
 case 1  cookie present                    -> getToken() = "COOKIE_TOKEN_ABC"
 case 2  no cookie, localStorage present   -> getToken() = "LOCALSTORAGE_TOKEN_XYZ"
 case 3  neither cookie nor localStorage   -> getToken() = false
 setToken("ROUNDTRIP_TOKEN"); getToken()   -> "ROUNDTRIP_TOKEN"
 ```
 
-### The server-side `/me` bootstrap (gated on `wordpress_logged_in`)
+### Two distinct `/me` calls: the server-side **v1** bootstrap vs. the client-side **v1.1** fetch
 
-- `client/server/user-bootstrap/index.js:L8` — `AUTH_COOKIE_NAME = 'wordpress_logged_in'`.
-- `client/server/user-bootstrap/index.js:L13` — `API_PATH = 'https://public-api.wordpress.com/rest/v1/me'`.
-- `client/server/user-bootstrap/index.js:L26` — `getBootstrappedUser(...)`; `L32-L34` — throws (does not bootstrap) if the `wordpress_logged_in` cookie value is absent.
+There are **two different `/me` endpoints**, and they must not be conflated:
 
-**Observed (live browser, logged-in path corroboration):** the running app issued `GET https://public-api.wordpress.com/rest/v1.1/me?...meta=flags -> HTTP 200` (reqid=100 in the Network capture) — the `/me` call that populates the current user. The data request is remote (corroborating Q2).
+- **Server-side bootstrap → `rest/v1/me`** (gated on `wordpress_logged_in`):
+  - `client/server/user-bootstrap/index.js:L8` — `AUTH_COOKIE_NAME = 'wordpress_logged_in'`.
+  - `client/server/user-bootstrap/index.js:L13` — `API_PATH = 'https://public-api.wordpress.com/rest/v1/me'` (note: **v1**, not v1.1).
+  - `client/server/user-bootstrap/index.js:L14-L17` — appends `?meta=flags`.
+  - `client/server/user-bootstrap/index.js:L27` — `export default async function getBootstrappedUser( request )`; `L28` reads `request.cookies[ AUTH_COOKIE_NAME ]`; `L33-L34` — throws `'Cannot bootstrap without an auth cookie'` (does **not** bootstrap) if that cookie is absent. *(inferred — this server path only runs during SSR with a `wordpress_logged_in` cookie, which requires credentials that were not available, so it was not exercised at runtime.)*
+- **Client-side fetch → `rest/v1.1/me`** (the browser's current-user request):
+  - `client/lib/user/shared-utils/raw-current-user-fetch.js:L3-L6` — `rawCurrentUserFetch()` calls `wpcom.me().get( { meta: 'flags' } )`, which resolves to the WordPress.com REST **v1.1** `/me` endpoint. This is the call the running browser actually issues.
+
+**Observed (live browser, logged-out `/discover`) — the client v1.1 `/me` fetch:** the running app issued
+
+```
+GET https://public-api.wordpress.com/rest/v1.1/me?http_envelope=1&meta=flags
+```
+
+and, because the session was logged-out (no `wordpress_logged_in` / `wpcom_token`), the response was an HTTP-envelope **403** (`code:403`, 210 bytes, no PII). Complete, unedited response body (`/tmp/blitzy_evidence/q5_me_response.network-response`):
+
+```json
+{"code":403,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"error":"authorization_required","message":"An active access token must be used to query information about the current user."}}
+```
+
+This 403 is exactly why `CURRENT_USER_RECEIVE` never fires in the logged-out session (Q4): there is no user to receive. The request is remote (`public-api.wordpress.com`), corroborating Q2. The logged-in `200` variant of this call could not be observed live (no credentials).
 
 ### Client hydration and the persistence key scheme
 
@@ -432,16 +601,31 @@ setToken("ROUNDTRIP_TOKEN"); getToken()   -> "ROUNDTRIP_TOKEN"
 ### IndexedDB persistence store + bypass
 
 - `client/lib/browser-storage/index.ts:L20` — `DB_NAME = 'calypso'`; `L21` — `DB_VERSION = 2`; `L22` — `STORE_NAME = 'calypso_store'`.
-- `client/lib/browser-storage/bypass.ts:L6` — the bypass path (used when persistent storage is unavailable, e.g. private/incognito), backed by an in-memory store (`L12`). **(inferred** for the private-mode trigger condition; the constants and in-memory fallback are read from source, not exercised in incognito at runtime.**)**
+- `client/lib/browser-storage/bypass.ts:L6-L10` — this module's own docstring (quoted verbatim, `sic` typo included):
+
+  ```
+  // This module defines a series of methods which bypasse all persistent storage.
+  // Any calls to read/write data using browser-storage instead access a temporary
+  // in-memory store which is lost on page reload. This driver is used to sandbox
+  // a user's data while support-user is active, ensuring it does not contaminate
+  // the original user, and vice versa.
+  ```
+
+  It is therefore **not** a private/incognito path — it is the **support-user** sandbox. It is backed by an in-memory `Map` (`client/lib/browser-storage/bypass.ts:L12`, `const memoryStore = new Map()`) that is reset by `activate()` (`client/lib/browser-storage/bypass.ts:L47`).
+- The bypass is switched on by the support-user flow: `client/lib/user/support-user-interop.js:L90` and `L108` both call `bypassPersistentStorage( true )` (imported at `client/lib/user/support-user-interop.js:L2`). *(inferred — the support-user path was not exercised at runtime; the docstring, in-memory store, and both trigger sites are read from source.)*
 
 ### Observed output — live browser storage on the **logged-out** `/discover` page
 
+Captured live via Chrome DevTools at `http://calypso.localhost:3000/discover` (source: `/tmp/blitzy_evidence/q5_loggedout_storage.json`). Volatile analytics cookie values are redacted; everything else is verbatim:
+
 ```
-cookies          = tk_ai=...; country_code=US; region=Iowa; tk_qs=
-                   # NOTE: NO wordpress_logged_in, NO wpcom_token (logged-out)
-localStorage keys = ["tusSupport"]
-IndexedDB dbs     = ["calypso (v2)"]
-calypso_store keys = [
+cookie names        = ["tk_ai", "country_code", "region", "tk_qs"]   # values [REDACTED:analytics-cookie]
+hasAuthCookie(wordpress_logged_in) = false
+hasWpcomTokenCookie                = false
+localStorage keys   = ["tusSupport"]
+IndexedDB databases = ["calypso (v2)"]
+calypso_store keys  = [
+  "browser-storage-sanity-test",
   "redux-state-logged-out",
   "redux-state-logged-out:all-domains",
   "redux-state-logged-out:connectedApplications",
@@ -456,21 +640,23 @@ calypso_store keys = [
   "redux-state-logged-out:signup",
   "redux-state-logged-out:siteSettings",
   "redux-state-logged-out:teams",
-  "redux-state-logged-out:ui",
-  "redux-state-logged-out:userSuggestions",
-  "was-state-randomly-cleared"
+  "redux-state-logged-out:userSuggestions"
 ]
 window.initialReduxState present = true   (topKeys = ["documentHead"])
+bodyClass   = "color-scheme theme-default is-group-reader is-section-reader font-smoothing-antialiased is-reader-page"
+layoutClass = "layout is-group-reader is-section-reader focus-content has-header-section has-no-sidebar feature-flag-woocommerce-core-profiler-passwordless-auth"
 ```
 
 - The IndexedDB database is exactly `calypso` at version 2 (`client/lib/browser-storage/index.ts:L20-L21`); its object store is `calypso_store` (`L22`).
-- The keys are exactly the `redux-state-<userId | 'logged-out'>[:subkey]` scheme (`client/state/initial-state.js:L75-L76`), here with `userId` absent → `'logged-out'`.
-- **No** `wordpress_logged_in` and **no** `wpcom_token` cookies exist in the logged-out branch — consistent with `isUserLoggedIn = false` and with the server-bootstrap gate not firing.
+- `browser-storage-sanity-test` is the availability-probe key `SANITY_TEST_KEY` written by the storage layer itself (`client/lib/browser-storage/index.ts:L24`), not a persisted Redux slice.
+- The remaining keys are exactly the `redux-state-<userId | 'logged-out'>[:subkey]` scheme (`client/state/initial-state.js:L75-L76`), here with `userId` absent → `'logged-out'`.
+- **No** `wordpress_logged_in` and **no** `wpcom_token` cookies exist in the logged-out branch (`hasAuthCookie = false`, `hasWpcomTokenCookie = false`) — consistent with `isUserLoggedIn = false` and with the server-bootstrap gate not firing.
+- `layoutClass` contains `has-no-sidebar` and no Reader sidebar header is present in the DOM — because the Reader sidebar mounts only when logged in (`client/reader/controller.js:L37-L44`); see Q6.
 
 ### The two render branches (cross-product)
 
-- **Logged-in:** `wordpress_logged_in` cookie present → server `/me` bootstrap populates `currentUser.id` → `isUserLoggedIn = true` → logged-in UI; persisted state keyed `redux-state-<userId>`; in OAuth mode `getToken()` returns the token (cookie or localStorage).
-- **Logged-out:** no auth cookie → no bootstrap → `currentUser.id = null` → `isUserLoggedIn = false`; persisted state keyed `redux-state-logged-out`; in OAuth mode `getToken()` returns `false` and `oauthTokenMiddleware` redirects to `/login` (`client/boot/common.js:L175-L176`). The Reader still renders logged-out because its section sets `enableLoggedOut: true` (`client/sections.js:L396`).
+- **Logged-in** *(inferred from source — not observed live; no credentials were available to drive a logged-in session):* `wordpress_logged_in` cookie present → server `/me` (`rest/v1/me`) bootstrap populates `currentUser.id` → `isUserLoggedIn = true` → logged-in UI; persisted state keyed `redux-state-<userId>`; in OAuth mode `getToken()` returns the token (cookie or localStorage).
+- **Logged-out** *(observed live):* no auth cookie (`hasAuthCookie = false`) → no bootstrap → the client `rest/v1.1/me` fetch returns 403 → `currentUser.id = null` → `isUserLoggedIn = false`; persisted state keyed `redux-state-logged-out` (observed 15 such keys above); in OAuth mode `getToken()` returns `false` and `oauthTokenMiddleware` redirects via `window.location = authorizePath()` (`client/boot/common.js:L176-L177`). The Reader still renders logged-out because its section sets `enableLoggedOut: true` (`client/sections.js:L396`).
 
 ### Cause → effect
 
@@ -483,7 +669,7 @@ Rendering keys off Redux `currentUser.id` (`client/state/current-user/selectors.
 3. **`localStorage` (`wpcom_token`)** — fallback in `getToken()` via `store.get` (`packages/oauth-token/src/index.js:L16`).
 4. **`window.initialReduxState`** — SSR-injected client hydration (`client/state/initial-state.js:L149`).
 5. **IndexedDB `calypso` / `calypso_store`** — persisted Redux state (`client/lib/browser-storage/index.ts:L20-L22`), keyed `redux-state-<userId|'logged-out'>[:subkey]` (`client/state/initial-state.js:L75-L76`; matched by `client/state/persisted-state.js:L17`).
-6. **In-memory bypass store** — private/incognito fallback (`client/lib/browser-storage/bypass.ts:L6,L12`).
+6. **In-memory bypass store** — the **support-user** sandbox (not private/incognito): an in-memory `Map` used while support-user is active (`client/lib/browser-storage/bypass.ts:L6-L10,L12`), switched on by `bypassPersistentStorage( true )` at `client/lib/user/support-user-interop.js:L90,L108`.
 
 ---
 
@@ -497,63 +683,57 @@ This question has three parts: (a) the sidebar header's margin/padding, (b) the 
 
 There are **three** plausible "sidebar header" elements. The one that manifests in the **Reader** is `.is-section-reader .sidebar-header`, with **`margin: 0 12px 44px`** and **`padding: 0 10px`**. The two siblings are the classic list heading `.sidebar__heading` (`padding: 16px 8px 6px 16px; margin: 0`) and the global-nav branding header `.sidebar__header` (`padding: 30px 24px 29px`).
 
-#### Observed output (compiled with the real `sass@1.54.0`)
+#### Observed output — injected-DOM real-CSS (live browser `getComputedStyle`)
 
-**Command (mirrors the webpack SCSS prelude that injects the shared utils):**
+**Why injection is required:** the Reader sidebar (and therefore its `.sidebar-header`) mounts **only when logged in** — `client/reader/controller.js:L37` gates `context.secondary = <ReaderSidebar>` on `isUserLoggedIn( state )`, and the element is `<li className="sidebar-header">` (`client/reader/sidebar/index.jsx:L168`). With no credentials, a live logged-in sidebar could not render, so an element matching `.is-section-reader .sidebar-header` was **injected into the live Reader document** (whose `<body>` already carries `is-section-reader` — confirmed in Q5) and read back with `getComputedStyle`. This is the **real compiled Reader stylesheet** applied to a real element in the running page — not a CLI compile. Source: `/tmp/blitzy_evidence/q6a_computed_sidebar_header.json`. Complete, unedited values:
 
 ```
-node_modules/.bin/sass --load-path node_modules \
-  <wrapper that @use 'client/assets/stylesheets/shared/utils' as * then the target scss>
+.is-section-reader .sidebar-header   (getComputedStyle, live Reader document)
+  display          = flex
+  justify-content  = space-between
+  margin           = 0px 12px 44px      (top 0, right 12, bottom 44, left 12)
+  padding          = 0px 10px           (top 0, right 10, bottom 0, left 10)
 ```
 
-**The Reader header (the one that manifests):**
+- These runtime values match the source rule exactly: `.sidebar-header` (`client/reader/sidebar/style.scss:L113`) nested under `.is-section-reader` (`L112`) — `display: flex` (`L114`), `justify-content: space-between` (`L115`), `margin: 0 12px 44px` (`L116`), `padding: 0 10px` (`L117`).
 
-```css
-.is-section-reader .sidebar-header {
-  display: flex;
-  justify-content: space-between;
-  margin: 0 12px 44px;
-  padding: 0 10px;
-}
-```
+The two siblings do **not** render on the Reader page (they belong to the classic list chrome and the global-nav branding row), so they are quoted **verbatim from source** rather than from `getComputedStyle`.
 
-- `client/reader/sidebar/style.scss:L113` (selector), `L116` (`margin: 0 12px 44px`), `L117` (`padding: 0 10px`).
+**Sibling 1 — the classic list heading (documented as used "like in Reader"), verbatim SCSS:**
 
-**Sibling 1 — the classic list heading (documented "used for … static headings like in Reader"):**
-
-```css
+```scss
 .sidebar__heading {
   color: var(--color-sidebar-text-alternative);
-  font-size: 1rem;
+  font-size: $font-body;
   font-weight: 600;
   padding: 16px 8px 6px 16px;
   margin: 0;
+  outline: 0;
 }
 ```
 
-- `client/layout/sidebar/style.scss:L64-L65` (the "used for both static headings // like in Reader" comment), `L66` (selector), `L70` (`padding: 16px 8px 6px 16px`), `L71` (`margin: 0`).
+- `client/layout/sidebar/style.scss:L64-L65` (the comment reads "Sidebar Headings, used for both static headings like in Reader, and for the expandable menus."), `L66` (selector), `L67` (`color`), `L68` (`font-size: $font-body`), `L69` (`font-weight: 600`), `L70` (`padding: 16px 8px 6px 16px`), `L71` (`margin: 0`), `L72` (`outline: 0`), `L73` (closing `}`) — this is the **complete** rule. `$font-body` is `rem(16px)` (the `@automattic/typography` workspace package, `packages/typography/styles/variables.scss:L45`), i.e. `1rem` at the 16px root — so the header's padding/margin (the values Q6a asks for) are the literal `16px 8px 6px 16px` / `0`.
 
-**Sibling 2 — the global-nav branding header:**
+**Sibling 2 — the global-nav branding header (the header's own box declarations, verbatim):**
 
-```css
-.global-sidebar .sidebar__header {
+```scss
+.sidebar__header {
   align-items: center;
+  // Hide the header when the masterbar is visible.
   display: none;
   gap: 8px;
   padding: 30px 24px 29px;
-}
-.has-no-masterbar .global-sidebar .sidebar__header { display: flex; }
 ```
 
-- `client/layout/global-sidebar/style.scss:L70` (selector), `L75` (`padding: 30px 24px 29px`).
+- `client/layout/global-sidebar/style.scss:L70` (selector, nested under `.global-sidebar`), `L71` (`align-items: center`), `L73` (`display: none`), `L74` (`gap: 8px`), `L75` (`padding: 30px 24px 29px`). The `.sidebar__header` rule declares **no `margin` of its own** — its only box value relevant to Q6a is `padding: 30px 24px 29px`. The rule then continues with nested child selectors — `a` (`L77-L80`), `span.dotcom` (`L82-L90`), `.link-logo` (`L92-L94`) through ~`L100` — which style the header's **children** (logo image, links), not the header's own box, so they are omitted here as out-of-scope for the margin/padding question. The header itself is shown (`display: flex`) only when there is no masterbar: `.has-no-masterbar .global-sidebar .sidebar__header` (`client/layout/global-sidebar/style.scss:L452,L458-L460`).
 
 #### Cause → effect
 
-`.is-section-reader .sidebar-header` is scoped to the Reader section body class, so it wins on Reader pages and applies `margin: 0 12px 44px` / `padding: 0 10px` (`client/reader/sidebar/style.scss:L116-L117`). The `44px` bottom margin creates the gap below the Reader header; the flex + `justify-content: space-between` (`L114`) spreads the header's children. The classic `.sidebar__heading` and the global `.sidebar__header` target different DOM (list section headings and the global-nav branding row), so they don't override the Reader header.
+`.is-section-reader .sidebar-header` is scoped to the Reader section body class, so it wins on Reader pages and applies `margin: 0 12px 44px` / `padding: 0 10px` (`client/reader/sidebar/style.scss:L116-L117`). The `44px` bottom margin creates the gap below the Reader header; the flex (`L114`) + `justify-content: space-between` (`L115`) spreads the header's children. The classic `.sidebar__heading` and the global `.sidebar__header` target different DOM (list section headings and the global-nav branding row), so they don't override the Reader header.
 
 #### Note on live capture
 
-On the logged-out `/discover` page the Reader **sidebar header element is not rendered** (the logged-out Discover view uses a different chrome), so the values above come from compiling the **real** SCSS with `sass@1.54.0` rather than from `getComputedStyle` on that page. The compiled selectors and values are the authoritative source rules; which one applies is determined by the section body class (`.is-section-reader`), confirmed present on the Reader route (Q6c shows `is-section-reader` in the body class).
+The Reader sidebar mounts **only when logged in** (`client/reader/controller.js:L37`), and no WordPress.com credentials were available, so the header does not appear on the logged-out `/discover` page. To obtain a **real runtime** value rather than a source-only reading, an element matching `.is-section-reader .sidebar-header` was injected into the **live** Reader document (its `<body>` carries `is-section-reader`, confirmed in Q5) and measured with `getComputedStyle` — the injected-DOM real-CSS capture shown above. Its `margin`/`padding` match the source rule (`client/reader/sidebar/style.scss:L116-L117`) exactly. The two sibling headers are quoted verbatim from source because they do not render on the Reader page.
 
 ---
 
@@ -561,60 +741,87 @@ On the logged-out `/discover` page the Reader **sidebar header element is not re
 
 #### Direct answer
 
-The layout geometry is computed from a small set of `:root` custom properties: **`--masterbar-height`** (`46px`, dropping to `32px` at `min-width: 782px`), **`--masterbar-checkout-height`** (`72px`), **`--sidebar-width-max`** (`272px`), and **`--sidebar-width-min`** (`228px`), plus contextual **`--content-padding-top`/`--content-padding-bottom`** (`16px` each). The Reader sidebar's `padding` and `height` are `calc()` expressions built from these.
+The layout geometry is computed from a small set of `:root` custom properties: **`--masterbar-height`** (`46px`, dropping to `32px` at `min-width: 782px`), **`--masterbar-checkout-height`** (`72px`), **`--sidebar-width-max`** (`272px` at `:root`, overridden to `295px` under `.theme-default .is-global-sidebar-visible`), and **`--sidebar-width-min`** (`228px` at `:root`, likewise overridden), plus contextual **`--content-padding-top`/`--content-padding-bottom`** (`16px` each, defined only under `.theme-default .is-global-sidebar-visible`). The Reader sidebar's `padding` and `height` are `calc()` expressions built from these, so their resolved values depend on which of those contexts is active.
 
-#### Observed output (compiled `_variables.scss` with real `sass@1.54.0`)
+#### The `:root` custom properties (verbatim source)
 
-```css
+```scss
 :root {
+  // Masterbar
   --masterbar-height: 46px;
   --masterbar-checkout-height: 72px;
+
+  @media only screen and (min-width: 782px) {
+    --masterbar-height: 32px;
+  }
+
+  // Sidebar size limits
   --sidebar-width-max: 272px;
   --sidebar-width-min: 228px;
 }
-@media (min-width: 782px) {
-  :root { --masterbar-height: 32px; }
+```
+
+- `client/assets/stylesheets/shared/_variables.scss:L5` (`:root`), `L7` (`--masterbar-height: 46px`), `L8` (`--masterbar-checkout-height: 72px`), `L10-L11` (`@media (min-width: 782px)` → `--masterbar-height: 32px`), `L15` (`--sidebar-width-max: 272px`), `L16` (`--sidebar-width-min: 228px`). The **live-observed** values of these appear below.
+
+**Contextual content padding** (defined only inside `.theme-default .is-global-sidebar-visible`, verbatim source):
+
+```scss
+.theme-default {                      /* L10 */
+  .is-global-sidebar-visible {        /* L15 */
+    --content-padding-top: 16px;      /* L50 */
+    --content-padding-bottom: 16px;   /* L51 */
+  }
 }
 ```
 
-- `client/assets/stylesheets/shared/_variables.scss:L5` (`:root`), `L7` (`--masterbar-height: 46px`), `L8` (`--masterbar-checkout-height: 72px`), `L10-L11` (`@media (min-width: 782px)` → `--masterbar-height: 32px`), `L15` (`--sidebar-width-max: 272px`), `L16` (`--sidebar-width-min: 228px`).
+- `client/my-sites/sidebar/style.scss:L10` (`.theme-default`), `L15` (`.is-global-sidebar-visible`), `L50-L51` (the two custom properties). Because they live under that selector — not `:root` — they are unset on any page without the global sidebar (e.g., logged-out Discover).
 
-**Contextual content padding:**
+**The `calc()` usages in the Reader sidebar (verbatim source; note the RTL/LTR split):**
 
-```css
---content-padding-top: 16px;
---content-padding-bottom: 16px;
+```scss
+/* RTL branch — body.is-section-reader.rtl .layout__content — L69-L70 */
+padding: calc(var(--masterbar-height) + var(--content-padding-top)) calc(var(--sidebar-width-max)) var(--content-padding-bottom) 16px;
+
+/* LTR base — body.is-section-reader .layout__content — L77-L78 */
+padding-top: calc(var(--masterbar-height) + var(--content-padding-top));
+padding-bottom: var(--content-padding-bottom);
+
+/* LTR desktop — @media (min-width: 782px) — L79-L80 */
+padding: calc(var(--masterbar-height) + var(--content-padding-top)) 16px var(--content-padding-bottom) calc(var(--sidebar-width-max)) !important;
+
+/* scroll height — @media (max-width: 781px) — L102 / L107 */
+height: calc(100vh - var(--masterbar-height) - var(--content-padding-top) - var(--content-padding-bottom));
 ```
 
-- `client/my-sites/sidebar/style.scss:L50-L51`.
+- **RTL vs LTR (the key difference):** the sidebar gutter sits on the **right** in RTL (`client/reader/sidebar/style.scss:L70` — padding-**right** = `calc(var(--sidebar-width-max))`) and on the **left** in LTR desktop (`L80` — padding-**left** = `calc(var(--sidebar-width-max))`). The LTR non-desktop base sets only `padding-top`/`padding-bottom` (`L77-L78`); the full four-side padding with the sidebar gutter applies at `@media (min-width: 782px)` (`L79-L80`). The scroll `height` calc lives inside `@media (max-width: 781px)` (`L102`), so it applies only **below** 782px (`L107`).
 
-**The `calc()` usages in the Reader sidebar (compiled):**
-
-```css
-/* client/reader/sidebar/style.scss:L70 */
-padding: calc(var(--masterbar-height) + var(--content-padding-top))
-         calc(var(--sidebar-width-max))
-         var(--content-padding-bottom)
-         16px;
-
-/* client/reader/sidebar/style.scss:L107 */
-height: calc(100vh
-        - var(--masterbar-height)
-        - var(--content-padding-top)
-        - var(--content-padding-bottom));
-```
-
-**Observed live computed values (running app, `getComputedStyle(document.documentElement)`):**
+**Observed live root custom properties** (running app, `getComputedStyle(document.documentElement)` at `innerWidth = 1905`, `>= 782px`; source `/tmp/blitzy_evidence/q6b_resolved_calc.json`):
 
 ```
-# desktop width (innerWidth = 1905, >= 782px):
---masterbar-height          = 32px
+--masterbar-height          = 32px      (desktop override active at >= 782px)
 --masterbar-checkout-height = 72px
 --sidebar-width-max         = 272px
 --sidebar-width-min         = 228px
-# (--content-padding-* are supplied contextually by the my-sites sidebar and
-#  were empty on the logged-out Discover document)
+--content-padding-top       = (empty on :root)
+--content-padding-bottom    = (empty on :root)
 ```
+
+`--content-padding-*` are **empty on `:root`** because they are defined only under `.theme-default .is-global-sidebar-visible` (`client/my-sites/sidebar/style.scss:L10,L15,L50-L51`); the logged-out Discover document carried `has-no-sidebar`, not `is-global-sidebar-visible`, so they were unset there.
+
+**Resolved `calc()` values** — the LTR-desktop padding (`client/reader/sidebar/style.scss:L80`) and the scroll height (`L107`) resolve differently depending on which context supplies `--sidebar-width-max` and `--content-padding-*`. The self-consistent **logged-in Reader chrome** is `.theme-default .is-global-sidebar-visible` — the **only** context that defines `--content-padding-* = 16px` (`client/my-sites/sidebar/style.scss:L50-L51`), and in that *same* context `--sidebar-width-max` is overridden to **`295px`** (`client/my-sites/sidebar/style.scss:L16`), **not** the `:root` `272px`. Using the observed `--masterbar-height` (`32px` @≥782px, `46px` @<782px) with that contextual `295px` / `16px` (measured viewport `innerHeight = 2053`):
+
+```
+LTR desktop padding (>= 782px; .is-global-sidebar-visible → --sidebar-width-max = 295px, --content-padding = 16px):
+  padding-top    = calc(32px + 16px)              = 48px
+  padding-right  = 16px
+  padding-bottom = var(--content-padding-bottom)  = 16px
+  padding-left   = calc(var(--sidebar-width-max)) = 295px
+
+scroll height (< 782px, --masterbar-height = 46px):
+  height = calc(100vh - 46px - 16px - 16px) = 2053 - 46 - 16 - 16 = 1975px
+```
+
+Below 782px the `--masterbar-height` reverts to `46px`, so the LTR base `padding-top` (`L77`) becomes `calc(46px + 16px) = 62px`. These are arithmetic resolutions of the `calc()` expressions — **not** a direct `getComputedStyle` of `.layout__content`, which could not be captured in the logged-in chrome without WordPress.com credentials. On the **logged-out** page the live-observed `--sidebar-width-max` was the `:root` base **`272px`** and `--content-padding-*` were unset, so the gutter padding did not resolve there. The gutter (`padding-left`) is therefore context-dependent: `295px` under `.is-global-sidebar-visible` (where content-padding is also set), `272px` at the `:root`/`.theme-default` base, `69px` under `.is-global-sidebar-collapsed` (`client/my-sites/sidebar/style.scss:L60`), and `0px` under `is-mobile-app-view` (`client/layout/style.scss:L169`) — see the enumeration below.
 
 **A no-sidebar override exists** (note the accurate selector — it is `is-mobile-app-view`, not literally "no-sidebar"):
 
@@ -626,14 +833,14 @@ body.is-mobile-app-view { --sidebar-width-max: 0px; --sidebar-width-min: 0px; }
 
 #### Cause → effect
 
-Because `--masterbar-height` is redefined inside `@media (min-width: 782px)` (`client/assets/stylesheets/shared/_variables.scss:L10-L11`), any `calc()` that references it recomputes at the 782px boundary: the Reader content `padding-top` (`calc(var(--masterbar-height) + var(--content-padding-top))`, `client/reader/sidebar/style.scss:L70`) and the scroll `height` (`calc(100vh - var(--masterbar-height) - …)`, `L107`) both shift by `46px − 32px = 14px` as the viewport crosses 782px. The live computed `--masterbar-height = 32px` at `innerWidth = 1905` confirms the desktop override is active; below 782px it is `46px` (observed in Q6c). Setting `--sidebar-width-*: 0px` in `is-mobile-app-view` (`client/layout/style.scss:L169-L170`) collapses the sidebar column in that context because `calc(var(--sidebar-width-max))` resolves to `0px`.
+Because `--masterbar-height` is redefined inside `@media (min-width: 782px)` (`client/assets/stylesheets/shared/_variables.scss:L10-L11`), any `calc()` that references it recomputes at the 782px boundary. The Reader content `padding-top` (`calc(var(--masterbar-height) + var(--content-padding-top))`, LTR base at `client/reader/sidebar/style.scss:L77`) resolves to `calc(46px + 16px) = 62px` below 782px and `calc(32px + 16px) = 48px` at/above 782px — a `14px` shift (`46px − 32px`). Likewise the scroll `height` (`calc(100vh - var(--masterbar-height) - var(--content-padding-top) - var(--content-padding-bottom))`, `L107`, applied under `@media (max-width: 781px)` at `L102`) resolves to `2053 − 46 − 16 − 16 = 1975px` at the measured `innerHeight = 2053`. The live computed `--masterbar-height = 32px` at `innerWidth = 1905` confirms the desktop override is active; below 782px it is `46px` (observed in Q6c). Setting `--sidebar-width-*: 0px` in `is-mobile-app-view` (`client/layout/style.scss:L169-L170`) collapses the sidebar gutter in that context because `calc(var(--sidebar-width-max))` resolves to `0px`.
 
 #### Custom properties enumerated (by name, with value + `file:line`)
 
 - `--masterbar-height`: `46px`, → `32px` at `min-width:782px` (`client/assets/stylesheets/shared/_variables.scss:L7,L11`).
 - `--masterbar-checkout-height`: `72px` (`client/assets/stylesheets/shared/_variables.scss:L8`).
-- `--sidebar-width-max`: `272px` (`client/assets/stylesheets/shared/_variables.scss:L15`); `0px` under `is-mobile-app-view` (`client/layout/style.scss:L169`).
-- `--sidebar-width-min`: `228px` (`client/assets/stylesheets/shared/_variables.scss:L16`); `0px` under `is-mobile-app-view` (`client/layout/style.scss:L170`).
+- `--sidebar-width-max`: `272px` at `:root` (`client/assets/stylesheets/shared/_variables.scss:L15`); overridden to `272px` under `.theme-default` (`client/my-sites/sidebar/style.scss:L12`), **`295px`** under `.theme-default .is-global-sidebar-visible` (`client/my-sites/sidebar/style.scss:L16`), `69px` under `.is-global-sidebar-collapsed` (`client/my-sites/sidebar/style.scss:L60`), and `0px` under `is-mobile-app-view` (`client/layout/style.scss:L169`).
+- `--sidebar-width-min`: `228px` at `:root` (`client/assets/stylesheets/shared/_variables.scss:L16`); overridden to `272px` under `.theme-default` (`client/my-sites/sidebar/style.scss:L13`), **`295px`** under `.theme-default .is-global-sidebar-visible` (`client/my-sites/sidebar/style.scss:L17`), `69px` under `.is-global-sidebar-collapsed` (`client/my-sites/sidebar/style.scss:L61`), and `0px` under `is-mobile-app-view` (`client/layout/style.scss:L170`).
 - `--content-padding-top`: `16px` (`client/my-sites/sidebar/style.scss:L50`).
 - `--content-padding-bottom`: `16px` (`client/my-sites/sidebar/style.scss:L51`).
 
@@ -649,10 +856,10 @@ Breakpoints come from **three systems**: (1) the JS runtime `mediaQueryOptions` 
 
 - Source map: `packages/viewport/src/index.ts:L96-L118` (22 entries). Notable off-by-one storage: `>=782px` is stored `{ min: 781 }` (`L108`) and `>=960px` is stored `{ min: 959 }` (`L111`).
 
-**Command (standalone Node requiring the real compiled module with a width-aware `matchMedia` mock):**
+**Command** — a standalone temporary Node script that `require`s the **real compiled** `@automattic/viewport` module (the workspace build output for `packages/viewport`, generated from the tracked source `packages/viewport/src/index.ts`; the built bundle is a gitignored artifact, so the citation points to that tracked source) with a width-aware `matchMedia` mock, then prints the literal media query each key generates via the real `getMediaQueryList`:
 
 ```
-node /tmp/blitzy_viewport_probe.js
+node /tmp/blitzy_evidence/viewport_probe.js
 ```
 
 **Observed — the literal media query each key generates (via the real `getMediaQueryList`):**
@@ -706,7 +913,18 @@ w=960   {"<660px":false,">=782px":true, ">782px":true, ">800px":true, ">=960px":
 w=1000  {"<660px":false,">=782px":true, ">782px":true, ">800px":true, ">=960px":true}
 ```
 
-**Cause → effect (the off-by-one):** `createMediaQueryList` builds min-queries as `(min-width: ${min + 1}px)` (compiled `@automattic/viewport`, `dist/cjs` lines 71/76). So the stored `{ min: 781 }` for `>=782px` becomes the actual query `(min-width: 782px)` — **inclusive at exactly 782** — while `>782px` (`{ min: 782 }`) becomes `(min-width: 783px)` — **strict** (one pixel higher). The same pattern makes `>=960px` inclusive at 960 and `>960px` strict at 961. This is why `<660px` is `true` at exactly 660 (`(max-width: 660px)`), and why sidebar collapse (`>800px` → `(min-width: 801px)`) turns on at 801, not 800.
+**Cause → effect (the off-by-one):** the `createMediaQueryList` function (`packages/viewport/src/index.ts:L71`) builds min-queries with a `min + 1` offset. The source (verbatim, `L76`/`L82`/`L88`):
+
+```ts
+// L76 — range branch (both min and max):
+: window.matchMedia( `(min-width: ${ min + 1 }px) and (max-width: ${ max }px)` );
+// L82 — min-only branch:
+: window.matchMedia( `(min-width: ${ min + 1 }px)` );
+// L88 — max-only branch (no offset):
+: window.matchMedia( `(max-width: ${ max }px)` );
+```
+
+(The runtime probe exercises the module's *compiled* output; the source that compiles to that behavior is `packages/viewport/src/index.ts`, since the repository checks in only the TypeScript source under `packages/viewport/src/` and not the compiled bundle.) So the stored `{ min: 781 }` for `>=782px` (`L108`) becomes the actual query `(min-width: 782px)` — **inclusive at exactly 782** — while `>782px` (`{ min: 782 }`, `L109`) becomes `(min-width: 783px)` — **strict** (one pixel higher). The same pattern makes `>=960px` (`{ min: 959 }`, `L111`) inclusive at 960 and `>960px` (`{ min: 960 }`, `L112`) strict at 961. Conversely the max-only branch (`L88`) has no offset, which is why `<660px` (`{ max: 660 }`) is `true` at exactly 660 (`(max-width: 660px)`), and why sidebar collapse (`>800px` → `(min-width: 801px)`) turns on at 801, not 800.
 
 #### System 2 — the deprecated SCSS `$breakpoints` list
 
@@ -722,12 +940,62 @@ $breakpoints: 480px, 660px, 800px, 960px, 1040px, 1280px, 1400px;
 - `client/layout/index.jsx:L146` — `isWithinBreakpoint( '>=782px' )` → `isDesktop`.
 - `client/layout/index.jsx:L221` — `isWithinBreakpoint( '>800px' )` → sidebar collapse.
 
-**Global sidebar collapse boundary (compiled media queries):**
+**Global sidebar collapse boundary (verbatim source, not elided):**
 
-```css
-@media (min-width: 661px) { ... }   /* client/layout/global-sidebar/style.scss:L470 */
-@media (max-width: 660px) { ... }   /* client/layout/global-sidebar/style.scss:L511 */
+The two boundary media queries and their complete bodies, `client/layout/global-sidebar/style.scss:L470-L509` and `L511-L515`:
+
+```scss
+/* client/layout/global-sidebar/style.scss:L470-L509 */
+@media (min-width: 661px) {
+	.is-global-sidebar-collapsed {
+		.global-sidebar {
+			.sidebar__header,
+			.sidebar__footer {
+				flex-direction: column;
+			}
+
+			.sidebar__header {
+				span.dotcom {
+					background-position: left;
+					width: 24px;
+					margin-left: 6px;
+
+					.rtl & {
+						background-position: right;
+						margin-right: 6px;
+					}
+				}
+			}
+
+			.sidebar__footer {
+				.sidebar__footer-language-switcher {
+					font-size: 0;
+					gap: 0;
+					margin-inline-start: unset;
+				}
+			}
+
+			.sidebar__body {
+				overflow-y: visible;
+				.sidebar__menu-item-parent .sidebar__menu-link {
+					> *:not(:first-child) {
+						display: none;
+					}
+				}
+			}
+		}
+	}
+}
+
+/* client/layout/global-sidebar/style.scss:L511-L515 */
+@media (max-width: 660px) {
+	.global-sidebar .tooltip:hover::after {
+		display: none;
+	}
+}
 ```
+
+**Cause → effect:** above the boundary (`min-width: 661px`, `L470`) the *collapsed* global sidebar (`.is-global-sidebar-collapsed`) reflows its header and footer to `flex-direction: column` (`L475`), shrinks the `span.dotcom` logo to `24px` with a `6px` inline offset (`L481-L482`, mirrored for RTL at `L485-L486`), zeroes the footer language-switcher text (`font-size: 0`, `L493`), and hides all-but-first children of nested menu links (`display: none`, `L503`). Below the boundary (`max-width: 660px`, `L511`) the only rule is suppressing the sidebar tooltip hover pseudo-element (`.global-sidebar .tooltip:hover::after { display: none; }`, `L512-L514`) — i.e. on narrow widths the hover tooltip is turned off.
 
 #### Observed — live browser resize (matchMedia + the `--masterbar-height` custom property)
 
@@ -766,8 +1034,8 @@ Each row below re-enumerates a distinct thing the six questions asked for, with 
 | Host | `calypso.localhost` | `config/development.json:L7` | Observed (boot log URL) |
 | Protocol | `http` | `config/_shared.json:L24`, `config/development.json:L6` | Observed (boot log URL) |
 | `PORT` override | `process.env.PORT \|\| data.port` | `client/server/config/parser.js:L63` | (inferred) from source |
-| Boot log (≠ ready) | `wp-calypso booted in 1029ms - http://calypso.localhost:3000` | `client/server/index.js:L33` | Observed |
-| Readiness banner (fully ready) | `Ready! You can load http://calypso.localhost:3000/ now. Have fun!` | `client/server/bundler/index.js:L56` | Observed (after 77804ms first compile) |
+| Boot log (≠ ready) | `wp-calypso booted in 1005ms - http://calypso.localhost:3000` (run 1; run 2 = 1021 ms) | `client/server/index.js:L33` | Observed (2 runs) |
+| Readiness banner (fully ready) | `Ready! You can load http://calypso.localhost:3000/ now. Have fun!` | `client/server/bundler/index.js:L56` | Observed (invariant across 2 runs; after ~69–74 s first compile) |
 | Recompile banner | `Ready! All assets are re-compiled. Have fun!` | `client/server/bundler/index.js:L60` | (inferred) — recompile not triggered (read-only) |
 | Pre-compile holding page | `Welcome to Calypso!` (630 bytes) | `client/server/bundler/index.js:L76-L93,L82` | Observed (curl `/`) |
 | `start` script chain | gate → welcome → build → run | `package.json:L110,L113` | Observed |
@@ -787,67 +1055,69 @@ Each row below re-enumerates a distinct thing the six questions asked for, with 
 
 | Item | Value | `file:line` | Evidence |
 |---|---|---|---|
-| Default stream key | `following` | `client/reader/controller.js:L87` | Observed |
-| Default path | `/read/following`, apiVersion `1.2`, `number 4` | `…/streams/index.js:L194`, `L369`, `L161` | Observed (http action) |
-| All 20 stream keys → paths | see Q3 table | `…/streams/index.js:L192-L351` | Observed (each via `requestPage`) |
-| `INITIAL_FETCH` / `PER_FETCH` | `4` / `7` | `…/streams/index.js:L161,L160` | Observed (`number` 4→7 in browser) |
-| `http()` nests query | `apiVersion`/`apiNamespace`/`number` in `action.query` | `client/state/data-layer/wpcom-http/actions.js:L55-L66` | Observed |
-| `list` variant | `number 40`, apiVersion `1.3` | `…/streams/index.js:L332-L338` | Observed |
-| `recommendations_posts` variant | `number` undefined | `…/streams/index.js:L286-L287` | Observed |
-| Logged-out default | Discover → `/wpcom/v2/read/streams/discover` | `…/streams/index.js:L223-L224` | Observed (reqid=149) |
+| Default stream key | `following` | `client/reader/controller.js:L87` | Source (module default; logged-out visitor redirected to Discover) |
+| Default path | `/read/following`, apiVersion `1.2`, `number 4` | `client/state/data-layer/wpcom/read/streams/index.js:L194,L370,L161` | *(inferred)* — source (logged-in `following` not run; no creds); `number=4` observed live on Discover |
+| All 20 stream keys → paths | see Q3 table | `client/state/data-layer/wpcom/read/streams/index.js:L192-L351` | Source-enumerated (module-local `const`; default stream confirmed live) |
+| `INITIAL_FETCH` / `PER_FETCH` | `4` / `7` | `client/state/data-layer/wpcom/read/streams/index.js:L161,L160` | Observed (`number` 4→7 in browser) |
+| `http()` nests query | `apiVersion`/`apiNamespace`/`number` in `action.query` | `client/state/data-layer/wpcom-http/actions.js:L55-L66` | Source; query params observed on live Discover request |
+| `list` variant | `number 40`, apiVersion `1.3` | `client/state/data-layer/wpcom/read/streams/index.js:L332-L338` | Source (variant not exercised live) |
+| `recommendations_posts` variant | `number` undefined | `client/state/data-layer/wpcom/read/streams/index.js:L286-L287` | Source (variant not exercised live) |
+| Logged-out default | Discover → `/wpcom/v2/read/streams/discover` | `client/state/data-layer/wpcom/read/streams/index.js:L223-L224` | Observed (reqid=149) |
 
 ### Q4 — initial-load Redux actions
 
 | Item | Value | `file:line` | Evidence |
 |---|---|---|---|
 | Mount dispatch | `READER_STREAMS_PAGE_REQUEST` | `client/reader/stream/index.jsx:L221,L502`; `client/state/reader/streams/actions.js:L39` | Observed |
-| Success cascade | `READER_STREAMS_PAGE_REQUEST` → `READER_POSTS_RECEIVE` → `READER_STREAMS_PAGE_RECEIVE` | `…/streams/index.js:L428,L497`; `client/state/reader/posts/actions.js:L87`; `client/state/reader/streams/actions.js:L63` | Observed (ordered stream) |
-| Analytics (conditional) | `recordTracksEvent` only when post has `railcar` | `…/streams/index.js:L428-L511` | Observed (railcar null → none) |
-| Bootstrap actions | `SECTION_SET`, `ROUTE_SET`, `CURRENT_USER_RECEIVE` | `client/state/action-types.ts:L850,L848,L139`; `client/state/ui/section/actions.js:L5,L8` | (inferred) from source |
+| Success cascade | `READER_STREAMS_PAGE_REQUEST` → `READER_POSTS_RECEIVE` → `READER_STREAMS_PAGE_RECEIVE` | `client/state/data-layer/wpcom/read/streams/index.js:L428,L497`; `client/state/reader/posts/actions.js:L87`; `client/state/reader/streams/actions.js:L63` | Observed (ordered stream) |
+| Analytics (conditional) | `recordTracksEvent` only when post has `railcar` | `client/state/data-layer/wpcom/read/streams/index.js:L428-L511` | Observed (railcar null → none) |
+| Bootstrap actions | `SECTION_SET` (idx 27), `ROUTE_SET` (idx 31); `CURRENT_USER_RECEIVE` | `client/state/action-types.ts:L850,L848,L139`; `client/state/ui/section/actions.js:L5,L8` | `SECTION_SET`/`ROUTE_SET` **Observed** (in the 378-action stream, before the fetch); `CURRENT_USER_RECEIVE` (inferred) — did not fire logged-out |
 
 ### Q5 — login detection & storage (both branches)
 
 | Item | Value | `file:line` | Evidence |
 |---|---|---|---|
-| Render decision | `isUserLoggedIn = getCurrentUserId(state) !== null` | `client/state/current-user/selectors.js:L6,L15-L16` | Observed (true/false/edge) |
-| Logged-in | id `12345` → `true` | `client/state/current-user/reducer.js:L24-L26` | Observed |
-| Logged-out | id `null` → `false` | same | Observed |
-| Uninitialized edge case | `undefined !== null` → `true` | `client/state/current-user/selectors.js:L16` | Observed |
-| `wpcom_token` getToken order | cookie → localStorage → `false` | `packages/oauth-token/src/index.js:L7,L10-L22` | Observed (3 sub-cases) |
-| OAuth redirect | `/login` when `getToken()===false` | `client/boot/common.js:L154,L175-L176` | (inferred) from source |
-| Server `/me` bootstrap | gated on `wordpress_logged_in` | `client/server/user-bootstrap/index.js:L8,L13,L32-L34` | Observed (`/me` 200) |
-| Client hydration | `window.initialReduxState` | `client/state/initial-state.js:L149` | Observed (present) |
+| Render decision | `isUserLoggedIn = getCurrentUserId(state) !== null` | `client/state/current-user/selectors.js:L6-L7,L15-L16` | Synthetic-harness (true/false/edge) |
+| Logged-in | id `12345` → `true` | `client/state/current-user/reducer.js:L24,L26-L27` | Synthetic-harness (no live creds) |
+| Logged-out | id `null` → `false` | `client/state/current-user/reducer.js:L24` | Synthetic-harness (corroborated live) |
+| Uninitialized edge case | `undefined !== null` → `true` | `client/state/current-user/selectors.js:L16` | Synthetic-harness |
+| `wpcom_token` getToken order | cookie → localStorage → `false` | `packages/oauth-token/src/index.js:L7,L10-L23` | Synthetic-harness (3 sub-cases) |
+| OAuth redirect | `/login` when `getToken()===false` | `client/boot/common.js:L154,L176-L177` | (inferred) from source |
+| Server `/me` bootstrap | gated on `wordpress_logged_in` | `client/server/user-bootstrap/index.js:L8,L13,L32-L34` | (inferred) — server path not exercised (no creds); client `/me` observed **403** |
+| Client hydration | `window.initialReduxState` | `client/state/initial-state.js:L149` | Observed (present in SSR HTML) |
 | IndexedDB store | `calypso` (v2) / `calypso_store` | `client/lib/browser-storage/index.ts:L20-L22` | Observed (live) |
-| Persistence key | `redux-state-<userId\|'logged-out'>[:subkey]` | `client/state/initial-state.js:L75-L76` | Observed (17 keys) |
+| Persistence key | `redux-state-<userId\|'logged-out'>[:subkey]` | `client/state/initial-state.js:L75-L76` | Observed (15 `redux-state-logged-out*` keys) |
 | Logged-out Reader | `enableLoggedOut: true` | `client/sections.js:L396` | Observed (Reader renders) |
-| Bypass store | in-memory fallback | `client/lib/browser-storage/bypass.ts:L6,L12` | (inferred) |
+| Bypass store | support-user sandbox (in-memory) | `client/lib/browser-storage/bypass.ts:L6,L12` | (inferred) |
 
 ### Q6 — sidebar responsive design
 
 | Item | Value | `file:line` | Evidence |
 |---|---|---|---|
-| Q6a Reader header (manifests) | `margin: 0 12px 44px; padding: 0 10px` | `client/reader/sidebar/style.scss:L113,L116,L117` | Observed (sass compile) |
-| Q6a sibling `.sidebar__heading` | `padding: 16px 8px 6px 16px; margin: 0` | `client/layout/sidebar/style.scss:L66,L70,L71` | Observed (sass compile) |
-| Q6a sibling `.sidebar__header` | `padding: 30px 24px 29px` | `client/layout/global-sidebar/style.scss:L70,L75` | Observed (sass compile) |
-| Q6b `--masterbar-height` | `46px` → `32px` @≥782px | `client/assets/stylesheets/shared/_variables.scss:L7,L10-L11` | Observed (compile + live 32px) |
-| Q6b `--masterbar-checkout-height` | `72px` | `client/assets/stylesheets/shared/_variables.scss:L8` | Observed |
-| Q6b `--sidebar-width-max` | `272px` (0px in is-mobile-app-view) | `client/assets/stylesheets/shared/_variables.scss:L15`; `client/layout/style.scss:L169` | Observed |
-| Q6b `--sidebar-width-min` | `228px` (0px in is-mobile-app-view) | `client/assets/stylesheets/shared/_variables.scss:L16`; `client/layout/style.scss:L170` | Observed |
-| Q6b `--content-padding-top/bottom` | `16px` / `16px` | `client/my-sites/sidebar/style.scss:L50-L51` | Observed |
-| Q6b Reader `padding` calc() | `calc(var(--masterbar-height)+var(--content-padding-top)) …` | `client/reader/sidebar/style.scss:L70` | Observed (compile) |
-| Q6b Reader `height` calc() | `calc(100vh - --masterbar-height - --content-padding-top - --content-padding-bottom)` | `client/reader/sidebar/style.scss:L107` | Observed (compile) |
-| Q6c JS map | 22 entries; `>=782px`={min:781}, `>=960px`={min:959} | `packages/viewport/src/index.ts:L96-L118` | Observed (query strings + booleans) |
-| Q6c off-by-one | `>=782px`→`min-width:782px` (incl 782); `>782px`→`min-width:783px` | compiled `@automattic/viewport` | Observed |
-| Q6c SCSS `$breakpoints` | `480,660,800,960,1040,1280,1400px` | `client/assets/stylesheets/shared/mixins/_breakpoints.scss:L10` | Observed (read) |
+| Q6a Reader header (manifests) | `margin: 0 12px 44px; padding: 0 10px` | `client/reader/sidebar/style.scss:L112-L117` | Observed (injected-DOM real-CSS `getComputedStyle`) |
+| Q6a sibling `.sidebar__heading` | `padding: 16px 8px 6px 16px; margin: 0` | `client/layout/sidebar/style.scss:L66,L70,L71` | Source (verbatim; does not render on Reader) |
+| Q6a sibling `.sidebar__header` | `padding: 30px 24px 29px` | `client/layout/global-sidebar/style.scss:L70,L75` | Source (verbatim; does not render on Reader) |
+| Q6b `--masterbar-height` | `46px` → `32px` @≥782px | `client/assets/stylesheets/shared/_variables.scss:L7,L10-L11` | Observed (live `:root`; `32px` @≥782px) |
+| Q6b `--masterbar-checkout-height` | `72px` | `client/assets/stylesheets/shared/_variables.scss:L8` | Observed (live `:root`) |
+| Q6b `--sidebar-width-max` | `272px` `:root` → `295px` (is-global-sidebar-visible) / `69px` (collapsed) / `0px` (mobile-app) | `client/assets/stylesheets/shared/_variables.scss:L15`; `client/my-sites/sidebar/style.scss:L16,L60`; `client/layout/style.scss:L169` | Observed (live `:root` 272px); overrides from source |
+| Q6b `--sidebar-width-min` | `228px` `:root` → `295px` (is-global-sidebar-visible) / `69px` (collapsed) / `0px` (mobile-app) | `client/assets/stylesheets/shared/_variables.scss:L16`; `client/my-sites/sidebar/style.scss:L17,L61`; `client/layout/style.scss:L170` | Observed (live `:root` 228px); overrides from source |
+| Q6b `--content-padding-top/bottom` | `16px` / `16px` | `client/my-sites/sidebar/style.scss:L10,L15,L50-L51` | Source (empty on `:root` live; set only under `.theme-default .is-global-sidebar-visible`) |
+| Q6b Reader `padding` calc() | `calc(--masterbar-height + --content-padding-top) 16px --content-padding-bottom calc(--sidebar-width-max)` (LTR @≥782px, `L80`); base `padding-top: calc(--masterbar-height + --content-padding-top)` (`L77`) | `client/reader/sidebar/style.scss:L77,L80` (LTR; `L70` is the RTL branch) | Source + resolved (`padding-top` 48px @≥782px / 62px @<782px) |
+| Q6b Reader `height` calc() | `calc(100vh - --masterbar-height - --content-padding-top - --content-padding-bottom)` | `client/reader/sidebar/style.scss:L107` (inside `@media (max-width:781px)` at `L102`) | Source + resolved (`1975px` @<782px) |
+| Q6c JS map | 22 entries; `>=782px`={min:781}, `>=960px`={min:959} | `packages/viewport/src/index.ts:L96-L118` | Observed (query strings + booleans via probe) |
+| Q6c off-by-one | `>=782px`→`min-width:782px` (incl 782); `>782px`→`min-width:783px` | `packages/viewport/src/index.ts:L76,L82,L108` | Observed (probe) + source |
+| Q6c SCSS `$breakpoints` | `480,660,800,960,1040,1280,1400px` | `client/assets/stylesheets/shared/mixins/_breakpoints.scss:L10` | Source (read) |
 | Q6c layout thresholds | `<660px` / `>=782px` / `>800px` | `client/layout/index.jsx:L76,L146,L221` | Observed (booleans) |
-| Q6c global-sidebar boundary | `min-width:661px` / `max-width:660px` | `client/layout/global-sidebar/style.scss:L470,L511` | Observed (compile + live 640/700) |
+| Q6c global-sidebar boundary | `min-width:661px` / `max-width:660px` | `client/layout/global-sidebar/style.scss:L470,L511` | Observed (live 640/700) |
 | Q6c masterbar flip | `46px↔32px` at 782px | `client/assets/stylesheets/shared/_variables.scss:L10-L11` | Observed (live 700→46, 1000→32) |
 
 ---
 
 ## Notes on fidelity & scope
 
-- **Read-only:** No existing source file was modified, created, or deleted. The only new artifact is this document under the `blitzy/` tree. All temporary observation scripts and Jest harnesses were removed after capturing output; `git status --porcelain` shows no tracked-source changes.
+- **Read-only:** No existing source file was modified, created, or deleted. The only new artifact is this document under the `blitzy/` tree. All temporary observation scripts were kept **outside** the repository (under `/tmp/blitzy_evidence/`) and removed after capturing output; `git status --porcelain` shows only this document.
+- **Observation harnesses (how the runtime evidence was captured):** (1) the **live dev server** (two runs) for the boot log, readiness banner, holding page, SSR HTML, `runtime.js`, and the `/__webpack_hmr` stream; (2) a **Chrome DevTools** session on the running Reader for the live network calls (Q3), the storage/cookie/IndexedDB reads (Q5), the `--masterbar-height`/`matchMedia` resize probes and the **injected-DOM real-CSS** `getComputedStyle` of `.is-section-reader .sidebar-header` (Q6); (3) a **boot-time Redux action capture** via a fake `__REDUX_DEVTOOLS_EXTENSION__` hook installed before boot, yielding the ordered 378-action stream (Q4); and (4) small **standalone Node harnesses** that run the *verbatim* selector / `getToken` code and `require` the real compiled `@automattic/viewport` module (Q5/Q6c). Harnesses that replicate code rather than observe a live flow are labeled **Synthetic-harness**; source-only reads are labeled **`(inferred)`**.
+- **Logged-in limitation (honest scope):** No WordPress.com credentials were available, so the **live logged-in** branch (server `/me` bootstrap, logged-in render, `CURRENT_USER_RECEIVE`, the logged-in `/me` `200`) could not be observed. Those items are labeled `(inferred)` or **Synthetic-harness**; the **logged-out** branch was observed live end-to-end (client `/me` returns **403**, no auth cookie, sidebar absent).
 - **Canonical runtime:** All observations were produced under Node `v22.23.1` / yarn `4.0.2` (the pinned canonical runtime). The Node-20 gate discrepancy is documented in the Environment section above.
-- **`(inferred)` labels:** A handful of claims are labeled `(inferred)` where a clean runtime trigger would have required violating the read-only constraint (the recompile banner text) or exercising an environment not available here (Node 20 itself, incognito storage bypass, the OAuth `/login` redirect, and the surrounding bootstrap actions). Every such claim is grounded in an exact `file:line`. All other claims carry observed runtime output.
+- **`(inferred)` labels:** A handful of claims are labeled `(inferred)` where a clean runtime trigger would have required violating the read-only constraint (the recompile banner text) or exercising an environment/flow not available here (Node 20 itself, the **support-user** storage bypass, the server-side `/me` bootstrap and OAuth `/login` redirect, the logged-in render branch, and the surrounding bootstrap actions — none of which could be driven without WordPress.com credentials or a source edit). Every such claim is grounded in an exact `file:line`, and the runtime-observable siblings (the logged-out branch, the client `/me` 403, the `SECTION_SET`/`ROUTE_SET` dispatches) were observed. All other claims carry observed runtime output.
 
