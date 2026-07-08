@@ -34,16 +34,16 @@
   underlying selector was called only **once**; switching to an immutable replacement fixes it.
 - **How each utility detects change differs.** `createSelector` compares the *current* vs
   *previous* dependants with `isShallowEqual` and, on any mismatch, **flushes the entire
-  `lodash` cache** (`index.ts:L103-L104`). `treeSelect` instead keys a nested `WeakMap`/`Map`
+  `lodash` cache** (`packages/state-utils/src/create-selector/index.ts:L103-L104`). `treeSelect` instead keys a nested `WeakMap`/`Map`
   tree by the **reference identity** of each dependent and only ever evicts stale branches via
-  **garbage collection** of the `WeakMap` (`tree-select/src/index.ts:L84,L96-L99`).
+  **garbage collection** of the `WeakMap` (`packages/tree-select/src/index.ts:L84,L96-L99`).
 - **Concrete call counts (scale N = 1000, stable across two runs):** for **both** utilities the
   underlying selector is invoked **1** time for 1000 identical (cache-hit) calls, **1000** times
   for 1000 distinct-key (cache-miss) calls, and **2** times when one dependant/dependent change
   occurs between two otherwise-identical calls.
 - **Programmatic clearing exists for both:** `treeSelect` exposes `clearCache()`
-  (`index.ts:L96-L99`); `createSelector` exposes the underlying `lodash` cache handle via
-  `selector.memoizedSelector.cache.clear()` (`index.ts:L110-L112`).
+  (`packages/tree-select/src/index.ts:L96-L99`); `createSelector` exposes the underlying `lodash` cache handle via
+  `selector.memoizedSelector.cache.clear()` (`packages/state-utils/src/create-selector/index.ts:L110-L112`).
 
 ---
 
@@ -128,9 +128,9 @@ Jest sets `process.env.NODE_ENV = "test"` (confirmed in both probe outputs below
 **not** `"production"`. Both utilities gate their development-only safety checks on
 `process.env.NODE_ENV !== 'production'`, so under Jest those guards are **active**:
 
-- `createSelector`'s complex-argument warning (`create-selector/index.ts:L41-L51`), and
+- `createSelector`'s complex-argument warning (`packages/state-utils/src/create-selector/index.ts:L41-L51`), and
 - `treeSelect`'s object-argument `throw` and its function-argument validation
-  (`tree-select/src/index.ts:L57-L63,L75-L79`).
+  (`packages/tree-select/src/index.ts:L57-L63,L75-L79`).
 
 ---
 
@@ -219,11 +219,11 @@ return memoizedSelector( state, ...args );                                     /
 ```
 
 - The memoized function is built once with `const memoizedSelector = memoize( selector,
-  getCacheKey );` (`index.ts:L90`). Per `lodash`'s contract, the second argument is the
+  getCacheKey );` (`packages/state-utils/src/create-selector/index.ts:L90`). Per `lodash`'s contract, the second argument is the
   **resolver** that computes the cache key; the cache is exposed as the `.cache` property and
   implements the `Map` interface.
-- The default cache key is `args.join()` (`index.ts:L36-L52`, specifically the `return
-  args.join();` at `L38`/`L50`), i.e. the state object is dropped and only the extra arguments
+- The default cache key is `args.join()` (`packages/state-utils/src/create-selector/index.ts:L36-L52`, specifically the `return
+  args.join();` at `packages/state-utils/src/create-selector/index.ts:L38`/`packages/state-utils/src/create-selector/index.ts:L50`), i.e. the state object is dropped and only the extra arguments
   form the key.
 - **`isShallowEqual`** compares each member by strict `===`; objects and arrays therefore
   compare **by reference**, while primitives can be strictly equal across instances. That single
@@ -245,11 +245,11 @@ leafCache.set( key, value );                                                   /
 return value;                                                                  // L93
 ```
 
-- `insertDependentKey` (`index.ts:L116-L131`) descends/creates one map level per dependent,
+- `insertDependentKey` (`packages/tree-select/src/index.ts:L116-L131`) descends/creates one map level per dependent,
   keyed by the dependent's **object reference** (`map.get( weakMapKey )`). Intermediate levels
   are `WeakMap`s; the **last** level is a regular `Map` because its key is the string
-  `args.join()` (`index.ts:L128`). The default key generator is `defaultGetCacheKey = ( ...args
-  ) => args.join()` (`index.ts:L11-L12`).
+  `args.join()` (`packages/tree-select/src/index.ts:L128`). The default key generator is `defaultGetCacheKey = ( ...args
+  ) => args.join()` (`packages/tree-select/src/index.ts:L11-L12`).
 
 ### Observed evidence (exact command + relevant output slice)
 
@@ -312,21 +312,21 @@ same argument, the selector runs **twice** — once before and once after the ch
 
 - The `1`/`1000` split is the memoization core: identical inputs resolve to the same cache key
   and short-circuit before the selector runs (`createSelector` via `lodash` `memoize`,
-  `index.ts:L90,L109`; `treeSelect` via `leafCache.has( key )`, `tree-select/src/index.ts:L87-L88`).
+  `packages/state-utils/src/create-selector/index.ts:L90,L109`; `treeSelect` via `leafCache.has( key )`, `packages/tree-select/src/index.ts:L87-L88`).
 - The `2` for a single dependent change is exactly the cache-bust path from
   [Q1](#q1--the-precise-comparison-mechanism-that-determines-cache-hits-and-misses):
-  `isShallowEqual` false → `cache.clear` (`create-selector/index.ts:L103-L104`), or a fresh
-  `WeakMap` branch (`tree-select/src/index.ts:L84`).
+  `isShallowEqual` false → `cache.clear` (`packages/state-utils/src/create-selector/index.ts:L103-L104`), or a fresh
+  `WeakMap` branch (`packages/tree-select/src/index.ts:L84`).
 
 These numbers align with the packages' own canonical assertions:
 
 - `createSelector`: `expect( selector ).toHaveBeenCalledTimes( 1 )` for a repeated identical call
   (`packages/state-utils/src/create-selector/test/index.js:L62`) and
   `toHaveBeenCalledTimes( 2 )` when the argument differs / watched state changes
-  (`…/test/index.js:L111`, and again at `L153`).
+  (`packages/state-utils/src/create-selector/test/index.js:L111`, and again at `packages/state-utils/src/create-selector/test/index.js:L153`).
 - `treeSelect`: `expect( selector.mock.calls ).toHaveLength( 1 )` for a repeated identical call
   (`packages/tree-select/test/index.js:L45`) and `toHaveLength( 2 )` for non-cached calls
-  (`…/test/index.js:L139`).
+  (`packages/tree-select/test/index.js:L139`).
 
 ### Observed evidence (exact command + relevant output slice)
 
@@ -389,16 +389,16 @@ RECOMPUTE-after-dependent-change: 2 calls, arg fixed, posts ref changed => selec
 ### Mechanism
 
 - `createSelector` per-argument entries: each distinct `args.join()` key is a separate `lodash`
-  `memoize` entry (`create-selector/index.ts:L90`, key at `L36-L52`).
+  `memoize` entry (`packages/state-utils/src/create-selector/index.ts:L90`, key at `packages/state-utils/src/create-selector/index.ts:L36-L52`).
 - `createSelector` whole-cache flush: `memoizedSelector.cache.clear?.()` on any shallow-inequality
-  of dependants (`create-selector/index.ts:L103-L104`). This clears **every** entry, not the one
+  of dependants (`packages/state-utils/src/create-selector/index.ts:L103-L104`). This clears **every** entry, not the one
   for the current argument.
 - `treeSelect` simultaneous dependents: the nested `WeakMap`/`Map` structure
-  (`tree-select/src/index.ts:L84`, built by `insertDependentKey` at `L116-L131`) stores a
+  (`packages/tree-select/src/index.ts:L84`, built by `insertDependentKey` at `packages/tree-select/src/index.ts:L116-L131`) stores a
   distinct leaf per dependent-reference path; the package's own test names this behavior
   ("should maintain the cache for unique dependents simultaneously",
-  `packages/tree-select/test/index.js:L161-L186`, asserting `toHaveLength( 2 )` at `L185`). The
-  comment at `tree-select/src/index.ts:L81-L83` states the intent: garbage-collect values based on
+  `packages/tree-select/test/index.js:L161-L186`, asserting `toHaveLength( 2 )` at `packages/tree-select/test/index.js:L185`). The
+  comment at `packages/tree-select/src/index.ts:L81-L83` states the intent: garbage-collect values based on
   outdated dependents.
 
 ### Observed evidence (exact command + relevant output slice)
@@ -442,7 +442,7 @@ note: old dependent branches are evicted ONLY by GC of the WeakMap (not observab
    previous one.
 2. The probe then calls once more with a **new `state.posts` object** and argument `2916284`.
    Because the dependant reference changed, `isShallowEqual` is `false`, so
-   `memoizedSelector.cache.clear?.()` runs (`create-selector/index.ts:L104`). The just-recomputed
+   `memoizedSelector.cache.clear?.()` runs (`packages/state-utils/src/create-selector/index.ts:L104`). The just-recomputed
    `2916284` entry is present (`true`), but `38303081` is now **`false`** — proving the change
    flushed the **whole** cache, not just one key.
 3. **The stale case:** using a fresh selector, `r1 = getStale( state, 100 )` returns one post.
@@ -484,8 +484,8 @@ updates** — which both READMEs assume (`packages/tree-select/README.md:L40`;
 
 - `treeSelect`: `cachedSelector.clearCache = () => { cache = new WeakMap(); };`
   (`packages/tree-select/src/index.ts:L96-L99`). Because a `WeakMap` has no `clear()` method, the
-  implementation recreates it — the comment at `L97` says exactly this. The `CachedSelector`
-  interface declares `clearCache: () => void` (`index.ts:L29-L32`). The package test exercises it
+  implementation recreates it — the comment at `packages/tree-select/src/index.ts:L97` says exactly this. The `CachedSelector`
+  interface declares `clearCache: () => void` (`packages/tree-select/src/index.ts:L29-L32`). The package test exercises it
   ("should bust the cache when clearCache() method is called",
   `packages/tree-select/test/index.js:L197-L217`).
 - `createSelector`: the wrapper is `Object.assign( function(…){…}, { memoizedSelector } )`
@@ -559,21 +559,21 @@ const weakMapKey = key || NULLISH_KEY;                                         /
 ```
 
 - `Object( key ) !== key` is `true` for any **primitive** (boxing produces a different object), so
-  a non-null primitive dependent hits the `throw` at `L119`. The exact message is
+  a non-null primitive dependent hits the `throw` at `packages/tree-select/src/index.ts:L119`. The exact message is
   **`key must be an object, \`null\`, or \`undefined\``**.
 - For `null`/`undefined`, the guard's `key != null` short-circuits (no throw), and `key ||
   NULLISH_KEY` substitutes the shared singleton `const NULLISH_KEY = {};`
-  (`tree-select/src/index.ts:L107`) — so both nullish values index the **same** `WeakMap` entry.
+  (`packages/tree-select/src/index.ts:L107`) — so both nullish values index the **same** `WeakMap` entry.
 - The package's suite matches this exactly: "should memoize a nullish value returned by
   getDependents" with dependents `[ null, undefined ]`
   (`packages/tree-select/test/index.js:L219-L229`), and "throws on a non-nullish primitive value
   returned by getDependents" iterating `[ true, 1, 'a', false, '', 0 ]`
-  (`…/test/index.js:L231-L241`).
+  (`packages/tree-select/test/index.js:L231-L241`).
 
 **`createSelector`** — there is no such guard. Dependants flow straight into
-`isShallowEqual( currentDependants, lastDependants )` (`create-selector/index.ts:L103`), whose
+`isShallowEqual( currentDependants, lastDependants )` (`packages/state-utils/src/create-selector/index.ts:L103`), whose
 member-wise strict `===` handles `null`, `undefined`, numbers, and booleans alike (a non-array
-dependant is first wrapped into `[ value ]` at `L99-L101`).
+dependant is first wrapped into `[ value ]` at `packages/state-utils/src/create-selector/index.ts:L99-L101`).
 
 ### Observed evidence
 
@@ -610,7 +610,7 @@ to 1 call); `null` → `undefined` busts the cache:**
   `undefined` yields **one** selector call, because `key || NULLISH_KEY` maps both to the same
   `NULLISH_KEY` branch — the second call is a hit. Reported as `selector calls = 1`.
 - **`treeSelect`, primitive:** `number 1`, `boolean true`, `'a'`, `number 0`, and `boolean false`
-  each throw the **`TypeError`** from `L119` — note that `0` and `false` throw too (the guard keys
+  each throw the **`TypeError`** from `packages/tree-select/src/index.ts:L119` — note that `0` and `false` throw too (the guard keys
   off `Object(key) !== key`, not truthiness). This is a hard failure, not a silent fallback.
 - **`createSelector`, both:** for `null`, `undefined`, `5`, and `true` as the *dependant*, two
   identical calls produce **one** selector call and **no throw** — the value is simply compared by
@@ -637,28 +637,28 @@ to 1 call); `null` → `undefined` busts the cache:**
 ### Mechanism
 
 - Default key generators both reduce to `args.join()`:
-  `tree-select/src/index.ts:L11-L12` (`defaultGetCacheKey`) and
-  `create-selector/index.ts:L36-L52` (`DEFAULT_GET_CACHE_KEY`, returning `args.join()`).
+  `packages/tree-select/src/index.ts:L11-L12` (`defaultGetCacheKey`) and
+  `packages/state-utils/src/create-selector/index.ts:L36-L52` (`DEFAULT_GET_CACHE_KEY`, returning `args.join()`).
 - **`treeSelect` custom key:** `const { getCacheKey = defaultGetCacheKey } = options;`
-  (`tree-select/src/index.ts:L67`), used as `const key = getCacheKey( ...args );`
-  (`index.ts:L86`). The development-mode object-argument guard only fires **when the default key
+  (`packages/tree-select/src/index.ts:L67`), used as `const key = getCacheKey( ...args );`
+  (`packages/tree-select/src/index.ts:L86`). The development-mode object-argument guard only fires **when the default key
   is in use**: `if ( getCacheKey === defaultGetCacheKey && args.some( isObject ) ) throw new
   Error( 'Do not pass objects as arguments to a treeSelector' );`
-  (`tree-select/src/index.ts:L75-L79`). Supplying a custom `getCacheKey` bypasses that guard and
+  (`packages/tree-select/src/index.ts:L75-L79`). Supplying a custom `getCacheKey` bypasses that guard and
   enables object arguments. Test: "accepts a getCacheKey option that enables object arguments"
   with `getCacheKey: ( query ) => \`key:${ query.siteId }\``
   (`packages/tree-select/test/index.js:L243-L264`, asserting `firstResult` is `secondResult` at
-  `L263`); the throw path is asserted at `…/test/index.js:L95-L101`.
+  `packages/tree-select/test/index.js:L263`); the throw path is asserted at `packages/tree-select/test/index.js:L95-L101`.
 - **`createSelector` custom key:** the third parameter `getCacheKey = DEFAULT_GET_CACHE_KEY`
-  (`create-selector/index.ts:L88`) is passed straight to `memoize( selector, getCacheKey )`
-  (`index.ts:L90`). Under the **default** key in development, the complex-argument check warns:
+  (`packages/state-utils/src/create-selector/index.ts:L88`) is passed straight to `memoize( selector, getCacheKey )`
+  (`packages/state-utils/src/create-selector/index.ts:L90`). Under the **default** key in development, the complex-argument check warns:
   `hasInvalidArg = args.some( ( arg ) => arg && ! VALID_ARG_TYPES.includes( typeof arg ) )` then
   `warn( 'Do not pass complex objects as arguments for a memoized selector' )`
-  (`create-selector/index.ts:L42-L47`; `VALID_ARG_TYPES = [ 'number', 'boolean', 'string' ]` at
-  `L13`). Test: "should accept an optional custom cache key generating function" producing
+  (`packages/state-utils/src/create-selector/index.ts:L42-L47`; `VALID_ARG_TYPES = [ 'number', 'boolean', 'string' ]` at
+  `packages/state-utils/src/create-selector/index.ts:L13`). Test: "should accept an optional custom cache key generating function" producing
   `cache.has('CUSTOM2916284')` (`packages/state-utils/src/create-selector/test/index.js:L257-L269`,
-  assertion at `L266`); the warning-count assertion (`toHaveBeenCalledTimes( 3 )`) is at
-  `…/test/index.js:L78`.
+  assertion at `packages/state-utils/src/create-selector/test/index.js:L266`); the warning-count assertion (`toHaveBeenCalledTimes( 3 )`) is at
+  `packages/state-utils/src/create-selector/test/index.js:L78`.
 
 ### Observed evidence
 
@@ -686,7 +686,7 @@ custom key (state, siteId) => 'CUSTOM'+siteId : cache.has('CUSTOM2916284') = tru
 
 - **`treeSelect`, without a custom key:** the object argument `{}` makes `args.some( isObject )`
   true while `getCacheKey === defaultGetCacheKey`, so the guard throws
-  **`Error: Do not pass objects as arguments to a treeSelector`** (`tree-select/src/index.ts:L77`).
+  **`Error: Do not pass objects as arguments to a treeSelector`** (`packages/tree-select/src/index.ts:L77`).
   This is a deliberate stop: `args.join()` would stringify every object to the useless
   `"[object Object]"`, silently colliding all queries.
 - **`treeSelect`, with `getCacheKey: (query) => \`key:${query.siteId}\``:** two **distinct**
@@ -717,12 +717,12 @@ here per the read-only scope of this task. **It was not corrected.**
 - The **README code examples** call it the other way around, `treeSelect( selector, getDependents
   )` — **selector first** (`packages/tree-select/README.md:L19` and `packages/tree-select/README.md:L49`).
   Curiously, the README's *prose* argument list is in the correct order (getDependents then
-  selector, `README.md:L10-L11`); only the two runnable snippets are reversed.
+  selector, `packages/tree-select/README.md:L10-L11`); only the two runnable snippets are reversed.
 - The package's own **passing test** uses the **correct** order,
   `treeSelect( getDependents, selector )` (`packages/tree-select/test/index.js:L18`).
 
 Because the two arguments are both functions, calling with them reversed does not fail fast at
-the `isFunction` guard (`tree-select/src/index.ts:L57-L63`) — it simply wires dependents and the
+the `isFunction` guard (`packages/tree-select/src/index.ts:L57-L63`) — it simply wires dependents and the
 selector backwards, which is a plausible source of caller confusion and could itself masquerade
 as "unexpected caching behavior." This is documented as an observation only.
 
@@ -732,14 +732,14 @@ as "unexpected caching behavior." This is documented as an observation only.
 
 | Aspect | `createSelector` (`@automattic/state-utils`) | `treeSelect` (`@automattic/tree-select`) |
 |--------|----------------------------------------------|------------------------------------------|
-| Q1 — hit/miss comparison | `isShallowEqual` on dependants (strict `===`, by reference) + `lodash` cache keyed by `args.join()` (`index.ts:L103,L90,L36-L52`) | Nested `WeakMap`/`Map` keyed by dependent **reference identity**, leaf keyed by `getCacheKey(...args)` (`index.ts:L84-L88`) |
+| Q1 — hit/miss comparison | `isShallowEqual` on dependants (strict `===`, by reference) + `lodash` cache keyed by `args.join()` (`packages/state-utils/src/create-selector/index.ts:L103,L90,L36-L52`) | Nested `WeakMap`/`Map` keyed by dependent **reference identity**, leaf keyed by `getCacheKey(...args)` (`packages/tree-select/src/index.ts:L84-L88`) |
 | Q2 — call counts (N=1000) | HIT **1**, MISS **1000**, one-change **2** | HIT **1**, MISS **1000**, one-change **2** |
-| Q3 — per-arg vs. invalidation | Per-arg entries coexist, but **any** dependant change flushes **all** (`index.ts:L104`) | Unique dependents coexist; eviction only via **GC** of the `WeakMap` (`index.ts:L96-L99` for explicit clear) |
+| Q3 — per-arg vs. invalidation | Per-arg entries coexist, but **any** dependant change flushes **all** (`packages/state-utils/src/create-selector/index.ts:L104`) | Unique dependents coexist; eviction only via **GC** of the `WeakMap` (`packages/tree-select/src/index.ts:L96-L99` for explicit clear) |
 | Stale-results cause | In-place mutation keeps dependant reference equal → `isShallowEqual` true → no clear → stale value | Same reference-identity sensitivity per dependent branch |
-| Q4 — programmatic clear | `selector.memoizedSelector.cache.clear()` (`index.ts:L110-L112`) | `selector.clearCache()` (`index.ts:L96-L99`) |
-| Q5 — nullish dependants | Tolerated (shallow-compared); `null`→`undefined` busts cache | `null`/`undefined` share `NULLISH_KEY` (`index.ts:L107,L121`) |
-| Q5 — primitive dependants | Tolerated (number/boolean shallow-compared, no throw) | **Throws `TypeError`** (`index.ts:L118-L119`), incl. `0`/`false` |
-| Q6 — custom cache key | 3rd param `getCacheKey` (`index.ts:L88`); default warns on complex args (`L42-L47`) | `options.getCacheKey` (`index.ts:L67`); default **throws** on object args (`L75-L79`) |
+| Q4 — programmatic clear | `selector.memoizedSelector.cache.clear()` (`packages/state-utils/src/create-selector/index.ts:L110-L112`) | `selector.clearCache()` (`packages/tree-select/src/index.ts:L96-L99`) |
+| Q5 — nullish dependants | Tolerated (shallow-compared); `null`→`undefined` busts cache | `null`/`undefined` share `NULLISH_KEY` (`packages/tree-select/src/index.ts:L107,L121`) |
+| Q5 — primitive dependants | Tolerated (number/boolean shallow-compared, no throw) | **Throws `TypeError`** (`packages/tree-select/src/index.ts:L118-L119`), incl. `0`/`false` |
+| Q6 — custom cache key | 3rd param `getCacheKey` (`packages/state-utils/src/create-selector/index.ts:L88`); default warns on complex args (`packages/state-utils/src/create-selector/index.ts:L42-L47`) | `options.getCacheKey` (`packages/tree-select/src/index.ts:L67`); default **throws** on object args (`packages/tree-select/src/index.ts:L75-L79`) |
 
 ---
 
