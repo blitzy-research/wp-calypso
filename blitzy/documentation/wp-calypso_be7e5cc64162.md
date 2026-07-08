@@ -50,9 +50,9 @@ Citations:
 - `package.json:L267` — the `check-node-version` dev dependency that implements the gate.
 - The app URL / hosts requirement is documented in `README.md:L19-L22` (add `127.0.0.1 calypso.localhost` to your hosts file, run `yarn start`, then open `http://calypso.localhost:3000`).
 
-### The Node-20 gate discrepancy (demonstrated)
+### The Node-20 gate discrepancy (observed on a real Node 20 binary)
 
-The environment's default setup installs Node 20.x, but the canonical runtime pinned by the repo is Node 22.x (`.nvmrc:L1` = `22.9.0`; `engines.node = "^v22.9.0"` at `package.json:L57`). Node 20 was **not** installed in the canonical environment (the setup explicitly warns against downgrading), so the failing case is demonstrated two honest, observed ways: (a) the exact mismatch output `check-node-version` prints when the running Node does not satisfy a wanted range, and (b) the actual gate decision computed with the repo's own `semver` against the literal `engines.node` string.
+The canonical runtime pinned by the repo is Node 22.x (`.nvmrc:L1` = `22.9.0`; `engines.node = "^v22.9.0"` at `package.json:L57`). To exercise **both** sides of the gate at runtime, a real Node **v20.20.2** binary was downloaded from `nodejs.org` and the canonical `check-node-version --package` gate — the exact one the `start` script runs (`package.json:L110`) — was executed under it, alongside the Node 22 run and the repo's own `semver` decision. All three are **observed** runs: (a) the gate **passes** under Node 22 (the canonical runtime); (b) the **same** `check-node-version --package` gate **fails** under real Node 20; and (c) the repo's own `semver` confirms the decision against the literal `engines.node` string.
 
 **(a) PASS under Node 22 (the canonical runtime) — command + full output:**
 
@@ -63,15 +63,20 @@ yarn: 4.0.2
 # exit code: 0
 ```
 
-**(b) The real mismatch format the gate emits (asking the same tool for a Node-20 range while running Node 22):**
+**(b) FAIL under real Node 20 — the canonical `--package` gate executed on an actual Node v20.20.2 binary — command + full output (stdout+stderr merged, exactly as a developer sees it; stable across two runs, exit code `1` both times):**
 
 ```
-$ npx check-node-version --node '^20.9.0'
-node: 22.23.1
-Wanted node version ^20.9.0 (>=20.9.0 <21.0.0)
-To install node, see https://nodejs.org/download/release/v20.9.0/
+# obtain a real Node 20 (canonical is 22.x) and run the SAME gate the `start` script runs:
+$ curl -sSO https://nodejs.org/dist/v20.20.2/node-v20.20.2-linux-x64.tar.xz
+$ tar -xf node-v20.20.2-linux-x64.tar.xz
+$ PATH="$PWD/node-v20.20.2-linux-x64/bin:$PATH" node node_modules/.bin/check-node-version --package
+node: 20.20.2
+Wanted node version ^v22.9.0 (>=22.9.0 <23.0.0)
+To install node, see https://nodejs.org/download/release/v22.9.0/
 # exit code: 1
 ```
+
+This is the identical `check-node-version --package` invocation the `start` script runs (`package.json:L110`), executed on a real Node 20 binary: it reads `engines.node = "^v22.9.0"` (`package.json:L57`), finds the running `node: 20.20.2` outside the wanted range `>=22.9.0 <23.0.0`, prints the mismatch (the `Wanted…` line is emitted on stderr), and exits non-zero — so the `&&` chain aborts before build/run.
 
 **(c) The actual gate decision, computed with the repo's own `semver` against `engines.node = "^v22.9.0"`:**
 
@@ -84,7 +89,7 @@ semver.satisfies("22.9.0")  = true
 semver.satisfies("22.23.1") = true      <-- the runtime used here PASSES
 ```
 
-**Cause → effect:** `npx check-node-version --package` reads `engines.node` from `package.json:L57` and exits non-zero when the running Node is outside `>=22.9.0 <23.0.0-0`. Because it is the **first** command in the `&&` chain of the `start` script (`package.json:L110`), a non-zero exit **aborts `yarn start` before** `node bin/welcome.js`, `yarn run build`, or `start-build` ever run — so on Node 20 the dev server is never built or launched. On Node 22.x the gate passes and the chain proceeds. (The gate decision in (c) is *observed* — the repo's `semver` was executed; it is not inferred.)
+**Cause → effect:** `npx check-node-version --package` reads `engines.node` from `package.json:L57` and exits non-zero when the running Node is outside `>=22.9.0 <23.0.0-0`. Because it is the **first** command in the `&&` chain of the `start` script (`package.json:L110`), a non-zero exit **aborts `yarn start` before** `node bin/welcome.js`, `yarn run build`, or `start-build` ever run — so on Node 20 the dev server is never built or launched. On Node 22.x the gate passes and the chain proceeds. (All three blocks above are *observed* runtime runs, not inferred: (a) and (b) are real `check-node-version --package` executions under Node 22.23.1 and Node 20.20.2 respectively, and (c) is the repo's own `semver` executed against the literal `engines.node`.)
 
 ### The commands actually used to produce the observations below
 
@@ -362,12 +367,14 @@ reqid=149  GET https://public-api.wordpress.com/wpcom/v2/read/streams/discover
   -> HTTP 200
 ```
 
-The response is an `_envelope=1` wrapper. Its structure is reproduced verbatim below; volatile post content (bodies, image URLs, IDs) and the opaque pagination cursor are redacted, but the shape, card count, and card-type order are exact:
+The response is an `_envelope=1` wrapper. Its structure is reproduced verbatim below; volatile post content (bodies, image URLs, IDs) and the opaque pagination cursor are redacted. The envelope shape, body keys, and **card count (9)** are stable across runs, but the **card-type _order_ is sample-specific and varies run-to-run** — the observed distribution is captured immediately after this block (per the run-to-run-inconsistency rule):
 
 ```
 top-level keys : ["body","status","headers"]        (envelope status: 200)
 body keys      : ["cards","next_page_handle","user_interests"]
-body.cards     : 9 cards; type order (exact) =
+body.cards     : 9 cards; composition STABLE = 7x"post" + 1x"recommended_blogs" + 1x"interests_you_may_like"
+                 ("interests_you_may_like" is always last), but the positional ORDER is sample-specific and
+                 varies run-to-run (see the distribution below). one observed sample order =
                  ["post","recommended_blogs","post","post","post","post","post","post","interests_you_may_like"]
 first "post" card -> "data" object has 47 keys; the first 25 are:
                  ["ID","site_ID","author","date","modified","title","URL","short_URL",
@@ -385,6 +392,25 @@ reqid=168  (next page) GET https://public-api.wordpress.com/wpcom/v2/read/stream
 
 - `number=4` on the first request confirms `INITIAL_FETCH = 4`; `number=7` on the next page confirms `PER_FETCH = 7`.
 - The request targets the **remote** `public-api.wordpress.com` under the `wpcom/v2` namespace — corroborating Q2 (data is remote, not a local port) and the `apiNamespace 'wpcom/v2'` for the Discover stream.
+
+**Card-order stability — observed run-to-run distribution.** Re-running the **exact** same (unchanged) request repeatedly shows the card **count is stable at 9** and the **composition is stable** (`7×post` + `1×recommended_blogs` + `1×interests_you_may_like`, with `interests_you_may_like` always last), but the **position of the single `recommended_blogs` card varies** — so the card-type order is sample-specific, not fixed. Command:
+
+```
+$ URL='https://public-api.wordpress.com/wpcom/v2/read/streams/discover?_envelope=1&orderBy=popular&meta=post,discover_original_post&feed_id=&number=4&lang=en&tags[]=dailyprompt&tags[]=wordpress&tag_recs_per_card=5&site_recs_per_card=5&age_based_decay=0.5&content_width=675'
+$ for i in 1 2 3 4 5; do curl -sS "$URL" | python3 -c 'import json,sys; print([c["type"] for c in json.load(sys.stdin)["body"]["cards"]])'; done
+```
+
+Complete, unedited output (5 consecutive runs; every run HTTP 200, 9 cards):
+
+```
+run 1: ['post', 'recommended_blogs', 'post', 'post', 'post', 'post', 'post', 'post', 'interests_you_may_like']
+run 2: ['post', 'recommended_blogs', 'post', 'post', 'post', 'post', 'post', 'post', 'interests_you_may_like']
+run 3: ['post', 'post', 'post', 'recommended_blogs', 'post', 'post', 'post', 'post', 'interests_you_may_like']
+run 4: ['post', 'post', 'post', 'post', 'recommended_blogs', 'post', 'post', 'post', 'interests_you_may_like']
+run 5: ['post', 'recommended_blogs', 'post', 'post', 'post', 'post', 'post', 'post', 'interests_you_may_like']
+```
+
+Across these 5 runs the `recommended_blogs` card appeared at position **2 (×3), 4 (×1), and 5 (×1)**; earlier captures in this environment also observed it at **position 1 and position 3**. Only the count (9), the composition, and `interests_you_may_like`-last are stable. **Cause → effect:** Discover is a live, popularity/recommendation-ranked feed (`orderBy=popular`) served from the remote `public-api.wordpress.com`, so the interleaving of the recommendation card among the posts is recomputed per request; the exact positional order is therefore not reproducible, only the count and composition are.
 
 ### Cause → effect
 
@@ -525,8 +551,8 @@ The render decision reads Redux via **`isUserLoggedIn(state)`**, which is **`get
 ```
 === Q5 SYNTHETIC login-detection selector harness ===
 
-id reducer BEFORE (default)            => null   (reducer.js:L24)
-id reducer AFTER CURRENT_USER_RECEIVE  => 12345   (reducer.js:L26-27)
+id reducer BEFORE (default)            => null   (client/state/current-user/reducer.js:L24)
+id reducer AFTER CURRENT_USER_RECEIVE  => 12345   (client/state/current-user/reducer.js:L26-L27)
 
 [1] LOGGED-IN   { currentUser: { id: 12345 } }
   state={"currentUser":{"id":12345}}
@@ -1137,5 +1163,5 @@ Each row below re-enumerates a distinct thing the six questions asked for, with 
 - **Observation harnesses (how the runtime evidence was captured):** (1) the **live dev server** (two runs) for the boot log, readiness banner, holding page, SSR HTML, `runtime.js`, and the `/__webpack_hmr` stream; (2) a **Chrome DevTools** session on the running Reader for the live network calls (Q3), the storage/cookie/IndexedDB reads (Q5), the `--masterbar-height`/`matchMedia` resize probes and the before/after `getComputedStyle` of `.is-section-reader .sidebar-header` (captured after explicitly loading the code-split `async-load-calypso-reader-sidebar.css` chunk) (Q6); (3) a **boot-time Redux action capture** via a fake `__REDUX_DEVTOOLS_EXTENSION__` hook installed before boot, yielding the ordered 378-action stream (Q4); and (4) small **standalone Node harnesses** that run the *verbatim* selector / `getToken` code and `require` the real compiled `@automattic/viewport` module (Q5/Q6c). Harnesses that replicate code rather than observe a live flow are labeled **Synthetic-harness**; source-only reads are labeled **`(inferred)`**.
 - **Logged-in limitation (honest scope):** No WordPress.com credentials were available, so the **live logged-in** branch (server `/me` bootstrap, logged-in render, `CURRENT_USER_RECEIVE`, the logged-in `/me` `200`) could not be observed. Those items are labeled `(inferred)` or **Synthetic-harness**; the **logged-out** branch was observed live end-to-end (client `/me` returns **403**, no auth cookie, sidebar absent).
 - **Canonical runtime:** All observations were produced under Node `v22.23.1` / yarn `4.0.2` (the pinned canonical runtime). The Node-20 gate discrepancy is documented in the Environment section above.
-- **`(inferred)` labels:** A handful of claims are labeled `(inferred)` where a clean runtime trigger would have required violating the read-only constraint (the recompile banner text) or exercising an environment/flow not available here (Node 20 itself, the **support-user** storage bypass, the server-side `/me` bootstrap and OAuth `/login` redirect, the logged-in render branch, and the surrounding bootstrap actions — none of which could be driven without WordPress.com credentials or a source edit). Every such claim is grounded in an exact `file:line`, and the runtime-observable siblings (the logged-out branch, the client `/me` 403, the `SECTION_SET`/`ROUTE_SET` dispatches) were observed. All other claims carry observed runtime output.
+- **`(inferred)` labels:** A handful of claims are labeled `(inferred)` where a clean runtime trigger would have required violating the read-only constraint (the recompile banner text) or exercising an environment/flow not available here (the **support-user** storage bypass, the server-side `/me` bootstrap and OAuth `/login` redirect, the logged-in render branch, and the surrounding bootstrap actions — none of which could be driven without WordPress.com credentials or a source edit). The Node-20 engine-gate failure was **observed live** on a real Node v20.20.2 binary (see the Environment section). Every such claim is grounded in an exact `file:line`, and the runtime-observable siblings (the logged-out branch, the client `/me` 403, the `SECTION_SET`/`ROUTE_SET` dispatches) were observed. All other claims carry observed runtime output.
 
