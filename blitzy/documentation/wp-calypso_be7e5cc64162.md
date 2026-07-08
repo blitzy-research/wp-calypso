@@ -48,13 +48,11 @@ $ yarn --version
 
 `v22.23.1` satisfies `package.json` `engines.node = "^v22.9.0"` (and `.nvmrc` pins `22.9.0`); `yarn 4.0.2` satisfies `engines.yarn = "^4.0.0"` and matches `packageManager: "yarn@4.0.2"`.
 
-**Git state.** `HEAD` is this documentation commit; it adds **only** this file on top of the investigated source commit `be7e5cc641622d153040491fd5625c6cb83e12eb`. Every `file:line` citation is pinned to `be7e5cc641`, and the source tree is byte-for-byte identical to it (the commit changes nothing but this document):
+**Git state.** `HEAD` is the tip of this documentation branch, `blitzy-686353a2-3647-4ebf-aaa7-312a4acb3dc7`; the branch adds **only** this file on top of the investigated source commit `be7e5cc641622d153040491fd5625c6cb83e12eb` (across documentation-only commits — the source tree is untouched). Every `file:line` citation is pinned to `be7e5cc641`, and the source tree is byte-for-byte identical to it (the branch changes nothing but this document). The concrete `HEAD` hash is deliberately not quoted here because it is self-referential — it changes with every documentation commit, including the one that adds this very file — so the stable, verifiable invariant reported instead is the cumulative diff of the whole branch against the investigated source commit:
 
 ```
-$ git rev-parse HEAD
-36915916105dd1a2d95e96ca6d87ff4f76048e1b
-$ git log -1 --pretty='%h %s'
-3691591610 docs: add run-first investigation of logged-out Reader like intent across the auth boundary
+$ git rev-parse --abbrev-ref HEAD
+blitzy-686353a2-3647-4ebf-aaa7-312a4acb3dc7
 $ git diff --name-status be7e5cc641..HEAD
 A	blitzy/documentation/wp-calypso_be7e5cc64162.md
 ```
