@@ -18,7 +18,9 @@
 - The repository ships **two** memoized-selector utilities, and the six questions below are
   answered for **both**:
   - **`@automattic/state-utils` `createSelector`** — the dominant central-store selector
-    factory (94 importers), at `packages/state-utils/src/create-selector/index.ts` (113 lines).
+    factory (96 importers under `client/`, verified at this branch via
+    `grep -rlE "\bcreateSelector\b.*from '@automattic/state-utils'"`), at
+    `packages/state-utils/src/create-selector/index.ts` (113 lines).
     It delegates per-argument caching to **`lodash` `memoize`** and dependant-change detection
     to **`@wordpress/is-shallow-equal`**.
   - **`@automattic/tree-select` `treeSelect`** — a lower-level cached selector (10 importers),
