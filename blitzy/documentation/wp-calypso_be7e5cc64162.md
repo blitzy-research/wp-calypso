@@ -45,7 +45,13 @@ v22.23.1
 
 ### Test topology (7 suites)
 
-The monorepo runs Jest across a **7-suite topology** — **Client**, **Server**, **Packages**, **Applications**, **Build Tools**, **Integration**, and **E2E (Playwright)** — with all suites except E2E sharing the `@automattic/calypso-jest` preset. **[inferred]** (from tech-spec §6.6 and the per-suite `jest.config.js` files read for Q2/Q4; each non-E2E suite `require( '@automattic/calypso-jest' )` and spreads/uses it — e.g. `test/client/jest.config.js:2,5`, `test/server/jest.config.js:2,5`.)
+The monorepo runs Jest across a **7-suite topology** — **Client**, **Server**, **Packages**, **Applications**, **Build Tools**, **Integration**, and **E2E (Playwright)**. These suites relate to the shared `@automattic/calypso-jest` preset in three **different** ways — it is **not** uniform, and in particular the Integration suite does not use the preset at all:
+
+- **Spread the base preset directly.** Client, Server, and Build Tools each `require( '@automattic/calypso-jest' )` and spread it via `...base` — `test/client/jest.config.js:2` and `test/client/jest.config.js:5`; `test/server/jest.config.js:2` and `test/server/jest.config.js:5`; `test/build-tools/jest.config.js:2` and `test/build-tools/jest.config.js:5`.
+- **Aggregate per-package/app configs.** Packages and Applications are project aggregators: they set `projects: [ '<rootDir>/packages/*/jest.config.js' ]` (`test/packages/jest.config.js:4`) and `projects: [ '<rootDir>/apps/*/jest.config.js' ]` (`test/apps/jest.config.js:4`), delegating to each package's/app's own `jest.config.js` (which in turn build on the preset).
+- **Do not build on the preset.** The **Integration** suite configures Jest manually — it does **not** `require`/spread `@automattic/calypso-jest`; it reuses only the preset's module-resolver file via `resolver: require.resolve( '@automattic/calypso-jest/src/module-resolver.js' )` (`test/integration/jest.config.js:8`), sets `testEnvironment: 'node'` (`test/integration/jest.config.js:7`), and has **no `setupFilesAfterEnv`** — which is why it never disables the network (see Q4). The **E2E** suite builds on a different base entirely — `@automattic/calypso-e2e/src/jest-playwright-config` (`test/e2e/jest.config.js:1` and `test/e2e/jest.config.js:4`).
+
+**[observed from the per-suite `jest.config.js` files read for Q2/Q4]**
 
 **Runtime used throughout this document:** Node `v22.23.1`, yarn `4.0.2` (invoked as `node .yarn/releases/yarn-4.0.2.cjs …`), default/canonical configuration, all commands run from the repository root.
 
@@ -96,7 +102,7 @@ typeof isEnabled = function
 
 ### The base preset — `packages/calypso-jest/jest-preset.js`
 
-Every non-E2E suite builds on this preset:
+Most non-E2E suites build on this preset — Client, Server, and Build Tools spread it directly, while Packages and Applications aggregate per-package configs that use it. (The **Integration** suite is the exception: it does **not** build on the preset — it only reuses the preset's module-resolver — as detailed in the Preamble topology and the integration-suite note below.) The preset itself defines:
 
 - `resolver: require.resolve( './src/module-resolver.js' )` — `packages/calypso-jest/jest-preset.js:9`
 - `setupFilesAfterEnv: [ require.resolve( './src/setup.js' ) ]` — `packages/calypso-jest/jest-preset.js:10`
@@ -135,14 +141,30 @@ Every non-E2E suite builds on this preset:
 
 Because the client and server suites **replace** `setupFilesAfterEnv`, the base `setup.js` (`packages/calypso-jest/src/setup.js`) does **not** run for them — it applies to the _other_ suites (Packages / Applications / Build Tools). The client suite supplies its own bootstrap in `test/client/setup-test-framework.js` (enumerated in Q3). **[observed from files]**
 
-### Demonstrating the env divergence
+### Demonstrating the env divergence (command + raw output)
 
-The environment divergence is directly demonstrated by contrasting the Q1 run against the Q6/Q3 runs:
+To make the test-vs-dev boot contrast concrete **in this section** (not only by reference to Q1/Q6), I ran a single self-contained command that prints (a) the base preset's `testEnvironment`, (b) the dev boot's resolved `env_id` (with `NODE_ENV`/`CALYPSO_ENV` unset, exactly as a normal developer's shell has when running `yarn start`), and (c) the test boot's resolved `env_id` (with `NODE_ENV=test`, as Jest forces it).
+
+**Command:**
+
+```
+{ printf 'base preset testEnvironment       = '; node -e "console.log(require('./packages/calypso-jest/jest-preset.js').testEnvironment)"; printf 'dev boot  (no NODE_ENV) env_id    = '; env -u NODE_ENV -u CALYPSO_ENV node -e "console.log(require('./client/server/config/index.js')('env_id'))"; printf 'test boot (NODE_ENV=test) env_id  = '; NODE_ENV=test node -e "console.log(require('./client/server/config/index.js')('env_id'))"; }
+```
+
+**Output (complete, unedited; stable across two runs):**
+
+```
+base preset testEnvironment       = node
+dev boot  (no NODE_ENV) env_id    = development
+test boot (NODE_ENV=test) env_id  = test
+```
+
+**[observed]** The base test environment is `node` (`packages/calypso-jest/jest-preset.js:11`); the dev boot resolves `env_id = development` while the test boot resolves `env_id = test`. The two boots therefore diverge at the very first step — the resolved environment decided by `client/server/config/index.js:6`. This is the same contrast surfaced by the Q1 run (dev = `development`) and the Q6/Q3 runs (test = `test`, with `process.env.NODE_ENV = test` observed inside the harness in Q3).
 
 - Dev (no env set): `env_id = development` (Q1). **[observed]**
 - Test (Jest / `NODE_ENV=test`): `env_id = test` (Q6) and `process.env.NODE_ENV = test` inside the harness (Q3). **[observed]**
 
-**Rationale:** The dev server and the test harness are two different bootstraps of the _same_ config module; they differ first in the resolved `env` (`client/server/config/index.js:6`) and then, for the client suite, in the Jest-only overrides listed above.
+**Rationale:** The dev server and the test harness are two different bootstraps of the _same_ config module; they differ first in the resolved `env` (`client/server/config/index.js:6`) and then, for the client suite, in the Jest-only overrides listed above (module aliases, the custom resolver, asset stubs, the jsdom URL, and the bespoke setup file).
 
 ---
 
@@ -189,106 +211,134 @@ The environment divergence is directly demonstrated by contrasting the Q1 run ag
 - Custom resolver `packages/calypso-jest/src/module-resolver.js:16-20` — `enhancedResolve.create.sync({ … })` with `mainFields: [ 'calypso:src', 'main' ]` (`:18`) and `conditionNames: [ 'calypso:src', 'node', 'require' ]` (`:19`). This resolves monorepo packages to their **untranspiled `calypso:src`** source (so tests run without pre-built `dist`). **[inferred]**
 - Asset transform `packages/calypso-jest/src/asset-transform.js:4-6` — `process()` returns `{ code: 'module.exports = ' + JSON.stringify( path.basename( filename ) ) + ';' }`, i.e. every imported image/style becomes the string of its basename. **[inferred]**
 
-### Harness run that prints the live values
+### Harness run that prints the live values (self-contained & reproducible)
 
-To prove these are actually present at runtime (not just in source), I created a throwaway spec that matches the client `testMatch` pattern, ran it through the client Jest config, captured the output, and deleted the spec immediately (via an `EXIT` trap) so the repository was left unchanged (confirmed with `git status --porcelain` — empty).
+To prove these are actually present at runtime (not just in source), the command below is **fully self-contained and reproducible**. It creates a throwaway spec that matches the client `testMatch` pattern (a `*.js` file inside a `test/` directory under `client/`), runs it through the client Jest config, then removes the spec again — via an `EXIT` `trap` (which guarantees removal even if Jest errors) plus an explicit `rm` on the happy path — and finally prints `git status --porcelain` for that directory to prove the working tree is left unchanged. Copy-paste it verbatim at the repository root to reproduce the output shown.
 
 **Command:**
 
 ```
-node .yarn/releases/yarn-4.0.2.cjs jest -c=test/client/jest.config.js client/state/country-states/test/blitzy_adhoc_test_globals.js
+bash <<'RUNNER'
+SPEC=client/state/country-states/test/blitzy_adhoc_globals.test.js
+trap 'rm -f "$SPEC"' EXIT
+cat > "$SPEC" <<'SPECEOF'
+test( 'enumerate test-only globals injected by the client harness', () => {
+	console.log( 'process.env.NODE_ENV               =', process.env.NODE_ENV );
+	console.log( 'global.__i18n_text_domain__        =', global.__i18n_text_domain__ );
+	console.log( 'typeof global.google               =', typeof global.google );
+	console.log( 'typeof global.CSS.supports         =', typeof global.CSS.supports );
+	console.log( 'typeof global.ResizeObserver       =', typeof global.ResizeObserver );
+	console.log( 'typeof global.fetch                =', typeof global.fetch );
+	console.log( 'typeof global.matchMedia           =', typeof global.matchMedia );
+	console.log( 'typeof global.TextEncoder          =', typeof global.TextEncoder );
+	console.log( 'typeof global.TextDecoder          =', typeof global.TextDecoder );
+	console.log( 'typeof global.ReadableStream       =', typeof global.ReadableStream );
+	console.log( 'typeof global.TransformStream      =', typeof global.TransformStream );
+	console.log( 'typeof global.Worker               =', typeof global.Worker );
+	console.log( 'typeof global.structuredClone      =', typeof global.structuredClone );
+	console.log( 'typeof global.crypto.randomUUID    =', typeof global.crypto.randomUUID );
+	console.log( 'typeof global.crypto.subtle        =', typeof global.crypto.subtle );
+	expect( true ).toBe( true );
+} );
+SPECEOF
+node .yarn/releases/yarn-4.0.2.cjs jest -c=test/client/jest.config.js "$SPEC"
+rm -f "$SPEC"
+echo "--- git status --porcelain (temp spec removed) ---"
+git status --porcelain client/state/country-states/test/
+RUNNER
 ```
 
-The temporary spec logged `typeof`/values for each injected item. **Output (complete, unedited):**
+**Output (complete, unedited).** The `Time` line is the only run-to-run variable (`0.671 s` here); the stable anchor is `1 passed, 1 total`. The `git status --porcelain` marker prints with **no** line after it, confirming the temporary spec left no trace in the working tree:
 
 ```
 Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
   npx update-browserslist-db@latest
   Why you should do it regularly: https://github.com/browserslist/update-db#readme
-PASS client/state/country-states/test/blitzy_adhoc_test_globals.js
+PASS client/state/country-states/test/blitzy_adhoc_globals.test.js
   ● Console
 
     console.log
       process.env.NODE_ENV               = test
 
-      at Object.log (state/country-states/test/blitzy_adhoc_test_globals.js:2:10)
+      at Object.log (state/country-states/test/blitzy_adhoc_globals.test.js:2:10)
 
     console.log
       global.__i18n_text_domain__        = default
 
-      at Object.log (state/country-states/test/blitzy_adhoc_test_globals.js:3:10)
+      at Object.log (state/country-states/test/blitzy_adhoc_globals.test.js:3:10)
 
     console.log
       typeof global.google               = object
 
-      at Object.log (state/country-states/test/blitzy_adhoc_test_globals.js:4:10)
+      at Object.log (state/country-states/test/blitzy_adhoc_globals.test.js:4:10)
 
     console.log
       typeof global.CSS.supports         = function
 
-      at Object.log (state/country-states/test/blitzy_adhoc_test_globals.js:5:10)
+      at Object.log (state/country-states/test/blitzy_adhoc_globals.test.js:5:10)
 
     console.log
       typeof global.ResizeObserver       = function
 
-      at Object.log (state/country-states/test/blitzy_adhoc_test_globals.js:6:10)
+      at Object.log (state/country-states/test/blitzy_adhoc_globals.test.js:6:10)
 
     console.log
       typeof global.fetch                = function
 
-      at Object.log (state/country-states/test/blitzy_adhoc_test_globals.js:7:10)
+      at Object.log (state/country-states/test/blitzy_adhoc_globals.test.js:7:10)
 
     console.log
       typeof global.matchMedia           = function
 
-      at Object.log (state/country-states/test/blitzy_adhoc_test_globals.js:8:10)
+      at Object.log (state/country-states/test/blitzy_adhoc_globals.test.js:8:10)
 
     console.log
       typeof global.TextEncoder          = function
 
-      at Object.log (state/country-states/test/blitzy_adhoc_test_globals.js:9:10)
+      at Object.log (state/country-states/test/blitzy_adhoc_globals.test.js:9:10)
 
     console.log
       typeof global.TextDecoder          = function
 
-      at Object.log (state/country-states/test/blitzy_adhoc_test_globals.js:10:10)
+      at Object.log (state/country-states/test/blitzy_adhoc_globals.test.js:10:10)
 
     console.log
       typeof global.ReadableStream       = function
 
-      at Object.log (state/country-states/test/blitzy_adhoc_test_globals.js:11:10)
+      at Object.log (state/country-states/test/blitzy_adhoc_globals.test.js:11:10)
 
     console.log
       typeof global.TransformStream      = function
 
-      at Object.log (state/country-states/test/blitzy_adhoc_test_globals.js:12:10)
+      at Object.log (state/country-states/test/blitzy_adhoc_globals.test.js:12:10)
 
     console.log
       typeof global.Worker               = function
 
-      at Object.log (state/country-states/test/blitzy_adhoc_test_globals.js:13:10)
+      at Object.log (state/country-states/test/blitzy_adhoc_globals.test.js:13:10)
 
     console.log
       typeof global.structuredClone      = function
 
-      at Object.log (state/country-states/test/blitzy_adhoc_test_globals.js:14:10)
+      at Object.log (state/country-states/test/blitzy_adhoc_globals.test.js:14:10)
 
     console.log
       typeof global.crypto.randomUUID    = function
 
-      at Object.log (state/country-states/test/blitzy_adhoc_test_globals.js:15:10)
+      at Object.log (state/country-states/test/blitzy_adhoc_globals.test.js:15:10)
 
     console.log
       typeof global.crypto.subtle        = object
 
-      at Object.log (state/country-states/test/blitzy_adhoc_test_globals.js:16:10)
+      at Object.log (state/country-states/test/blitzy_adhoc_globals.test.js:16:10)
 
 
 Test Suites: 1 passed, 1 total
 Tests:       1 passed, 1 total
 Snapshots:   0 total
-Time:        0.771 s
-Ran all test suites matching /client\/state\/country-states\/test\/blitzy_adhoc_test_globals.js/i.
+Time:        0.671 s, estimated 1 s
+Ran all test suites matching /client\/state\/country-states\/test\/blitzy_adhoc_globals.test.js/i.
+--- git status --porcelain (temp spec removed) ---
 ```
 
 ### Rationale and coverage
@@ -336,7 +386,23 @@ The integration suite allows real network specifically because `test/integration
 
 ### Cleanup semantics
 
-At the end of a client run, `afterAll` calls `nock.restore()` then `nock.cleanAll()` (`test/client/setup-test-framework.js:18-22`). `nock` overrides Node's `http.request`/`http.ClientRequest`; calling `nock.restore()` after suites returns those to normal and avoids Jest module-cache memory growth across runs. **[inferred from nock docs + observed file:line]**
+At the end of a client run, `afterAll` calls `nock.restore()` then `nock.cleanAll()` (`test/client/setup-test-framework.js:18-22`); the repository's own comment on that block states this "helps clean up nock after each test run and avoid memory leaks" (`test/client/setup-test-framework.js:19`). Under the hood, `nock` works by **replacing** Node's `http.request`/`http.ClientRequest`, and `nock.restore()` puts the originals back. Rather than rely on external documentation, I confirmed this override/restore behavior directly at runtime:
+
+**Command:**
+
+```
+node -e "const http=require('http'); const beforeReq=http.request, beforeCR=http.ClientRequest; const nock=require('nock'); nock.disableNetConnect(); if(!nock.isActive()){nock.activate();} console.log('http.request changed after nock.activate()      =', beforeReq!==http.request); console.log('http.ClientRequest changed after nock.activate() =', beforeCR!==http.ClientRequest); nock.restore(); console.log('http.request restored after nock.restore()       =', http.request===beforeReq);"
+```
+
+**Output:**
+
+```
+http.request changed after nock.activate()      = true
+http.ClientRequest changed after nock.activate() = true
+http.request restored after nock.restore()       = true
+```
+
+**[observed]** `nock` swaps out `http.request` and `http.ClientRequest` on activation, and `nock.restore()` restores the originals — which is why the `afterAll` cleanup matters across repeated runs. The memory-leak rationale is grounded in the repository's own comment (`test/client/setup-test-framework.js:19`); the http-override/restore behavior is grounded in the observed output above, not in external docs.
 
 **Rationale:** Network isolation is a deliberate default of the client harness — it guarantees deterministic tests and forces every outbound call to be explicitly mocked. The un-mocked case is intentionally loud (a thrown `NetConnectNotAllowedError`) so an unmocked call cannot silently pass.
 
@@ -484,9 +550,17 @@ NODE_ENV=development node -e "const p=require('./client/server/config/parser.js'
 - `isEnabled( feature )` first honors the `ACTIVE_FEATURE_FLAGS` env override (`packages/create-calypso-config/src/index.ts:72-83`), then falls back to `data.features[ feature ]` (`:85`).
 - Tests may also mutate flags at runtime through `enable( feature )` (`packages/create-calypso-config/src/index.ts:107-111`) and `disable( feature )` (`:118-122`), both attached to the API by the default factory (`:132-140`).
 
-### PROOF #1 — same flag, two environments (from the Q6 runs)
+### PROOF #1 — same flag, two environments
 
-`google-my-business` resolves **`false`** under `NODE_ENV=test` (`config/test.json:47`) but **`true`** under `NODE_ENV=development` (`config/development.json:67`). Side by side (captured outputs from Q6):
+`google-my-business` resolves **`false`** under `NODE_ENV=test` (`config/test.json:47`) but **`true`** under `NODE_ENV=development` (`config/development.json:67`). To show both side by side under a **single reproducible command**, the wrapper below runs the Q6 parser once per environment; each `NODE_ENV=… →` prefix is emitted by a `printf`, and the JSON on each line is emitted by the parser run.
+
+**Command:**
+
+```
+{ printf 'NODE_ENV=test        → '; NODE_ENV=test node -e "const p=require('./client/server/config/parser.js'); const {serverData}=p(require('path').resolve('config'),{env:process.env.NODE_ENV}); console.log(JSON.stringify({env_id:serverData.env_id,'checkout/checkout-version':serverData.features['checkout/checkout-version'],'google-my-business':serverData.features['google-my-business'],'individual-subscriber-stats':serverData.features['individual-subscriber-stats']}));"; printf 'NODE_ENV=development → '; NODE_ENV=development node -e "const p=require('./client/server/config/parser.js'); const {serverData}=p(require('path').resolve('config'),{env:process.env.NODE_ENV}); console.log(JSON.stringify({env_id:serverData.env_id,'checkout/checkout-version':serverData.features['checkout/checkout-version'],'google-my-business':serverData.features['google-my-business'],'individual-subscriber-stats':serverData.features['individual-subscriber-stats']}));"; }
+```
+
+**Output (complete, unedited — the `NODE_ENV=… →` prefixes are emitted by the `printf` in the wrapper):**
 
 ```
 NODE_ENV=test        → {"env_id":"test","checkout/checkout-version":false,"google-my-business":false,"individual-subscriber-stats":false}
@@ -497,19 +571,15 @@ NODE_ENV=development → {"env_id":"development","checkout/checkout-version":tru
 
 ### PROOF #2 — missing-key behavior differs by environment (edge path)
 
-Requesting a key that does not exist behaves differently depending on `NODE_ENV`, exercising the branch at `packages/create-calypso-config/src/index.ts:35-40`.
+Requesting a key that does not exist behaves differently depending on `NODE_ENV`, exercising the branch at `packages/create-calypso-config/src/index.ts:35-40`. The wrapper below runs **both** environments under one reproducible command; each `NODE_ENV=… →` prefix is emitted by a `printf`, and the text after it is emitted by the corresponding `node -e` run.
 
-**Commands:**
-
-```
-NODE_ENV=development node -e "const c=require('./client/server/config/index.js'); try{ c('this_key_does_not_exist'); console.log('NO THROW'); }catch(e){ console.log(e.constructor.name+': '+String(e.message).split(String.fromCharCode(10))[0]); }"
-```
+**Command:**
 
 ```
-NODE_ENV=test node -e "const c=require('./client/server/config/index.js'); console.log('returns:', String(c('this_key_does_not_exist')));"
+{ printf 'NODE_ENV=development → '; NODE_ENV=development node -e "const c=require('./client/server/config/index.js'); try{ c('this_key_does_not_exist'); console.log('NO THROW'); }catch(e){ console.log(e.constructor.name+': '+String(e.message).split(String.fromCharCode(10))[0]); }"; printf 'NODE_ENV=test        → '; NODE_ENV=test node -e "const c=require('./client/server/config/index.js'); console.log('returns:', String(c('this_key_does_not_exist')));"; }
 ```
 
-**Output:**
+**Output (complete, unedited — the `NODE_ENV=… →` prefixes are emitted by the `printf` in the wrapper):**
 
 ```
 NODE_ENV=development → ReferenceError: Could not find config value for key 'this_key_does_not_exist'
@@ -547,7 +617,7 @@ Named-item checklist explicitly covered: **dev server** (Q1); **test-vs-dev boot
 - **Node version:** observed `v22.23.1` (an earlier scoping pass noted `v22.22.2`). Both satisfy `^v22.9.0`; I reported the actual observed value.
 - **Q5 timing:** `Time` varies run-to-run (`0.945 s` / `0.957 s`); the stable anchor is the pass count `5 passed, 5 total`, which matched on both runs.
 - **Parser signature:** the source is `module.exports = function ( configPath, defaultOpts )` (`client/server/config/parser.js:23`), reading `opts.env`/`opts.enabledFeatures`/`opts.disabledFeatures` — reported as-is rather than as a destructured paraphrase.
-- **`config/client.json`:** the file is 33 lines listing 31 client-exposed keys; described accurately here.
+- **`config/client.json`:** the file is 32 lines listing 30 client-exposed keys (a JSON array whose entries span lines 2–31); described accurately here.
 
 All other anchor strings matched the scoping ground-truth verbatim (the `NetConnectNotAllowedError`/`ENETUNREACH`/`Nock: Disallowed net connect for "public-api.wordpress.com:80/rest/v1.1/me"` message; `env_id` `test`/`development`; the three flag values; `5 passed, 5 total`; `ReferenceError`/`undefined`).
 
