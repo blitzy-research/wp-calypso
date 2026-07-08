@@ -796,7 +796,59 @@ Time:        0.5 s, estimated 1 s
 Ran all test suites matching /resolve-cfg/i.
 ```
 
-The identical specifier `@automattic/calypso-config` resolves to `packages/calypso-config/src/index.ts` in the **packages** context but `client/server/config/index.js` in the **client**, **server**, and **integration** contexts. (The two `jest-haste-map: duplicate manual mock` notices come from `packages/plans-grid-next` shipping both `src/` and a checked-in `dist/` mock; they are informational and unrelated to the resolution result. `Time` is the only run-to-run-variable line.)
+The identical specifier `@automattic/calypso-config` resolves to `packages/calypso-config/src/index.ts` in the **packages** context but `client/server/config/index.js` in the **client**, **server**, and **integration** contexts. (The `jest-haste-map: duplicate manual mock` notices come from `packages/plans-grid-next` shipping **three** copies of the same mock file — `packages/plans-grid-next/src/__mocks__/wpcom-proxy-request.js`, `packages/plans-grid-next/dist/cjs/__mocks__/wpcom-proxy-request.js`, and `packages/plans-grid-next/dist/esm/__mocks__/wpcom-proxy-request.js`; they are informational and unrelated to the resolution result.)
+
+The **resolution target** (`…/client/server/config/index.js`), the `PASS` line, and the `Test Suites: 1 passed, 1 total` / `Tests: 1 passed, 1 total` / `Snapshots: 0 total` counts are identical on every run — that is the actual Q4 answer, and it is stable. The transcript above is one **warm-haste-map** run. Two things *do* vary run-to-run and must be reported honestly: (i) the `Time` line, and (ii) the **order and pairing of the two `duplicate manual mock` notices**. Because three files share the `wpcom-proxy-request` mock name, Jest emits a notice for each of the two *adjacent* pairs it encounters while walking its haste map, and that walk order is not stable across runs — so the same unchanged input prints either `{src, dist/cjs}` + `{dist/cjs, dist/esm}` or `{src, dist/esm}` + `{dist/esm, dist/cjs}`. The repo-wide scan that surfaces these copies comes from `test/integration/jest.config.js:L6` (`rootDir: '../..'`), which makes the integration haste map cover `packages/plans-grid-next`.
+
+**Run-to-run variance (honest reproduction).** Running the *same unchanged* probe repeatedly and reducing each run to the ordered list of the four mock-path fragments (two per notice) shows the pairing is not stable. Across repeated 30-run batches (warm haste map, no cache clearing) the `{src, dist/cjs}` / `{dist/cjs, dist/esm}` pairing (call it *variant A*, matching the transcript above) is always the large majority, while the `{src, dist/esm}` / `{dist/esm, dist/cjs}` pairing (*variant B*) always recurs as a minority. The exact split itself fluctuates from batch to batch — four independent 30-run batches gave variant-A : variant-B counts of 26:4, 26:4, 29:1, and 24:6 — so the distribution is genuinely non-deterministic rather than a fixed ratio. One such batch:
+
+```bash
+$ for i in $(seq 1 30); do \
+    node_modules/.bin/jest -c=test/integration/jest.config.js --silent=false "resolve-cfg" 2>&1 \
+      | grep -E 'wpcom-proxy-request\.js' \
+      | sed -E 's|.*/plans-grid-next/([a-z/]+)/__mocks__.*|\1|' | paste -sd',' -; \
+  done | sort | uniq -c | sort -rn
+     26 src,dist/cjs,dist/cjs,dist/esm
+      4 src,dist/esm,dist/esm,dist/cjs
+```
+
+Clearing the haste map before each run (so it is rebuilt every time) makes the rebuild-order sensitivity even more visible; the split again fluctuates but keeps the same shape — three independent 20-run fresh-cache batches gave variant-A : variant-B counts of 17:3, 16:4, and 16:4 — and, unlike the warm case, every one of those fresh builds additionally emits a `Haste module naming collision` notice for `@automattic/fingerprintjs` (present in all 20 runs of each batch) that a warm cache suppresses. One such batch:
+
+```bash
+$ for i in $(seq 1 20); do \
+    node_modules/.bin/jest --clearCache -c=test/integration/jest.config.js >/dev/null 2>&1; \
+    node_modules/.bin/jest -c=test/integration/jest.config.js --silent=false "resolve-cfg" 2>&1 \
+      | grep -E 'wpcom-proxy-request\.js' \
+      | sed -E 's|.*/plans-grid-next/([a-z/]+)/__mocks__.*|\1|' | paste -sd',' -; \
+  done | sort | uniq -c | sort -rn
+     17 src,dist/cjs,dist/cjs,dist/esm
+      3 src,dist/esm,dist/esm,dist/cjs
+```
+
+The alternate pairing (*variant B*) prints these two notices verbatim in place of the two shown in the transcript above:
+
+```text
+jest-haste-map: duplicate manual mock found: wpcom-proxy-request
+  The following files share their name; please delete one of them:
+    * <rootDir>/packages/plans-grid-next/src/__mocks__/wpcom-proxy-request.js
+    * <rootDir>/packages/plans-grid-next/dist/esm/__mocks__/wpcom-proxy-request.js
+
+jest-haste-map: duplicate manual mock found: wpcom-proxy-request
+  The following files share their name; please delete one of them:
+    * <rootDir>/packages/plans-grid-next/dist/esm/__mocks__/wpcom-proxy-request.js
+    * <rootDir>/packages/plans-grid-next/dist/cjs/__mocks__/wpcom-proxy-request.js
+```
+
+And the `@automattic/fingerprintjs` collision notice emitted only on a fresh (rebuilt) haste map, verbatim:
+
+```text
+jest-haste-map: Haste module naming collision: @automattic/fingerprintjs
+  The following files share their name; please adjust your hasteImpl:
+    * <rootDir>/packages/fingerprintjs/package.json
+    * <rootDir>/packages/fingerprintjs/dist/esm/package.json
+```
+
+Across all of these runs the substantive result never changed: `require.resolve('@automattic/calypso-config')` always resolved to `…/client/server/config/index.js`, and the suite always reported `PASS` with `Tests: 1 passed, 1 total`. Only the incidental `Time` value and the haste-map notice order/pairing (and, on a cold cache, the extra `@automattic/fingerprintjs` collision line) differ between runs — none of which affects the resolution the question asks about. (`file:line` — the three shared mock files: `packages/plans-grid-next/src/__mocks__/wpcom-proxy-request.js`, `packages/plans-grid-next/dist/cjs/__mocks__/wpcom-proxy-request.js`, `packages/plans-grid-next/dist/esm/__mocks__/wpcom-proxy-request.js`; the collision files: `packages/fingerprintjs/package.json`, `packages/fingerprintjs/dist/esm/package.json`; the repo-wide scan: `test/integration/jest.config.js:L6`.)
 
 **Cleanup (removes the Q4 probes):**
 
