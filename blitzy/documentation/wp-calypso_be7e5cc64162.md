@@ -3,7 +3,7 @@
 **Package under investigation:** `@automattic/explat-client` **v0.1.0** [`packages/explat-client/package.json:L2-L3`]
 **Repository:** wp-calypso monorepo
 **HEAD commit:** `be7e5cc641622d153040491fd5625c6cb83e12eb` (branch `wp-calypso_be7e5cc64162`)
-**Toolchain (repo-canonical):** Yarn **4.0.2** [`package.json:packageManager`], Node **≥ 22.9.0** [`package.json:engines.node`, `.nvmrc` = `22.9.0`]; observed `node --version` = **v22.23.1** (see §7 for the Node-version discrepancy note).
+**Toolchain (repo-canonical):** Yarn **4.0.2** [`package.json:L422`], Node **≥ 22.9.0** [`package.json:L57`, `.nvmrc:L1` = `22.9.0`]; observed `node --version` = **v22.23.1** (see §7 for the Node-version discrepancy note).
 
 ---
 
@@ -17,7 +17,7 @@ This is a **read-only, evidence-driven ("run-first") investigation**. Every answ
 
 **The real public API was exercised via dependency injection.** All observations drive the actual public factory `createExPlatClient` [`packages/explat-client/src/index.ts:L8-L11`] with an injected `Config` (`fetchExperimentAssignment`, `getAnonId`, `logError`, `isDevelopmentMode`) [`packages/explat-client/src/types.ts:L28-L39`]. Injecting `fetchExperimentAssignment` is the client's intended extension point — this is how Calypso itself wires the client [`client/lib/explat/index.ts:L10-L15`] — so it is the canonical (non-synthetic) observation path. **The live wpcom network was never called.**
 
-**Observation environment.** The package's Jest `testEnvironment` is `'node'` (inherited from `@automattic/calypso-jest` via the shared preset [`packages/explat-client/jest.config.js:L2`]), so there is no global `window`. Because `createExPlatClient` throws when `window` is undefined [`packages/explat-client/src/create-explat-client.ts:L72-L74`], every observation spec calls `setBrowserContext()` (sets `global.window = {}`) and `localStorage.clear()` in a `beforeEach`, mirroring the real suite's setup [`packages/explat-client/src/test/create-explat-client.ts:L47-L51`]. Timing/magnitude/distribution observations use **real timers** (no `jest.useFakeTimers()`); the deterministic suite that proves "tests passing" (§1) uses fake timers + a mocked `monotonicNow`.
+**Observation environment.** The package's Jest `testEnvironment` is `'node'` — the setting itself lives in `@automattic/calypso-jest` at [`packages/calypso-jest/jest-preset.js:L11`] (`testEnvironment: 'node',`), which the package inherits through the preset chain: `jest.config.js` extends `../../test/packages/jest-preset.js` [`packages/explat-client/jest.config.js:L2`], and that shared preset requires and spreads `@automattic/calypso-jest` [`test/packages/jest-preset.js:L2`, `L9`]. So there is no global `window`. Because `createExPlatClient` throws when `window` is undefined [`packages/explat-client/src/create-explat-client.ts:L72-L74`], every observation spec calls `setBrowserContext()` (sets `global.window = {}`) and `localStorage.clear()` in a `beforeEach`, mirroring the real suite's setup [`packages/explat-client/src/test/create-explat-client.ts:L47-L51`]. Timing/magnitude/distribution observations use **real timers** (no `jest.useFakeTimers()`); the deterministic suite that proves "tests passing" (§1) uses fake timers + a mocked `monotonicNow`.
 
 **Read-only note.** No existing tracked repository file was modified, added, or deleted. The **only** retained new file is this document. The temporary observation specs used to capture the output below were deleted after capture (see §7). In particular, the **stale docstring** on the synchronous getter [`packages/explat-client/src/create-explat-client.ts:L31-L37`] is **reported** as a Q5 finding, **not fixed**.
 
@@ -35,28 +35,37 @@ CI=1 yarn workspace @automattic/explat-client test
 
 `scripts.test` is `"yarn jest"` [`packages/explat-client/package.json:L25`]; the package's `jest.config.js` extends the shared preset `../../test/packages/jest-preset.js` [`packages/explat-client/jest.config.js:L2`], which builds on `@automattic/calypso-jest`. The `calypso:src` field (`src/index.ts`) [`packages/explat-client/package.json:L12`] makes Jest run directly against untranspiled TypeScript — **no build step is required**. `CI=1` disables watch mode.
 
-**Actual, unedited output (tail):**
+**Actual, complete, unedited output** (both `stderr` and `stdout` captured via `2>&1`, in emission order — nothing omitted):
 
 ```text
+Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
 PASS src/internal/test/requests.ts
-PASS src/internal/test/validations.ts
+PASS src/test/create-ssr-safe-dummy-explat-client.ts
 PASS src/internal/test/experiment-assignment-store.ts
 PASS src/internal/test/timing.ts
 PASS src/test/index.ts
-PASS src/test/create-ssr-safe-dummy-explat-client.ts
-PASS src/internal/test/experiment-assignments.ts
 PASS src/internal/test/local-storage.ts
+PASS src/internal/test/validations.ts
+PASS src/internal/test/experiment-assignments.ts
 PASS src/test/create-explat-client.ts
 A worker process has failed to exit gracefully and has been force exited. This is likely caused by tests leaking due to improper teardown. Try running with --detectOpenHandles to find leaks. Active timers can also cause this, ensure that .unref() was called on them.
 
 Test Suites: 9 passed, 9 total
 Tests:       81 passed, 81 total
 Snapshots:   23 passed, 23 total
-Time:        2.428 s, estimated 3 s
+Time:        2.432 s
 Ran all test suites.
 ```
 
-**Result: the suite is green — `9 passed` suites / `81 passed` tests / `23 passed` snapshots.** The nine suites correspond exactly to the nine colocated test files: six in `src/internal/test/` (`requests`, `validations`, `experiment-assignment-store`, `timing`, `experiment-assignments`, `local-storage`) and three in `src/test/` (`index`, `create-ssr-safe-dummy-explat-client`, `create-explat-client`). The only console noise is benign: a Browserslist "caniuse-lite is old" notice (omitted above) and Jest's "worker process has failed to exit gracefully" message, caused by active timers in the timing tests — neither affects the pass result.
+**Result: the suite is green — `9 passed` suites / `81 passed` tests / `23 passed` snapshots.** The nine suites correspond exactly to the nine colocated test files: six in `src/internal/test/` (`requests`, `validations`, `experiment-assignment-store`, `timing`, `experiment-assignments`, `local-storage`) and three in `src/test/` (`index`, `create-ssr-safe-dummy-explat-client`, `create-explat-client`). The `PASS`-line ordering is non-deterministic (Jest runs suites across parallel workers), so it varies run-to-run and does not affect the result. The only console noise is benign and is shown in full above: the Browserslist "caniuse-lite is 17 months old" notice (emitted three times, once per worker) and Jest's "worker process has failed to exit gracefully" message, caused by active timers in the timing tests — neither affects the pass result.
 
 ---
 
@@ -64,19 +73,19 @@ Ran all test suites.
 
 **Short answer.** Confirmed for the async load path: `loadExperimentAssignment` **resolves** (never rejects/throws) for success, network-failure, invalid-name, and timeout inputs. There is exactly **one** genuine throw in the whole surface — and it is *not* from `loadExperimentAssignment`: constructing the **browser** client outside a browser context throws `"Running outside of a browser context."`.
 
-**Command**
+**Command** (output filtered to the `Q1_`-prefixed observation lines):
 
 ```bash
-cd packages/explat-client && CI=1 yarn jest zz-obs-main --silent=false
+cd packages/explat-client && CI=1 yarn jest zz-obs-main --silent=false 2>&1 | grep -E '^Q1_'
 ```
 
-**Actual, unedited output (Q1 lines):**
+**Actual, complete, unedited `Q1_` observation lines:**
 
 ```text
-Q1_SUCCESS {"experimentName":"experiment_name_a","variationName":"treatment","retrievedTimestamp":1783486165601,"ttl":3600}
+Q1_SUCCESS {"experimentName":"experiment_name_a","variationName":"treatment","retrievedTimestamp":1783488500271,"ttl":3600}
 Q1_FAILURE_THREW false
-Q1_FAILURE {"experimentName":"experiment_name_a","variationName":null,"retrievedTimestamp":1783486165605,"ttl":60,"isFallbackExperimentAssignment":true}
-Q1_INVALID {"experimentName":"Invalid-Name!","variationName":null,"retrievedTimestamp":1783486165609,"ttl":60,"isFallbackExperimentAssignment":true}
+Q1_FAILURE {"experimentName":"experiment_name_a","variationName":null,"retrievedTimestamp":1783488500277,"ttl":60,"isFallbackExperimentAssignment":true}
+Q1_INVALID {"experimentName":"Invalid-Name!","variationName":null,"retrievedTimestamp":1783488500279,"ttl":60,"isFallbackExperimentAssignment":true}
 Q1_THROW Running outside of a browser context.
 ```
 
@@ -100,47 +109,50 @@ Q1_THROW Running outside of a browser context.
 
 ### 3a — Server unavailable (fetch rejects)
 
-**Command**
+**Command** (output filtered to the `Q2_REJECT_`-prefixed observation lines):
 
 ```bash
-cd packages/explat-client && CI=1 yarn jest zz-obs-main --silent=false
+cd packages/explat-client && CI=1 yarn jest zz-obs-main --silent=false 2>&1 | grep -E '^Q2_REJECT_'
 ```
 
-**Actual, unedited output (Q2 reject lines):**
+**Actual, complete, unedited `Q2_REJECT_` observation lines:**
 
 ```text
-Q2_REJECT_RESULT {"experimentName":"experiment_name_a","variationName":null,"retrievedTimestamp":1783486165611,"ttl":60,"isFallbackExperimentAssignment":true}
+Q2_REJECT_RESULT {"experimentName":"experiment_name_a","variationName":null,"retrievedTimestamp":1783488500277,"ttl":60,"isFallbackExperimentAssignment":true}
 Q2_REJECT_LOGS [{"message":"ECONNREFUSED wpcom","experimentName":"experiment_name_a","source":"loadExperimentAssignment-initialError"}]
 ```
 
 ### 3b — Server too slow (fetch never resolves → real timeout)
 
-**Command** (real timers; run **3 times** to observe the run-to-run variability):
+**Command** (real timers; the spec fires **N = 60** timeouts on **distinct** experiment names `experiment_name_0 … experiment_name_59` so the concurrency-dedup does not collapse them, features `experiment_name_0` as the single example, and tallies the 5000/10000 split. Run **3 times** to observe the run-to-run variability; output filtered to the `Q2_`-prefixed observation lines):
 
 ```bash
-cd packages/explat-client && CI=1 yarn jest zz-obs-timeout --silent=false
+cd packages/explat-client && CI=1 yarn jest zz-obs-timeout --silent=false 2>&1 | grep -E '^Q2_'
 ```
 
-**Actual, unedited output across 3 runs:**
+**Actual, complete, unedited observation lines for each of the 3 runs** (nothing omitted — every run prints all five `Q2_` lines):
 
 ```text
 # RUN 1
-Q2_TIMEOUT_RESULT {"experimentName":"experiment_name_a","variationName":null,"retrievedTimestamp":1783486211565,"ttl":60,"isFallbackExperimentAssignment":true}
-Q2_TIMEOUT_LOG [{"message":"Promise has timed-out after 5000ms.","experimentName":"experiment_name_a","source":"loadExperimentAssignment-initialError"}]
-Q2_TIMEOUT_ELAPSED_MS 5002
+Q2_TIMEOUT_RESULT {"experimentName":"experiment_name_0","variationName":null,"retrievedTimestamp":1783488551054,"ttl":60,"isFallbackExperimentAssignment":true}
+Q2_TIMEOUT_LOG [{"message":"Promise has timed-out after 10000ms.","experimentName":"experiment_name_0","source":"loadExperimentAssignment-initialError"}]
+Q2_TIMEOUT_ELAPSED_MS 10002
 Q2_DIST_N 60
-Q2_DIST_TALLY {"5000":28,"10000":32}
+Q2_DIST_TALLY {"5000":30,"10000":30}
 
 # RUN 2
-Q2_TIMEOUT_LOG [{"message":"Promise has timed-out after 10000ms.","experimentName":"experiment_name_a","source":"loadExperimentAssignment-initialError"}]
-Q2_TIMEOUT_ELAPSED_MS 10003
+Q2_TIMEOUT_RESULT {"experimentName":"experiment_name_0","variationName":null,"retrievedTimestamp":1783488563007,"ttl":60,"isFallbackExperimentAssignment":true}
+Q2_TIMEOUT_LOG [{"message":"Promise has timed-out after 10000ms.","experimentName":"experiment_name_0","source":"loadExperimentAssignment-initialError"}]
+Q2_TIMEOUT_ELAPSED_MS 10000
 Q2_DIST_N 60
 Q2_DIST_TALLY {"5000":28,"10000":32}
 
 # RUN 3
-Q2_TIMEOUT_LOG [{"message":"Promise has timed-out after 10000ms.","experimentName":"experiment_name_a","source":"loadExperimentAssignment-initialError"}]
-Q2_TIMEOUT_ELAPSED_MS 10002
-Q2_DIST_TALLY {"5000":39,"10000":21}
+Q2_TIMEOUT_RESULT {"experimentName":"experiment_name_0","variationName":null,"retrievedTimestamp":1783488574916,"ttl":60,"isFallbackExperimentAssignment":true}
+Q2_TIMEOUT_LOG [{"message":"Promise has timed-out after 10000ms.","experimentName":"experiment_name_0","source":"loadExperimentAssignment-initialError"}]
+Q2_TIMEOUT_ELAPSED_MS 10001
+Q2_DIST_N 60
+Q2_DIST_TALLY {"5000":25,"10000":35}
 ```
 
 **The response object (both cases).** It is the fallback produced by **`createFallbackExperimentAssignment`** [`packages/explat-client/src/internal/experiment-assignments.ts:L25-L38`]:
@@ -153,7 +165,7 @@ Q2_DIST_TALLY {"5000":39,"10000":21}
 
 **The timeout mechanism and its run-to-run variability.** The fetch is raced against a timeout by **`Timing.timeoutPromise`** [`packages/explat-client/src/create-explat-client.ts:L142-L145`], which rejects with the message `Promise has timed-out after ${ timeoutMilliseconds }ms.` [`packages/explat-client/src/internal/timing.ts:L23-L36`, message at `L31`]. The timeout duration itself is chosen per load: it defaults to `EXPERIMENT_FETCH_TIMEOUT` = `10000` [`packages/explat-client/src/create-explat-client.ts:L16`] but is set to `5000` when `Math.random() > 0.5` [`packages/explat-client/src/create-explat-client.ts:L134-L138`]. This is a deliberate A/B experiment on the timeout value.
 
-**Scale, stability, and reproduced variability.** I ran the **same unchanged input** repeatedly rather than constructing a variant that hides the coin-flip. The single-timeout elapsed time was **5002 ms (run 1), 10003 ms (run 2), 10002 ms (run 3)** — demonstrating that **both** the 5000 ms and 10000 ms branches genuinely occur run-to-run. Over **N = 60** independent timeouts per run, the 5000/10000 split was **{5000: 28, 10000: 32}**, **{5000: 28, 10000: 32}**, and **{5000: 39, 10000: 21}** — roughly 50/50, consistent with a `Math.random() > 0.5` gate. The message and elapsed time always agree (a "5000ms" message accompanies a ~5002 ms elapsed; a "10000ms" message accompanies a ~10002–10003 ms elapsed).
+**Scale, stability, and reproduced variability.** I ran the **same unchanged input** repeatedly rather than constructing a variant that hides the coin-flip. The featured single timeout (`experiment_name_0`) happened to draw the **10000 ms** branch in all three runs, with measured elapsed times of **10002 ms (run 1), 10000 ms (run 2), 10001 ms (run 3)** — its `Q2_TIMEOUT_LOG` message ("Promise has timed-out after 10000ms.") always agrees with the measured elapsed. The run-to-run variability itself is proven by the **N = 60** distribution captured on every run: the 5000/10000 split was **{5000: 30, 10000: 30}**, **{5000: 28, 10000: 32}**, and **{5000: 25, 10000: 35}** — **both** branches occur on every single run (25–30 of the 60 timeouts fired at 5000 ms, the remainder at 10000 ms), each tally summing to 60, roughly 50/50 as expected from the `Math.random() > 0.5` gate. That `experiment_name_0` landed on 10000 ms three times in a row is itself just three coin-flips; the distribution demonstrates the 5000 ms branch is equally common and was observed 30, 28, and 25 times across the three runs.
 
 ---
 
@@ -161,15 +173,20 @@ Q2_DIST_TALLY {"5000":39,"10000":21}
 
 **Short answer.** **Exactly one.** At a scale of **N = 100** simultaneous callers for a single experiment, exactly **one** fetch is made — in both the success and the failure case.
 
-**Command**
+**Command** (output filtered to the `Q3_`-prefixed observation lines; run **2 times** to confirm stability):
 
 ```bash
-cd packages/explat-client && CI=1 yarn jest zz-obs-main --silent=false
+cd packages/explat-client && CI=1 yarn jest zz-obs-main --silent=false 2>&1 | grep -E '^Q3_'
 ```
 
-**Actual, unedited output (Q3 lines; identical across 2 runs):**
+**Actual, complete, unedited `Q3_` observation lines for both runs** (byte-identical across the two runs):
 
 ```text
+# RUN 1
+Q3_SUCCESS N=100 fetchCount=1 allIdentical=true
+Q3_FAILURE N=100 fetchCount=1 logCount=100 variation=null
+
+# RUN 2
 Q3_SUCCESS N=100 fetchCount=1 allIdentical=true
 Q3_FAILURE N=100 fetchCount=1 logCount=100 variation=null
 ```
@@ -187,17 +204,23 @@ Q3_FAILURE N=100 fetchCount=1 logCount=100 variation=null
 
 **Short answer.** **No — repeated same-experiment requests within the TTL are cache hits with zero extra network calls.** Once the cached assignment's TTL expires, the very next request triggers **exactly one** refetch.
 
-**Command** (real timers; `AFTER TTL` performs a real 61-second wait):
+**Command** (real timers; `Q4_AFTER_TTL` performs a real 61-second wait; output filtered to the `Q4_`-prefixed observation lines; run **2 times** to confirm stability):
 
 ```bash
-cd packages/explat-client && CI=1 yarn jest zz-obs-cache --silent=false
+cd packages/explat-client && CI=1 yarn jest zz-obs-cache --silent=false 2>&1 | grep -E '^Q4_'
 ```
 
-**Actual, unedited output (identical across 2 runs apart from the timestamp):**
+**Actual, complete, unedited `Q4_` observation lines for both runs** (identical apart from the `retrievedTimestamp`):
 
 ```text
+# RUN 1
 Q4_WITHIN_TTL afterFirstLoad=1 after_100_more_reloads=1
-Q4_STORED {"experimentName":"experiment_name_a","variationName":"treatment","retrievedTimestamp":1783486288739,"ttl":60}
+Q4_STORED {"experimentName":"experiment_name_a","variationName":"treatment","retrievedTimestamp":1783488601411,"ttl":60}
+Q4_AFTER_TTL waitMs=61000 countAfterFirst=1 countStillWithinTTL=1 countAfterExpiry=2
+
+# RUN 2
+Q4_WITHIN_TTL afterFirstLoad=1 after_100_more_reloads=1
+Q4_STORED {"experimentName":"experiment_name_a","variationName":"treatment","retrievedTimestamp":1783488669203,"ttl":60}
 Q4_AFTER_TTL waitMs=61000 countAfterFirst=1 countStillWithinTTL=1 countAfterExpiry=2
 ```
 
@@ -217,22 +240,22 @@ Q4_AFTER_TTL waitMs=61000 countAfterFirst=1 countStillWithinTTL=1 countAfterExpi
 
 **Short answer.** **It will not break your application — the client degrades gracefully.** Calling the synchronous getter `dangerouslyGetExperimentAssignment` **before** (or **during**) an in-flight `loadExperimentAssignment` returns a non-throwing **null-variation fallback** (`variationName: null`, `isFallbackExperimentAssignment: true`). In **development mode** it additionally logs a warning; in **production mode** it is **silent**. Despite its name and a stale docstring, it does **not** throw.
 
-**Command**
+**Command** (output filtered to the `Q5_`-prefixed observation lines):
 
 ```bash
-cd packages/explat-client && CI=1 yarn jest zz-obs-main --silent=false
+cd packages/explat-client && CI=1 yarn jest zz-obs-main --silent=false 2>&1 | grep -E '^Q5_'
 ```
 
-**Actual, unedited output (Q5 lines; identical across 2 runs apart from timestamps):**
+**Actual, complete, unedited `Q5_` observation lines** (identical across 2 runs apart from timestamps):
 
 ```text
-Q5_DEV_BEFORE_RESULT {"experimentName":"experiment_name_a","variationName":null,"retrievedTimestamp":1783486165662,"ttl":60,"isFallbackExperimentAssignment":true}
+Q5_DEV_BEFORE_RESULT {"experimentName":"experiment_name_a","variationName":null,"retrievedTimestamp":1783488500379,"ttl":60,"isFallbackExperimentAssignment":true}
 Q5_DEV_BEFORE_LOGS [{"message":"Trying to dangerously get an ExperimentAssignment that hasn't loaded.","experimentName":"experiment_name_a","source":"dangerouslyGetExperimentAssignment-error"}]
-Q5_PROD_BEFORE_RESULT {"experimentName":"experiment_name_a","variationName":null,"retrievedTimestamp":1783486165663,"ttl":60,"isFallbackExperimentAssignment":true}
+Q5_PROD_BEFORE_RESULT {"experimentName":"experiment_name_a","variationName":null,"retrievedTimestamp":1783488500380,"ttl":60,"isFallbackExperimentAssignment":true}
 Q5_PROD_BEFORE_LOGS []
-Q5_DEV_DURING_RESULT {"experimentName":"experiment_name_a","variationName":null,"retrievedTimestamp":1783486165665,"ttl":60,"isFallbackExperimentAssignment":true}
+Q5_DEV_DURING_RESULT {"experimentName":"experiment_name_a","variationName":null,"retrievedTimestamp":1783488500382,"ttl":60,"isFallbackExperimentAssignment":true}
 Q5_DEV_DURING_LOGS [{"message":"Trying to dangerously get an ExperimentAssignment that hasn't loaded.","experimentName":"experiment_name_a","source":"dangerouslyGetExperimentAssignment-error"}]
-Q5_PROD_DURING_RESULT {"experimentName":"experiment_name_a","variationName":null,"retrievedTimestamp":1783486165866,"ttl":60,"isFallbackExperimentAssignment":true}
+Q5_PROD_DURING_RESULT {"experimentName":"experiment_name_a","variationName":null,"retrievedTimestamp":1783488500580,"ttl":60,"isFallbackExperimentAssignment":true}
 Q5_PROD_DURING_LOGS []
 Q5_MAYBE_BEFORE_RESULT null
 Q5_MAYBE_BEFORE_LOGS []
@@ -257,7 +280,7 @@ That is exactly what the captures show:
 
 located at [`packages/explat-client/src/create-explat-client.ts:L31-L37`] (the "will throw" claim is on `L32`). The runtime evidence above shows it **never throws** — it logs (in dev) and returns a fallback. Per the read-only constraint of this investigation, this discrepancy is **reported here and left unmodified**. It is corroborated by the corrected README — "It now logs and won't throw." [`packages/explat-client/README.md:L65`] — and the CHANGELOG entry "Change dangerouslyGetExperimentAssignment to log rather than throw" [`packages/explat-client/CHANGELOG.md:L21`]. So the *documentation contract* and *runtime behavior* agree that it will not throw; only the in-code docstring is stale.
 
-**React consumption context.** In practice the synchronous getter is consumed through the React binding. `useExperiment` starts the async load in an effect — `exPlatClient.loadExperimentAssignment( experimentName ).then( () => { ... forceUpdate(); } )` [`packages/explat-client-react-helpers/src/index.tsx:L75`] — and, on render, reads the **null-returning** synchronous getter `exPlatClient.dangerouslyGetMaybeLoadedExperimentAssignment( experimentName )` [`L99-L100`], returning `[ ! maybeExperimentAssignment, maybeExperimentAssignment ]` i.e. `[ isLoading, assignment | null ]` [`L101`]. So the React layer uses the `null`-returning variant (loading state = "no assignment yet"), not the fallback-returning `dangerouslyGetExperimentAssignment`. The real Calypso wiring constructs the client via `createExPlatClient( { fetchExperimentAssignment, getAnonId, logError, isDevelopmentMode } )` [`client/lib/explat/index.ts:L10-L15`]; its live wpcom fetch [`client/lib/explat/internals/fetch-experiment-assignment.ts`] is precisely the dependency that the injected `fetchExperimentAssignment` replaced throughout this investigation (the network was never called).
+**React consumption context.** In practice the synchronous getter is consumed through the React binding. `useExperiment` starts the async load in an effect — `exPlatClient.loadExperimentAssignment( experimentName ).then( () => { if ( isSubscribed ) { forceUpdate(); } } )` [`packages/explat-client-react-helpers/src/index.tsx:L75-L79`] — and, on render, reads the **null-returning** synchronous getter `exPlatClient.dangerouslyGetMaybeLoadedExperimentAssignment( experimentName )` [`L99-L100`], returning `[ ! maybeExperimentAssignment, maybeExperimentAssignment ]` i.e. `[ isLoading, assignment | null ]` [`L101`]. So the React layer uses the `null`-returning variant (loading state = "no assignment yet"), not the fallback-returning `dangerouslyGetExperimentAssignment`. The real Calypso wiring constructs the client via `createExPlatClient( { fetchExperimentAssignment, getAnonId, logError, isDevelopmentMode } )` [`client/lib/explat/index.ts:L10-L15`]; its live wpcom fetch [`client/lib/explat/internals/fetch-experiment-assignment.ts`] is precisely the dependency that the injected `fetchExperimentAssignment` replaced throughout this investigation (the network was never called).
 
 ---
 
@@ -268,23 +291,23 @@ located at [`packages/explat-client/src/create-explat-client.ts:L31-L37`] (the "
 | Condition / named item | Answered in | Observed evidence | Primary citation |
 |---|---|---|---|
 | Precondition: package tests passing | §1 | `9 passed / 81 passed / 23 passed` | `packages/explat-client/package.json:L25` |
-| Success (happy path) | §2 | `Q1_SUCCESS … variationName:"treatment", ttl:3600` | `create-explat-client.ts:L119-L150` |
-| Network failure (fetch rejects) | §2, §3a | `Q1_FAILURE_THREW false`; `Q2_REJECT_RESULT … null` | `create-explat-client.ts:L151-L182` |
-| Timeout (fetch too slow) | §3b | `Q2_TIMEOUT_RESULT … null`; `Promise has timed-out after 5000/10000ms.` | `timing.ts:L23-L36`; `create-explat-client.ts:L134-L138` |
-| Invalid experiment name | §2 | `Q1_INVALID … null` (no throw) | `validations.ts:L11-L13` |
-| Response object shape on failure | §3 | `{variationName:null, ttl:60, isFallbackExperimentAssignment:true}` | `experiment-assignments.ts:L25-L38` |
-| Variation assigned on failure | §3 | `variationName: null` ⇒ default/control experience | `README.md:L22-L23`; `experiment-assignments.ts:L34` |
-| Single vs concurrent callers | §4 | `Q3_SUCCESS N=100 fetchCount=1`; `Q3_FAILURE N=100 fetchCount=1` | `timing.ts:L44-L54`; `create-explat-client.ts:L82-L90` |
-| Cache hit within TTL | §5 | `Q4_WITHIN_TTL afterFirstLoad=1 after_100_more_reloads=1` | `experiment-assignments.ts:L8-L14` |
-| Cache expiry (after TTL) | §5 | `Q4_AFTER_TTL … countAfterExpiry=2` (61 s wait) | `create-explat-client.ts:L119-L145` |
-| TTL floor to 60 | §5 | `Q4_STORED … "ttl":60` (server returned 1) | `requests.ts:L93`; `experiment-assignments.ts:L21` |
-| Sync-get before load | §6 | `Q5_DEV_BEFORE_*`, `Q5_PROD_BEFORE_*` | `create-explat-client.ts:L214-L223` |
-| Sync-get during in-flight load | §6 | `Q5_DEV_DURING_*`, `Q5_PROD_DURING_*` | `create-explat-client.ts:L184-L224` |
-| Development vs production logging | §6 | dev logs `dangerouslyGetExperimentAssignment-error`; prod `[]` | `create-explat-client.ts:L215-L221` |
-| `dangerouslyGetMaybeLoadedExperimentAssignment` null contrast | §6 | `Q5_MAYBE_BEFORE_RESULT null` | `create-explat-client.ts:L234-L235` |
-| Out-of-browser construction throw (the one genuine throw) | §2 | `Q1_THROW Running outside of a browser context.` | `create-explat-client.ts:L72-L74` |
-| Stale docstring reported (not fixed) | §6 | docstring "will throw" vs runtime never-throws | `create-explat-client.ts:L31-L37` |
-| Never-throws contract corroborated | §2, §6 | README "Designed to never throw"; "now logs and won't throw" | `README.md:L44`, `L65` |
+| Success (happy path) | §2 | `Q1_SUCCESS … variationName:"treatment", ttl:3600` | `packages/explat-client/src/create-explat-client.ts:L119-L150` |
+| Network failure (fetch rejects) | §2, §3a | `Q1_FAILURE_THREW false`; `Q2_REJECT_RESULT … null` | `packages/explat-client/src/create-explat-client.ts:L151-L182` |
+| Timeout (fetch too slow) | §3b | `Q2_TIMEOUT_RESULT … null`; `Promise has timed-out after 5000/10000ms.` | `packages/explat-client/src/internal/timing.ts:L23-L36`; `packages/explat-client/src/create-explat-client.ts:L134-L138` |
+| Invalid experiment name | §2 | `Q1_INVALID … null` (no throw) | `packages/explat-client/src/internal/validations.ts:L11-L13` |
+| Response object shape on failure | §3 | `{variationName:null, ttl:60, isFallbackExperimentAssignment:true}` | `packages/explat-client/src/internal/experiment-assignments.ts:L25-L38` |
+| Variation assigned on failure | §3 | `variationName: null` ⇒ default/control experience | `packages/explat-client/README.md:L22-L23`; `packages/explat-client/src/internal/experiment-assignments.ts:L34` |
+| Single vs concurrent callers | §4 | `Q3_SUCCESS N=100 fetchCount=1`; `Q3_FAILURE N=100 fetchCount=1` | `packages/explat-client/src/internal/timing.ts:L44-L54`; `packages/explat-client/src/create-explat-client.ts:L82-L90` |
+| Cache hit within TTL | §5 | `Q4_WITHIN_TTL afterFirstLoad=1 after_100_more_reloads=1` | `packages/explat-client/src/internal/experiment-assignments.ts:L8-L14` |
+| Cache expiry (after TTL) | §5 | `Q4_AFTER_TTL … countAfterExpiry=2` (61 s wait) | `packages/explat-client/src/create-explat-client.ts:L119-L145` |
+| TTL floor to 60 | §5 | `Q4_STORED … "ttl":60` (server returned 1) | `packages/explat-client/src/internal/requests.ts:L93`; `packages/explat-client/src/internal/experiment-assignments.ts:L21` |
+| Sync-get before load | §6 | `Q5_DEV_BEFORE_*`, `Q5_PROD_BEFORE_*` | `packages/explat-client/src/create-explat-client.ts:L214-L223` |
+| Sync-get during in-flight load | §6 | `Q5_DEV_DURING_*`, `Q5_PROD_DURING_*` | `packages/explat-client/src/create-explat-client.ts:L184-L224` |
+| Development vs production logging | §6 | dev logs `dangerouslyGetExperimentAssignment-error`; prod `[]` | `packages/explat-client/src/create-explat-client.ts:L215-L221` |
+| `dangerouslyGetMaybeLoadedExperimentAssignment` null contrast | §6 | `Q5_MAYBE_BEFORE_RESULT null` | `packages/explat-client/src/create-explat-client.ts:L234-L235` |
+| Out-of-browser construction throw (the one genuine throw) | §2 | `Q1_THROW Running outside of a browser context.` | `packages/explat-client/src/create-explat-client.ts:L72-L74` |
+| Stale docstring reported (not fixed) | §6 | docstring "will throw" vs runtime never-throws | `packages/explat-client/src/create-explat-client.ts:L31-L37` |
+| Never-throws contract corroborated | §2, §6 | README "Designed to never throw"; "now logs and won't throw" | `packages/explat-client/README.md:L44`, `packages/explat-client/README.md:L65` |
 
 ### Node-version discrepancy (observed)
 
@@ -295,7 +318,7 @@ $ node --version
 v22.23.1
 ```
 
-The user-provided environment setup instruction references installing **Node 20.x**, which **fails** the repository's `engines.node = "^v22.9.0"` constraint [`package.json:engines.node`] and the pinned `.nvmrc = 22.9.0`. The repo canonically requires Node ≥ 22.9.0; the observed **v22.23.1** satisfies `^v22.9.0`, so all commands in this document were run on the repo-canonical Node line. (If Node 20.x were used, Yarn would reject the workspace on the `engines` check.)
+The user-provided environment setup instruction references installing **Node 20.x**, which **fails** the repository's `engines.node = "^v22.9.0"` constraint [`package.json:L57`] and the pinned `.nvmrc = 22.9.0` [`.nvmrc:L1`]. The repo canonically requires Node ≥ 22.9.0; the observed **v22.23.1** satisfies `^v22.9.0`, so all commands in this document were run on the repo-canonical Node line. (If Node 20.x were used, Yarn would reject the workspace on the `engines` check.)
 
 ### Scope of the findings
 
