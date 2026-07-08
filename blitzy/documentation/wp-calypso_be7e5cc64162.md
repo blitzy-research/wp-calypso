@@ -71,7 +71,7 @@ Ran all test suites.
 
 ## Section 2 — Q1: "I heard the client is designed to never throw exceptions, but I want to verify this."
 
-**Short answer.** Confirmed for the async load path: `loadExperimentAssignment` **resolves** (never rejects/throws) for success, network-failure, invalid-name, and timeout inputs. There is exactly **one** genuine throw in the whole surface — and it is *not* from `loadExperimentAssignment`: constructing the **browser** client outside a browser context throws `"Running outside of a browser context."`.
+**Short answer.** Confirmed for the async load path: `loadExperimentAssignment` **resolves** (never rejects/throws) for success, network-failure, invalid-name, and timeout inputs. There is exactly **one** genuine throw in the whole surface — and it is _not_ from `loadExperimentAssignment`: constructing the **browser** client outside a browser context throws `"Running outside of a browser context."`.
 
 **Command** (output filtered to the `Q1_`-prefixed observation lines):
 
@@ -193,7 +193,7 @@ Q3_FAILURE N=100 fetchCount=1 logCount=100 variation=null
 
 **Responsible function & cause→effect.** The fetch-and-store step is wrapped in **`Timing.asyncOneAtATime`** by **`createWrappedExperimentAssignmentFetchAndStore`** [`packages/explat-client/src/create-explat-client.ts:L82-L90`], and a per-experiment record ensures the wrapper is created once per experiment name [`L91-L94`, `L127-L132`]. `asyncOneAtATime` keeps a single `lastPromise`: the first caller invokes the wrapped function and stores its promise; every subsequent caller that arrives before it settles receives the **same** promise; once it settles, a `.finally` resets `lastPromise` to `null` [`packages/explat-client/src/internal/timing.ts:L44-L54`]. So 100 concurrent `loadExperimentAssignment('experiment_name_a')` calls share one in-flight fetch → `fetchCount = 1`.
 
-- **Success case:** all 100 callers resolve to the *same* stored assignment (`allIdentical = true`), and only one network call occurred.
+- **Success case:** all 100 callers resolve to the _same_ stored assignment (`allIdentical = true`), and only one network call occurred.
 - **Failure case:** still only **one** shared network call (`fetchCount = 1`). The shared fetch rejects once; each of the 100 callers then independently runs its own catch/fallback path — hence `logCount = 100` (each caller logs its own `loadExperimentAssignment-initialError`) and each receives a `variationName: null` fallback (`variation = null`). The single-network-call guarantee holds even when the request fails.
 
 **Scale & stability.** Observed at **N = 100** concurrent callers and confirmed **stable across 2 runs** (identical output both times).
@@ -278,7 +278,7 @@ That is exactly what the captures show:
 
 > "Get an already loaded Experiment Assignment, will throw if there is an error, e.g. if it hasn't been loaded."
 
-located at [`packages/explat-client/src/create-explat-client.ts:L31-L37`] (the "will throw" claim is on `L32`). The runtime evidence above shows it **never throws** — it logs (in dev) and returns a fallback. Per the read-only constraint of this investigation, this discrepancy is **reported here and left unmodified**. It is corroborated by the corrected README — "It now logs and won't throw." [`packages/explat-client/README.md:L65`] — and the CHANGELOG entry "Change dangerouslyGetExperimentAssignment to log rather than throw" [`packages/explat-client/CHANGELOG.md:L21`]. So the *documentation contract* and *runtime behavior* agree that it will not throw; only the in-code docstring is stale.
+located at [`packages/explat-client/src/create-explat-client.ts:L31-L37`] (the "will throw" claim is on `L32`). The runtime evidence above shows it **never throws** — it logs (in dev) and returns a fallback. Per the read-only constraint of this investigation, this discrepancy is **reported here and left unmodified**. It is corroborated by the corrected README — "It now logs and won't throw." [`packages/explat-client/README.md:L65`] — and the CHANGELOG entry "Change dangerouslyGetExperimentAssignment to log rather than throw" [`packages/explat-client/CHANGELOG.md:L21`]. So the _documentation contract_ and _runtime behavior_ agree that it will not throw; only the in-code docstring is stale.
 
 **React consumption context.** In practice the synchronous getter is consumed through the React binding. `useExperiment` starts the async load in an effect — `exPlatClient.loadExperimentAssignment( experimentName ).then( () => { if ( isSubscribed ) { forceUpdate(); } } )` [`packages/explat-client-react-helpers/src/index.tsx:L75-L79`] — and, on render, reads the **null-returning** synchronous getter `exPlatClient.dangerouslyGetMaybeLoadedExperimentAssignment( experimentName )` [`L99-L100`], returning `[ ! maybeExperimentAssignment, maybeExperimentAssignment ]` i.e. `[ isLoading, assignment | null ]` [`L101`]. So the React layer uses the `null`-returning variant (loading state = "no assignment yet"), not the fallback-returning `dangerouslyGetExperimentAssignment`. The real Calypso wiring constructs the client via `createExPlatClient( { fetchExperimentAssignment, getAnonId, logError, isDevelopmentMode } )` [`client/lib/explat/index.ts:L10-L15`]; its live wpcom fetch [`client/lib/explat/internals/fetch-experiment-assignment.ts`] is precisely the dependency that the injected `fetchExperimentAssignment` replaced throughout this investigation (the network was never called).
 
@@ -288,26 +288,26 @@ located at [`packages/explat-client/src/create-explat-client.ts:L31-L37`] (the "
 
 ### Coverage checklist (every condition the questions imply)
 
-| Condition / named item | Answered in | Observed evidence | Primary citation |
-|---|---|---|---|
-| Precondition: package tests passing | §1 | `9 passed / 81 passed / 23 passed` | `packages/explat-client/package.json:L25` |
-| Success (happy path) | §2 | `Q1_SUCCESS … variationName:"treatment", ttl:3600` | `packages/explat-client/src/create-explat-client.ts:L119-L150` |
-| Network failure (fetch rejects) | §2, §3a | `Q1_FAILURE_THREW false`; `Q2_REJECT_RESULT … null` | `packages/explat-client/src/create-explat-client.ts:L151-L182` |
-| Timeout (fetch too slow) | §3b | `Q2_TIMEOUT_RESULT … null`; `Promise has timed-out after 5000/10000ms.` | `packages/explat-client/src/internal/timing.ts:L23-L36`; `packages/explat-client/src/create-explat-client.ts:L134-L138` |
-| Invalid experiment name | §2 | `Q1_INVALID … null` (no throw) | `packages/explat-client/src/internal/validations.ts:L11-L13` |
-| Response object shape on failure | §3 | `{variationName:null, ttl:60, isFallbackExperimentAssignment:true}` | `packages/explat-client/src/internal/experiment-assignments.ts:L25-L38` |
-| Variation assigned on failure | §3 | `variationName: null` ⇒ default/control experience | `packages/explat-client/README.md:L22-L23`; `packages/explat-client/src/internal/experiment-assignments.ts:L34` |
-| Single vs concurrent callers | §4 | `Q3_SUCCESS N=100 fetchCount=1`; `Q3_FAILURE N=100 fetchCount=1` | `packages/explat-client/src/internal/timing.ts:L44-L54`; `packages/explat-client/src/create-explat-client.ts:L82-L90` |
-| Cache hit within TTL | §5 | `Q4_WITHIN_TTL afterFirstLoad=1 after_100_more_reloads=1` | `packages/explat-client/src/internal/experiment-assignments.ts:L8-L14` |
-| Cache expiry (after TTL) | §5 | `Q4_AFTER_TTL … countAfterExpiry=2` (61 s wait) | `packages/explat-client/src/create-explat-client.ts:L119-L145` |
-| TTL floor to 60 | §5 | `Q4_STORED … "ttl":60` (server returned 1) | `packages/explat-client/src/internal/requests.ts:L93`; `packages/explat-client/src/internal/experiment-assignments.ts:L21` |
-| Sync-get before load | §6 | `Q5_DEV_BEFORE_*`, `Q5_PROD_BEFORE_*` | `packages/explat-client/src/create-explat-client.ts:L214-L223` |
-| Sync-get during in-flight load | §6 | `Q5_DEV_DURING_*`, `Q5_PROD_DURING_*` | `packages/explat-client/src/create-explat-client.ts:L184-L224` |
-| Development vs production logging | §6 | dev logs `dangerouslyGetExperimentAssignment-error`; prod `[]` | `packages/explat-client/src/create-explat-client.ts:L215-L221` |
-| `dangerouslyGetMaybeLoadedExperimentAssignment` null contrast | §6 | `Q5_MAYBE_BEFORE_RESULT null` | `packages/explat-client/src/create-explat-client.ts:L234-L235` |
-| Out-of-browser construction throw (the one genuine throw) | §2 | `Q1_THROW Running outside of a browser context.` | `packages/explat-client/src/create-explat-client.ts:L72-L74` |
-| Stale docstring reported (not fixed) | §6 | docstring "will throw" vs runtime never-throws | `packages/explat-client/src/create-explat-client.ts:L31-L37` |
-| Never-throws contract corroborated | §2, §6 | README "Designed to never throw"; "now logs and won't throw" | `packages/explat-client/README.md:L44`, `packages/explat-client/README.md:L65` |
+| Condition / named item                                        | Answered in | Observed evidence                                                       | Primary citation                                                                                                           |
+| ------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Precondition: package tests passing                           | §1          | `9 passed / 81 passed / 23 passed`                                      | `packages/explat-client/package.json:L25`                                                                                  |
+| Success (happy path)                                          | §2          | `Q1_SUCCESS … variationName:"treatment", ttl:3600`                      | `packages/explat-client/src/create-explat-client.ts:L119-L150`                                                             |
+| Network failure (fetch rejects)                               | §2, §3a     | `Q1_FAILURE_THREW false`; `Q2_REJECT_RESULT … null`                     | `packages/explat-client/src/create-explat-client.ts:L151-L182`                                                             |
+| Timeout (fetch too slow)                                      | §3b         | `Q2_TIMEOUT_RESULT … null`; `Promise has timed-out after 5000/10000ms.` | `packages/explat-client/src/internal/timing.ts:L23-L36`; `packages/explat-client/src/create-explat-client.ts:L134-L138`    |
+| Invalid experiment name                                       | §2          | `Q1_INVALID … null` (no throw)                                          | `packages/explat-client/src/internal/validations.ts:L11-L13`                                                               |
+| Response object shape on failure                              | §3          | `{variationName:null, ttl:60, isFallbackExperimentAssignment:true}`     | `packages/explat-client/src/internal/experiment-assignments.ts:L25-L38`                                                    |
+| Variation assigned on failure                                 | §3          | `variationName: null` ⇒ default/control experience                      | `packages/explat-client/README.md:L22-L23`; `packages/explat-client/src/internal/experiment-assignments.ts:L34`            |
+| Single vs concurrent callers                                  | §4          | `Q3_SUCCESS N=100 fetchCount=1`; `Q3_FAILURE N=100 fetchCount=1`        | `packages/explat-client/src/internal/timing.ts:L44-L54`; `packages/explat-client/src/create-explat-client.ts:L82-L90`      |
+| Cache hit within TTL                                          | §5          | `Q4_WITHIN_TTL afterFirstLoad=1 after_100_more_reloads=1`               | `packages/explat-client/src/internal/experiment-assignments.ts:L8-L14`                                                     |
+| Cache expiry (after TTL)                                      | §5          | `Q4_AFTER_TTL … countAfterExpiry=2` (61 s wait)                         | `packages/explat-client/src/create-explat-client.ts:L119-L145`                                                             |
+| TTL floor to 60                                               | §5          | `Q4_STORED … "ttl":60` (server returned 1)                              | `packages/explat-client/src/internal/requests.ts:L93`; `packages/explat-client/src/internal/experiment-assignments.ts:L21` |
+| Sync-get before load                                          | §6          | `Q5_DEV_BEFORE_*`, `Q5_PROD_BEFORE_*`                                   | `packages/explat-client/src/create-explat-client.ts:L214-L223`                                                             |
+| Sync-get during in-flight load                                | §6          | `Q5_DEV_DURING_*`, `Q5_PROD_DURING_*`                                   | `packages/explat-client/src/create-explat-client.ts:L184-L224`                                                             |
+| Development vs production logging                             | §6          | dev logs `dangerouslyGetExperimentAssignment-error`; prod `[]`          | `packages/explat-client/src/create-explat-client.ts:L215-L221`                                                             |
+| `dangerouslyGetMaybeLoadedExperimentAssignment` null contrast | §6          | `Q5_MAYBE_BEFORE_RESULT null`                                           | `packages/explat-client/src/create-explat-client.ts:L234-L235`                                                             |
+| Out-of-browser construction throw (the one genuine throw)     | §2          | `Q1_THROW Running outside of a browser context.`                        | `packages/explat-client/src/create-explat-client.ts:L72-L74`                                                               |
+| Stale docstring reported (not fixed)                          | §6          | docstring "will throw" vs runtime never-throws                          | `packages/explat-client/src/create-explat-client.ts:L31-L37`                                                               |
+| Never-throws contract corroborated                            | §2, §6      | README "Designed to never throw"; "now logs and won't throw"            | `packages/explat-client/README.md:L44`, `packages/explat-client/README.md:L65`                                             |
 
 ### Node-version discrepancy (observed)
 
