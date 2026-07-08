@@ -123,7 +123,7 @@ Extra back-to-back warm run (cache still populated): `real 6.092s` / Jest `4.696
 - **Ratio:** **2.51–2.58× wall-clock (≈2.5×)**, **2.89–2.94× on Jest `Time` (≈2.9×)** — tightly stable across all three pairs.
 - **Cold−warm delta:** ~9.2–9.5s (`real`) / ~8.8–9.0s (Jest `Time`). This delta is the transpilation cost the cache later eliminates (see Parts 2 and 4).
 
-**Divergence from community figures (reported as observed):** public reports for large TypeScript suites frequently cite **20–30×** cold-vs-warm slowdowns. This small data-layer test does **not** reproduce that magnitude — the measured ratio is **~2.5×**. The observed value is reported as-is and **not** adjusted toward the community figure. The likely reason for the smaller ratio (inferred from code) is that a single 99-line test spends a fixed ~6s on process/worker startup, JSDOM setup, and the `setupFilesAfterEnv` framework, so the variable transpilation component (~9s) yields ~2.5× rather than the 20–30× seen when transpilation dominates a very large suite.
+**Divergence from community figures (reported as observed):** public reports for large TypeScript suites frequently cite **20–30×** cold-vs-warm slowdowns. This small data-layer test does **not** reproduce that magnitude — the measured ratio is **~2.5×**. The observed value is reported as-is and **not** adjusted toward the community figure. The likely reason for the smaller ratio (inferred from code) is that a single 99-line test spends a fixed ~6s on process/worker startup, the Node test-environment (`jest-environment-node`) setup (`packages/calypso-jest/jest-preset.js:L11` sets `testEnvironment: 'node'`, with no override in the client config), and the `setupFilesAfterEnv` framework, so the variable transpilation component (~9s) yields ~2.5× rather than the 20–30× seen when transpilation dominates a very large suite.
 
 ### 3.3 Verbatim output
 
@@ -291,6 +291,7 @@ module.exports = {
 	...base,
 	rootDir: '../../client',
 	cacheDirectory: path.join( __dirname, '../../.cache/jest' ),
+	testPathIgnorePatterns: [ '<rootDir>/server/' ],
 ```
 
 `__dirname` is `test/client/`, so `path.join( __dirname, '../../.cache/jest' )` resolves to **`<repo-root>/.cache/jest`**. That path is gitignored, so cache writes never touch tracked files:
@@ -630,7 +631,7 @@ sys	0m2.262s
 | Cold (empty cache) | ~15.2–15.5s     | ~13.45–13.68s   | ~2.5×            |
 
 - **`--no-cache` vs warm:** `real` **~2.64×** slower (+~9.8s); on Jest `Time` **~3.0×** (~14.0s vs ~4.66s).
-- **`--no-cache` vs cold:** **comparable** — the uncached run lands right on top of the cold run (in these measurements it is marginally higher, within noise). Both must transpile the full source graph; the small difference is that `--no-cache` avoids the persistent cache/haste-map disk writes but pays the transpilation each time.
+- **`--no-cache` vs cold:** **comparable** — the uncached run lands right on top of the cold run (in these measurements it is marginally higher, within noise). Both must transpile the full source graph; the difference is that `--no-cache` disables cache **reads** (forcing full re-transpilation on every run — confirmed by consecutive `--no-cache` runs never speeding up) but still **writes** the transform cache and haste-map to disk. The tiny `--no-cache`-vs-cold gap is run-to-run noise, not write-avoidance.
 
 This is the key confirmation: the warm speedup is **entirely** the reuse of cached transforms. Remove the cache (`--no-cache`) and the run reverts to cold-run cost.
 
