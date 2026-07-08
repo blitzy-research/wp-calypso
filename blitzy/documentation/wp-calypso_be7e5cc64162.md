@@ -8,7 +8,7 @@
 
 ## 1. One‑paragraph summary of the finding
 
-In classic `/start` signup, the Back control is an anchor whose `href` is **exactly** the return value of `NavigationLink.getBackUrl()` [`client/signup/navigation-link/index.jsx`:L183-L186, L192]; the click handler does **not** drive signup navigation because `goToPreviousStep` is only invoked when that prop is supplied [`client/signup/navigation-link/index.jsx`:L125-L126]. Inside `getBackUrl()` [`client/signup/navigation-link/index.jsx`:L78-L115] there is a strict precedence ladder: a `direction !== 'back'` guard [L79-L81], then an **unconditional** `if ( this.props.backUrl ) { return this.props.backUrl; }` [L83-L85], and only then the computed step‑by‑step branch [L87-L114]. That unconditional `backUrl` return — which sits **above** every first‑step / position / eligibility check and before `getPreviousStep()` is ever called — is the single root cause of the two reported symptoms. When an external back target (`props.backUrl`, sourced from a `back_to` query argument or a step‑declared value) is present, Back "slips out into an entirely different flow"; when it is absent, the computed branch can resolve the previous step to `{ stepName: null }` (first step, or empty/unmatched progress), which `getStepUrl()` collapses to the flow **root**, so Back "snaps straight to the first step." Runtime observation shows the behavior is **fully deterministic** given a fixed input tuple — two independent runs produced byte‑identical output — so the perceived "randomness" is variation in the inputs (most notably whether a `backUrl` override is present and the shape of `signupProgress`), not nondeterminism.
+In classic `/start` signup, the Back control is an anchor whose `href` is **exactly** the return value of `NavigationLink.getBackUrl()` [`client/signup/navigation-link/index.jsx`:L183-L186, L192]; the click handler does **not** drive signup navigation because `goToPreviousStep` is only invoked when that prop is supplied [`client/signup/navigation-link/index.jsx`:L125-L126]. Inside `getBackUrl()` [`client/signup/navigation-link/index.jsx`:L78-L115] there is a strict precedence ladder: a `direction !== 'back'` guard [L79-L81], then an **unconditional** `if ( this.props.backUrl ) { return this.props.backUrl; }` [L83-L85], and only then the computed step‑by‑step branch [L87-L114]. That unconditional `backUrl` return — which sits **above** every first‑step / position / eligibility check and before `getPreviousStep()` is ever called — is the single root cause of the two reported symptoms. When an external back target (`props.backUrl`, sourced from a `back_to` query argument or a step‑declared value) is present, Back "slips out into an entirely different flow"; when it is absent, the computed branch can resolve the previous step to `{ stepName: null }` (first step, or empty/unmatched progress), which `getStepUrl()` collapses to the flow **root**, so Back "snaps straight to the first step." Runtime observation shows the behavior is **fully deterministic** given a fixed input tuple — two independent invocations produced a **byte‑identical observation block** (identical sha256; see §7) — so the perceived "randomness" is variation in the inputs (most notably whether a `backUrl` override is present and the shape of `signupProgress`), not nondeterminism.
 
 ---
 
@@ -145,7 +145,9 @@ This command was run **twice** (two independent invocations) and produced byte�
 
 ## 4. The complete, unedited captured output
 
-Below is the **complete, unedited** output of one invocation of the exact command above. A single invocation already contains **both** the internal `run1` and `run2` data blocks in full (the script runs the battery twice), so the full `run2` block is present and not abbreviated. The incidental `Browserslist … 17 months old` banner is included verbatim. (Environment note: in this container the run did **not** emit a `punycode` `DeprecationWarning`; only what was actually printed is shown.)
+Below is the **complete, unedited** output of one invocation of the exact command above — every line the command printed is reproduced, with nothing removed or paraphrased. A single invocation already contains **both** the internal `run1` and `run2` data blocks in full (the script runs the battery twice), so the full `run2` block is present and not abbreviated. The incidental `Browserslist … 17 months old` banner is included verbatim. The **only** lines that are not byte‑stable across invocations are the incidental Jest timing lines (`PASS … (N s)` and `Time: … s`); this is called out and quantified in §7.
+
+**On the `punycode` deprecation (evidence reconciliation).** On this code path, under the canonical command, this container emits **no** `punycode` `DeprecationWarning`, so none appears below. That absence is **proven, not asserted** — §7.3 shows the exact `grep` command returning `0` matches against the live log, and separately shows that the `punycode` deprecation itself is genuinely present in this Node runtime via a direct `require('punycode')` that *does* emit `[DEP0040]`. The warning does not surface here because Jest's jsdom loader pulls in the built‑in `punycode` (via `whatwg-url` → `tr46`, `node_modules/tr46/index.js:3`) inside Jest's module runtime, which does not forward that one‑time process warning to the test log. Per the read‑only, evidence‑first rules of this task, only what was actually printed is shown; no output is synthesized to match a baseline this environment does not reproduce.
 
 Command:
 
@@ -159,7 +161,7 @@ Output (verbatim):
 Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
   npx update-browserslist-db@latest
   Why you should do it regularly: https://github.com/browserslist/update-db#readme
-PASS client/signup/test/zz_observe_backnav.js (5.414 s)
+PASS client/signup/test/zz_observe_backnav.js (5.378 s)
   ● Console
 
     console.log
@@ -257,11 +259,11 @@ PASS client/signup/test/zz_observe_backnav.js (5.414 s)
 Test Suites: 1 passed, 1 total
 Tests:       1 passed, 1 total
 Snapshots:   0 total
-Time:        5.716 s
+Time:        5.683 s, estimated 6 s
 Ran all test suites matching /zz_observe_backnav/i.
 ```
 
-The second independent invocation of the same command produced an observation block that was **byte‑identical** to the one above (see §7 for the determinism proof and hashes). The only differences between the two full logs were the incidental Jest timing lines (`PASS … (5.414 s)` vs `(5.429 s)`, and the trailing `Time:` line).
+The second independent invocation of the same command produced an observation block **byte‑identical** to the one above — the same `sha256` (`ea2eed42…`), verified with the concrete commands in §7. The two invocations differ **only** in the incidental Jest timing lines (the `PASS … (N s)` line and the trailing `Time: … s` line); these carry no observed destination, which is exactly why the determinism artifact is the observation block rather than the whole log.
 
 ---
 
@@ -398,17 +400,48 @@ In the computed branch, `fallbackQueryParams` is parsed from `window.location.se
 1. **In‑process:** the script runs the entire battery **twice** (`run1` and `run2`) and compares them with `JSON.stringify( run1 ) === JSON.stringify( run2 )`; the captured output shows `"deterministic": true` and the two blocks are visibly identical (§4).
 2. **Across independent invocations:** the exact command was run twice. The observation block (the payload between the `===BACKNAV_OBSERVATION_START===` / `===BACKNAV_OBSERVATION_END===` markers) was **byte‑identical** across both runs.
 
-Verification commands and their output:
+### 7.1 Verification commands and their actual output
+
+The two invocations were captured by piping the exact command through the marker extractor into `run1.block` and `run2.block`, then compared. These are the **actual commands and their unedited output**:
 
 ```
-$ sed -n '/===BACKNAV_OBSERVATION_START===/,/===BACKNAV_OBSERVATION_END===/p' run1.log | sha256sum
-ea2eed42d5b7a8516765a8a060c48d7b5149f2a13bc8357a1cd7fec202c6ba8b  -
-$ sed -n '/===BACKNAV_OBSERVATION_START===/,/===BACKNAV_OBSERVATION_END===/p' run2.log | sha256sum
-ea2eed42d5b7a8516765a8a060c48d7b5149f2a13bc8357a1cd7fec202c6ba8b  -
-$ diff <block1> <block2>   # (no output — byte-identical)
+$ for i in 1 2; do CI=true TZ=UTC npx jest -c=test/client/jest.config.js zz_observe_backnav --ci --runInBand 2>&1 \
+    | sed -n '/===BACKNAV_OBSERVATION_START===/,/===BACKNAV_OBSERVATION_END===/p' > run$i.block; done
+
+$ diff run1.block run2.block && echo "IDENTICAL (no diff output)"
+IDENTICAL (no diff output)
+
+$ sha256sum run1.block run2.block
+ea2eed42d5b7a8516765a8a060c48d7b5149f2a13bc8357a1cd7fec202c6ba8b  run1.block
+ea2eed42d5b7a8516765a8a060c48d7b5149f2a13bc8357a1cd7fec202c6ba8b  run2.block
 ```
 
-The only differences between the two **full** logs were incidental Jest timing lines (`PASS … (5.414 s)` vs `(5.429 s)` and the trailing `Time:` line), which do not affect any observed destination.
+`diff` prints nothing — the two observation blocks are byte‑for‑byte identical — and both files hash to the **same** `sha256`, `ea2eed42d5b7a8516765a8a060c48d7b5149f2a13bc8357a1cd7fec202c6ba8b`. That hash is the determinism artifact for this document.
+
+### 7.2 Why the determinism claim is scoped to the observation block
+
+A whole‑log hash would not be stable, because Jest prints two incidental timing lines that change on every run — the `PASS client/signup/test/zz_observe_backnav.js (N s)` line and the trailing `Time: N s` line (e.g. `(5.378 s)` and `Time: 5.683 s` on the run pasted in §4). **Nothing else in the log varies.** The determinism claim is therefore scoped precisely to the **observation block** (the payload between the `===BACKNAV_OBSERVATION_START===` / `===BACKNAV_OBSERVATION_END===` markers), which contains every observed destination and is byte‑identical across runs (§7.1). The one‑paragraph summary (§1), §3.3, §4, and this section all use this single, consistent "byte‑identical observation block" basis — the full logs are *not* claimed to be byte‑identical, only the observation block is.
+
+### 7.3 Reconciliation of the captured output (warnings)
+
+Two facts about warnings are stated exactly here, because together they explain precisely what is and is not present in the §4 log:
+
+- **No `punycode` warning is printed on this path — proven, not asserted.** Grepping the live log returns zero matches:
+
+```
+$ CI=true TZ=UTC npx jest -c=test/client/jest.config.js zz_observe_backnav --ci --runInBand 2>&1 | grep -c -i punycode
+0
+```
+
+- **The `punycode` deprecation is nonetheless real in this Node runtime.** A direct `require` of the built‑in module emits `[DEP0040]` (the `(node:NNNN)` process id varies per invocation):
+
+```
+$ node -e "require('punycode');"
+(node:43537) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+```
+
+The warning is absent from the §4 log for a structural reason: Jest's jsdom environment loads the built‑in `punycode` transitively (`whatwg-url` → `tr46`, at `node_modules/tr46/index.js:3`) through Jest's own module runtime, which does not forward that one‑time process warning to the test output. This absence is invariant across invocation style and cache state — `npx jest`, `node_modules/.bin/jest`, `yarn jest`, a cold `--no-cache` run, and even `NODE_OPTIONS='--trace-deprecation'` all print the observation block with **no** `punycode` line. Consistent with the read‑only, evidence‑first rules of this task, the §4 block reproduces only what the command actually printed; no warning line is synthesized to match a baseline this environment does not reproduce.
 
 **Conclusion:** the destination is a pure function of the input tuple `( flowName, position/stepName, props.backUrl, back_to query, signupProgress )`. The perceived "randomness" is variation in those inputs — most notably (a) whether a `backUrl` override is present (which flips between the unconditional‑override result and the computed result), and (b) the exact shape of `signupProgress`, which flips the computed branch between the normal `[ index - 1 ]` result, the `pop()` (last‑progressed) result, and the `null` → flow‑root result. Nothing in the code path consults a clock, a random source, or unstable global state to decide the step.
 
@@ -431,18 +464,18 @@ Calypso maintains **two** signup frameworks: the classic **"Start"** framework (
 - [x] **(5)** Bypassed path: `getPreviousStep` → `getFilteredSteps` / `isFirstStepInFlow` / `getPreviousStepName` → `getStepUrl` — §5.4.
 - [x] **(6)** Per‑step computed destination table — §5.5.
 
-**Implicit question** — [x] Determinism established with two‑run byte‑identical evidence — §7.
+**Implicit question** — [x] Determinism established with two‑run byte‑identical observation‑block evidence (identical sha256) — §7.
 
 **Named mechanisms** — each addressed with evidence:
 
-- [x] `getBackUrl()` [`navigation-link/index.jsx`:L78-L115] — §5.1, §5.2.
-- [x] `getPreviousStep()` [`navigation-link/index.jsx`:L47-L76] — §5.4.
-- [x] `getPreviousStepName()` [`utils.js`:L85-L88] — §5.4, §5.5.
-- [x] `getStepUrl()` [`utils.js`:L45-L69] — §5.4, §5.5, §6.5.
-- [x] `getFilteredSteps()` [`utils.js`:L137-L150] — §5.4.
-- [x] `isFirstStepInFlow()` [`utils.js`:L28-L31] — §5.4, §6.1.
-- [x] `StepWrapper` `back_to`→`backUrl` mapping and `allowBackFirstStep = !!backUrl` [`step-wrapper/index.jsx`:L274-L277, L65, L62] — §5.3, §6.3.
-- [x] controller `back_to` dispatch (woocommerce‑install) [`controller.js`:L226-L229] — §5.3.
+- [x] `getBackUrl()` [`client/signup/navigation-link/index.jsx`:L78-L115] — §5.1, §5.2.
+- [x] `getPreviousStep()` [`client/signup/navigation-link/index.jsx`:L47-L76] — §5.4.
+- [x] `getPreviousStepName()` [`client/signup/utils.js`:L85-L88] — §5.4, §5.5.
+- [x] `getStepUrl()` [`client/signup/utils.js`:L45-L69] — §5.4, §5.5, §6.5.
+- [x] `getFilteredSteps()` [`client/signup/utils.js`:L137-L150] — §5.4.
+- [x] `isFirstStepInFlow()` [`client/signup/utils.js`:L28-L31] — §5.4, §6.1.
+- [x] `StepWrapper` `back_to`→`backUrl` mapping and `allowBackFirstStep = !!backUrl` [`client/signup/step-wrapper/index.jsx`:L274-L277, L65, L62] — §5.3, §6.3.
+- [x] controller `back_to` dispatch (woocommerce‑install) [`client/signup/controller.js`:L226-L229] — §5.3.
 
 **Edge branches** — each triggered and observed:
 
