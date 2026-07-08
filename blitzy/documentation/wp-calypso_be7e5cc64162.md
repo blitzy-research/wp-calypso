@@ -175,9 +175,10 @@ for clean capture. They were run with:
 yarn jest -c test/packages/jest.config.js packages/state-utils/src/create-selector/test/probe_cs_TEMP.js packages/tree-select/test/probe_ts_TEMP.js
 ```
 
-The command was executed **twice**; the substantive probe output was **identical** across both
-runs (the only run-to-run difference was the cosmetic order in which the two parallel suites
-printed, plus `Time`). The full scripts and full unedited output are reproduced in the
+The command was executed **twice**; the output was **identical across both runs except the
+single Jest `Time:` line** (wall-clock timing only — the suite print order was stable,
+`createSelector` then `treeSelect`). The full scripts and the **complete, unedited** output of
+**both** runs (including all Jest wrapper output and suite totals) are reproduced in the
 [Appendix](#appendix). Each answer below quotes the relevant slice. The probes were **deleted**
 after capture — see [§5 Cleanup](#5-cleanup--repository-left-unchanged).
 
@@ -744,12 +745,33 @@ as "unexpected caching behavior." This is documented as an observation only.
 
 ## 5. Cleanup — repository left unchanged
 
-This was a read-only investigation. The two temporary probe specs
+This was a strictly read-only investigation. The two temporary probe specs
 (`packages/state-utils/src/create-selector/test/probe_cs_TEMP.js` and
-`packages/tree-select/test/probe_ts_TEMP.js`) were **deleted** after their output was captured.
-After cleanup, `git status --porcelain` reports **only** this new document as an untracked file
-(installed `node_modules` is git-ignored and does not count as a change); no tracked source, test,
-README, config, or manifest was modified.
+`packages/tree-select/test/probe_ts_TEMP.js`) were created only to capture the output in
+[§A.5](#a5-complete-unedited-probe-output) and were **deleted** immediately afterward; they are
+**absent** from the repository. No tracked source, test, README, config, or manifest file was
+modified — the only change this investigation contributes is the addition of **this one
+document**.
+
+Final repository state (this deliverable is committed on the branch):
+
+- **The working tree is clean** — `git status --porcelain` prints nothing (installed
+  `node_modules` and the `.cache/` Jest transform cache are git-ignored and are not tracked
+  changes).
+- **The baseline-to-HEAD diff contains exactly one added file** — `git diff --name-status
+  be7e5cc641..HEAD` reports precisely:
+
+  ```text
+  A	blitzy/documentation/wp-calypso_be7e5cc64162.md
+  ```
+
+- **The temporary probe scripts are absent** — no `probe_cs_TEMP.js` / `probe_ts_TEMP.js` (nor
+  any other `*_TEMP.*` observation artifact) remains anywhere in the tracked tree.
+
+For transparency: while the investigation was in progress, before this document was committed,
+`git status --porcelain` briefly showed the file as a single untracked entry. That was a
+transient pre-commit state; the final, committed condition is the clean working tree described
+above.
 
 ---
 
@@ -1110,10 +1132,289 @@ test( 'treeSelect probe Q1..Q6', () => {
 
 ### A.5 Complete, unedited probe output
 
-Both probes were run **twice**; the substantive content below was identical across both runs
-(the only run-to-run variation was the parallel print-order of the two suite blocks and the
-`Time` value). Each run reported `Test Suites: 2 passed, 2 total` / `Tests: 2 passed, 2 total`.
-The blocks below are the exact `console.log` content emitted by each probe.
+Both temporary probes were recreated on the real package entry points and executed with the
+exact command below, **twice**, capturing the complete merged `stdout`+`stderr` each time. Both
+runs exited `0` and reported `Test Suites: 2 passed, 2 total` / `Tests: 2 passed, 2 total`. The
+two runs were **byte-identical except a single line** — the Jest `Time:` value (wall-clock
+timing) — as the `diff` in §A.5.3 shows; the suite print order was stable (`createSelector`
+first, then `treeSelect`) in both. The **complete, unedited** output of each run is reproduced
+verbatim below, including the pre-existing global-harness warnings (`jest-haste-map` duplicate
+mock + `Browserslist`), the Jest `● Console` / `console.log` prefixes and `at Object.log (…)`
+stack lines, the `PASS` lines, and the suite/test totals.
+
+**Exact command (run twice):**
+
+```bash
+yarn jest -c test/packages/jest.config.js packages/state-utils/src/create-selector/test/probe_cs_TEMP.js packages/tree-select/test/probe_ts_TEMP.js
+```
+
+#### A.5.1 Run 1 — complete, unedited output
+
+```text
+jest-haste-map: duplicate manual mock found: wpcom-proxy-request
+  The following files share their name; please delete one of them:
+    * <rootDir>/src/__mocks__/wpcom-proxy-request.js
+    * <rootDir>/dist/cjs/__mocks__/wpcom-proxy-request.js
+
+jest-haste-map: duplicate manual mock found: wpcom-proxy-request
+  The following files share their name; please delete one of them:
+    * <rootDir>/dist/cjs/__mocks__/wpcom-proxy-request.js
+    * <rootDir>/dist/esm/__mocks__/wpcom-proxy-request.js
+
+Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+PASS packages/state-utils/src/create-selector/test/probe_cs_TEMP.js
+  ● Console
+
+    console.log
+      
+      ===== createSelector PROBE =====
+      process.env.NODE_ENV = "test"
+      
+      ----- Q1: hit vs miss -----
+      same state ref + same arg, 2 calls => selector calls = 1 (expect 1: cache HIT)
+      same state ref, NEW arg 38303081 => selector calls = 2 (expect 2: new args.join key)
+      NEW state.posts reference, arg 2916284 => selector calls = 3 (expect 3: isShallowEqual false => cache.clear then recompute)
+      
+      ----- Q2: call counts (SCALE stated) -----
+      HIT path: N = 1000 identical calls => selector calls = 1 (expect 1)
+      MISS path: N = 1000 distinct arg keys (same state) => selector calls = 1000 (expect 1000 )
+      RECOMPUTE-after-dependant-change: 2 calls, arg fixed, posts ref changed => selector calls = 2 (expect 2)
+      
+      ----- Q3: per-arg entries, whole-cache flush, STALE -----
+      after calling args 2916284 & 38303081 (same state):
+        cache.has('2916284') = true
+        cache.has('38303081') = true (=> SEPARATE per-arg entries coexist)
+      after ONE dependant change (new posts ref), a single arg call:
+        cache.has('2916284') = true (recomputed key present)
+        cache.has('38303081') = false (=> the OTHER arg entry was FLUSHED by whole-cache clear)
+      
+      STALE reproduction (in-place mutation, dependants stay reference-equal):
+        r1 (before mutation) = [{"ID":1,"site_ID":100,"title":"first"}]
+        r2 (after in-place add of a 2nd matching post) = [{"ID":1,"site_ID":100,"title":"first"}]
+        r1 === r2 ? true   staleSelector calls = 1 (=> STALE: change invisible, selector NOT re-run)
+        after IMMUTABLE replace: r3 = [{"ID":1,"site_ID":100,"title":"first"},{"ID":2,"site_ID":100,"title":"second (added after r1)"}]  staleSelector calls = 2 (=> fresh)
+      
+      ----- Q4: programmatic clearing (memoizedSelector.cache.clear) -----
+      BEFORE clear: cache.has('2916284') = true  selector calls = 1
+      AFTER  clear: cache.has('2916284') = false
+      after clear, same call again => selector calls = 2 (=> recomputed)
+      
+      ----- Q5: nullish vs primitive dependants (createSelector) -----
+        getDependants -> null: threw = null  selector calls(2 identical) = 1 (expect no throw, 1 call)
+        getDependants -> undefined: threw = null  selector calls(2 identical) = 1 (expect no throw, 1 call)
+        getDependants -> number 5: threw = null  selector calls(2 identical) = 1 (expect no throw, 1 call)
+        getDependants -> boolean true: threw = null  selector calls(2 identical) = 1 (expect no throw, 1 call)
+        dependant null -> undefined (arg fixed): selector calls = 2 (expect 2: null !== undefined under ===, cache busts)
+      
+      ----- Q6: custom cache keys / complex args -----
+      default key, 9 calls w/ mixed args => warn (@wordpress/warning) calls = 3 (expect 3: {}, [], and [] in (1,[]))
+      warn message[0] = "Do not pass complex objects as arguments for a memoized selector"
+      custom key (state, siteId) => 'CUSTOM'+siteId : cache.has('CUSTOM2916284') = true (expect true)
+      
+      ===== END createSelector PROBE =====
+
+      at Object.log (src/create-selector/test/probe_cs_TEMP.js:163:10)
+
+PASS packages/tree-select/test/probe_ts_TEMP.js
+  ● Console
+
+    console.log
+      
+      ===== treeSelect PROBE =====
+      process.env.NODE_ENV = "test"
+      
+      ----- Q1: hit vs miss -----
+      same posts ref + same arg, 2 calls => selector calls = 1 (expect 1: WeakMap leaf HIT)
+      same posts ref, NEW arg site2 => selector calls = 2 (expect 2: leaf Map key from args.join)
+      NEW posts reference, arg site1 => selector calls = 3 (expect 3: dependent identity changed => fresh WeakMap branch)
+      
+      ----- Q2: call counts (SCALE stated) -----
+      HIT path: N = 1000 identical calls => selector calls = 1 (expect 1)
+      MISS path: N = 1000 distinct arg keys (same dependent) => selector calls = 1000 (expect 1000 )
+      RECOMPUTE-after-dependent-change: 2 calls, arg fixed, posts ref changed => selector calls = 2 (expect 2)
+      
+      ----- Q3: unique dependents coexist simultaneously -----
+      calls id1,id2,id1 => selector calls = 2 (expect 2: BOTH dependent branches retained simultaneously; id1 re-hit)
+      note: old dependent branches are evicted ONLY by GC of the WeakMap (not observable synchronously)
+      
+      ----- Q4: clearCache() -----
+      BEFORE clear: memoizedResult === firstResult ? true  selector calls = 1 (expect true, 1)
+      AFTER  clearCache(): afterClearResult === firstResult ? false  selector calls = 2 (expect false, 2 => fresh WeakMap, recompute)
+      
+      ----- Q5: nullish vs primitive dependents -----
+      dependent null THEN undefined => selector calls = 1 (expect 1: null & undefined SHARE NULLISH_KEY)
+        dependent = null => OK (memoized)
+        dependent = undefined => OK (memoized)
+        dependent = number 1 => THREW "TypeError: key must be an object, `null`, or `undefined`"
+        dependent = boolean true => THREW "TypeError: key must be an object, `null`, or `undefined`"
+        dependent = string a => THREW "TypeError: key must be an object, `null`, or `undefined`"
+        dependent = number 0 => THREW "TypeError: key must be an object, `null`, or `undefined`"
+        dependent = boolean false => THREW "TypeError: key must be an object, `null`, or `undefined`"
+      
+      ----- Q6: custom cache keys / object args -----
+      default key + object arg => "Error: Do not pass objects as arguments to a treeSelector"
+      custom getCacheKey (query)=>key:query.siteId : firstResult === secondResult ? true (expect true: distinct objects, same generated key)
+      firstResult = [{"id":"id1","text":"post 1","siteId":"site1"},{"id":"id2","text":"post 2","siteId":"site1"}]
+      
+      ===== END treeSelect PROBE =====
+
+      at Object.log (test/probe_ts_TEMP.js:146:10)
+
+
+Test Suites: 2 passed, 2 total
+Tests:       2 passed, 2 total
+Snapshots:   0 total
+Time:        1.046 s
+Ran all test suites matching /packages\/state-utils\/src\/create-selector\/test\/probe_cs_TEMP.js|packages\/tree-select\/test\/probe_ts_TEMP.js/i in 2 projects.
+```
+
+#### A.5.2 Run 2 — complete, unedited output
+
+```text
+jest-haste-map: duplicate manual mock found: wpcom-proxy-request
+  The following files share their name; please delete one of them:
+    * <rootDir>/src/__mocks__/wpcom-proxy-request.js
+    * <rootDir>/dist/cjs/__mocks__/wpcom-proxy-request.js
+
+jest-haste-map: duplicate manual mock found: wpcom-proxy-request
+  The following files share their name; please delete one of them:
+    * <rootDir>/dist/cjs/__mocks__/wpcom-proxy-request.js
+    * <rootDir>/dist/esm/__mocks__/wpcom-proxy-request.js
+
+Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+PASS packages/state-utils/src/create-selector/test/probe_cs_TEMP.js
+  ● Console
+
+    console.log
+      
+      ===== createSelector PROBE =====
+      process.env.NODE_ENV = "test"
+      
+      ----- Q1: hit vs miss -----
+      same state ref + same arg, 2 calls => selector calls = 1 (expect 1: cache HIT)
+      same state ref, NEW arg 38303081 => selector calls = 2 (expect 2: new args.join key)
+      NEW state.posts reference, arg 2916284 => selector calls = 3 (expect 3: isShallowEqual false => cache.clear then recompute)
+      
+      ----- Q2: call counts (SCALE stated) -----
+      HIT path: N = 1000 identical calls => selector calls = 1 (expect 1)
+      MISS path: N = 1000 distinct arg keys (same state) => selector calls = 1000 (expect 1000 )
+      RECOMPUTE-after-dependant-change: 2 calls, arg fixed, posts ref changed => selector calls = 2 (expect 2)
+      
+      ----- Q3: per-arg entries, whole-cache flush, STALE -----
+      after calling args 2916284 & 38303081 (same state):
+        cache.has('2916284') = true
+        cache.has('38303081') = true (=> SEPARATE per-arg entries coexist)
+      after ONE dependant change (new posts ref), a single arg call:
+        cache.has('2916284') = true (recomputed key present)
+        cache.has('38303081') = false (=> the OTHER arg entry was FLUSHED by whole-cache clear)
+      
+      STALE reproduction (in-place mutation, dependants stay reference-equal):
+        r1 (before mutation) = [{"ID":1,"site_ID":100,"title":"first"}]
+        r2 (after in-place add of a 2nd matching post) = [{"ID":1,"site_ID":100,"title":"first"}]
+        r1 === r2 ? true   staleSelector calls = 1 (=> STALE: change invisible, selector NOT re-run)
+        after IMMUTABLE replace: r3 = [{"ID":1,"site_ID":100,"title":"first"},{"ID":2,"site_ID":100,"title":"second (added after r1)"}]  staleSelector calls = 2 (=> fresh)
+      
+      ----- Q4: programmatic clearing (memoizedSelector.cache.clear) -----
+      BEFORE clear: cache.has('2916284') = true  selector calls = 1
+      AFTER  clear: cache.has('2916284') = false
+      after clear, same call again => selector calls = 2 (=> recomputed)
+      
+      ----- Q5: nullish vs primitive dependants (createSelector) -----
+        getDependants -> null: threw = null  selector calls(2 identical) = 1 (expect no throw, 1 call)
+        getDependants -> undefined: threw = null  selector calls(2 identical) = 1 (expect no throw, 1 call)
+        getDependants -> number 5: threw = null  selector calls(2 identical) = 1 (expect no throw, 1 call)
+        getDependants -> boolean true: threw = null  selector calls(2 identical) = 1 (expect no throw, 1 call)
+        dependant null -> undefined (arg fixed): selector calls = 2 (expect 2: null !== undefined under ===, cache busts)
+      
+      ----- Q6: custom cache keys / complex args -----
+      default key, 9 calls w/ mixed args => warn (@wordpress/warning) calls = 3 (expect 3: {}, [], and [] in (1,[]))
+      warn message[0] = "Do not pass complex objects as arguments for a memoized selector"
+      custom key (state, siteId) => 'CUSTOM'+siteId : cache.has('CUSTOM2916284') = true (expect true)
+      
+      ===== END createSelector PROBE =====
+
+      at Object.log (src/create-selector/test/probe_cs_TEMP.js:163:10)
+
+PASS packages/tree-select/test/probe_ts_TEMP.js
+  ● Console
+
+    console.log
+      
+      ===== treeSelect PROBE =====
+      process.env.NODE_ENV = "test"
+      
+      ----- Q1: hit vs miss -----
+      same posts ref + same arg, 2 calls => selector calls = 1 (expect 1: WeakMap leaf HIT)
+      same posts ref, NEW arg site2 => selector calls = 2 (expect 2: leaf Map key from args.join)
+      NEW posts reference, arg site1 => selector calls = 3 (expect 3: dependent identity changed => fresh WeakMap branch)
+      
+      ----- Q2: call counts (SCALE stated) -----
+      HIT path: N = 1000 identical calls => selector calls = 1 (expect 1)
+      MISS path: N = 1000 distinct arg keys (same dependent) => selector calls = 1000 (expect 1000 )
+      RECOMPUTE-after-dependent-change: 2 calls, arg fixed, posts ref changed => selector calls = 2 (expect 2)
+      
+      ----- Q3: unique dependents coexist simultaneously -----
+      calls id1,id2,id1 => selector calls = 2 (expect 2: BOTH dependent branches retained simultaneously; id1 re-hit)
+      note: old dependent branches are evicted ONLY by GC of the WeakMap (not observable synchronously)
+      
+      ----- Q4: clearCache() -----
+      BEFORE clear: memoizedResult === firstResult ? true  selector calls = 1 (expect true, 1)
+      AFTER  clearCache(): afterClearResult === firstResult ? false  selector calls = 2 (expect false, 2 => fresh WeakMap, recompute)
+      
+      ----- Q5: nullish vs primitive dependents -----
+      dependent null THEN undefined => selector calls = 1 (expect 1: null & undefined SHARE NULLISH_KEY)
+        dependent = null => OK (memoized)
+        dependent = undefined => OK (memoized)
+        dependent = number 1 => THREW "TypeError: key must be an object, `null`, or `undefined`"
+        dependent = boolean true => THREW "TypeError: key must be an object, `null`, or `undefined`"
+        dependent = string a => THREW "TypeError: key must be an object, `null`, or `undefined`"
+        dependent = number 0 => THREW "TypeError: key must be an object, `null`, or `undefined`"
+        dependent = boolean false => THREW "TypeError: key must be an object, `null`, or `undefined`"
+      
+      ----- Q6: custom cache keys / object args -----
+      default key + object arg => "Error: Do not pass objects as arguments to a treeSelector"
+      custom getCacheKey (query)=>key:query.siteId : firstResult === secondResult ? true (expect true: distinct objects, same generated key)
+      firstResult = [{"id":"id1","text":"post 1","siteId":"site1"},{"id":"id2","text":"post 2","siteId":"site1"}]
+      
+      ===== END treeSelect PROBE =====
+
+      at Object.log (test/probe_ts_TEMP.js:146:10)
+
+
+Test Suites: 2 passed, 2 total
+Tests:       2 passed, 2 total
+Snapshots:   0 total
+Time:        0.855 s, estimated 1 s
+Ran all test suites matching /packages\/state-utils\/src\/create-selector\/test\/probe_cs_TEMP.js|packages\/tree-select\/test\/probe_ts_TEMP.js/i in 2 projects.
+```
+
+#### A.5.3 Exact difference between the two runs
+
+The only line that differs across the two runs is the Jest `Time:` line (wall-clock timing is
+non-deterministic; the `estimated 1 s` suffix appears once Jest has a cached prior duration).
+Every other line — every substantive value, the `PASS` lines, the suite/test totals, and the
+suite print order — is identical:
+
+```diff
+--- run1
++++ run2
+@@ -113,5 +113,5 @@
+ Test Suites: 2 passed, 2 total
+ Tests:       2 passed, 2 total
+ Snapshots:   0 total
+-Time:        1.046 s
++Time:        0.855 s, estimated 1 s
+ Ran all test suites matching /packages\/state-utils\/src\/create-selector\/test\/probe_cs_TEMP.js|packages\/tree-select\/test\/probe_ts_TEMP.js/i in 2 projects.
+```
+
+#### A.5.4 Normalized `console.log` payloads (per probe)
+
+For readability, the blocks below isolate just the `console.log` content each probe emits — the
+same text that appears inside the `● Console` sections of the complete runs above.
 
 **`createSelector` probe output:**
 
@@ -1209,5 +1510,7 @@ firstResult = [{"id":"id1","text":"post 1","siteId":"site1"},{"id":"id2","text":
 
 ---
 
-_End of document. Temporary probe scripts were deleted after capture; `git status` shows only
-this file as a new addition._
+_End of document. The temporary probe scripts were deleted after capture and are **absent**; this
+deliverable is committed on the branch, the working tree is **clean** (`git status --porcelain` is
+empty), and the baseline-to-HEAD diff (`git diff --name-status be7e5cc641..HEAD`) contains exactly
+one added file: `A blitzy/documentation/wp-calypso_be7e5cc64162.md`._
