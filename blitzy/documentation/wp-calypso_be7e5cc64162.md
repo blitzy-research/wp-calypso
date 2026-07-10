@@ -744,7 +744,7 @@ client/boot/common.js:L340                              export const bootApp = a
 client/boot/common.js:L341                              const user = await initializeCurrentUser();
 client/lib/user/shared-utils/initialize-current-user.js:L28   if ( ! skipBootstrap && config.isEnabled( 'wpcom-user-bootstrap' ) )  // FALSE → skip
 client/lib/user/shared-utils/initialize-current-user.js:L37   userData = await rawCurrentUserFetch();                              // canonical default path
-client/lib/user/shared-utils/initialize-current-user.js:L39   catch: re-throws only if ( error.error !== 'authorization_required' )  // 403 expected & swallowed
+client/lib/user/shared-utils/initialize-current-user.js:L38-L43 catch: logs via console.error() ONLY when ( error.error !== 'authorization_required' ) — the 403 is swallowed, never re-thrown
 client/lib/user/shared-utils/raw-current-user-fetch.js:L3-L6   wpcom.me().get( { meta: 'flags' } )
 ```
 
@@ -757,7 +757,7 @@ $ cat q3_me_response.network-response
 ```
 
 The transport is `200` but the envelope `code` is `403` with
-`body.error = "authorization_required"`. Per `client/lib/user/shared-utils/initialize-current-user.js:L39`, that specific
+`body.error = "authorization_required"`. Per `client/lib/user/shared-utils/initialize-current-user.js:L38-L43`, that specific
 error is expected and swallowed (not re-thrown), so `userData` stays undefined → no
 `setCurrentUser` → `getCurrentUserId(state) === null` → `isUserLoggedIn === false`. **[OBSERVED]**
 
@@ -948,13 +948,25 @@ infeasible, the genuine blocker and the source-derived conclusion are stated.
   bytes). *Blocker:* a real support session (`support_session_id` cookie,
   `client/server/user-bootstrap/index.js:L9`) is an internal Automattic mechanism; only the
   server detection is exercisable here. **[OBSERVED server branch; session itself NON-CANONICAL]**
-- **Third-party cookies.** *Observed:* the app origin is `calypso.localhost:3000`; REST calls
-  are cross-origin to `public-api.wordpress.com`. Its `set-cookie` analytics cookies (`tk_ai`,
-  `tk_qs`) were accepted by headless Chrome (which allows third-party cookies by default), so
-  the logged-out stream loaded with no exception needed. *Source-derived caveat*
-  (`docs/install.md:L40`): if a browser **blocks** third-party cookies, an exception on
-  `https://public-api.wordpress.com` is required for **authenticated** flows; the logged-out
-  Reader needs no auth cookie and is unaffected. **[OBSERVED]**
+- **Third-party cookies.** *Observed:* the app origin is `calypso.localhost:3000`. Reading
+  `document.cookie` on the live logged-out `/reader` (→ `/discover`) page returned the
+  **first-party** cookie names `country_code`, `region`, `tk_ai`, `tk_qs` — so `tk_ai`/`tk_qs`
+  are **first-party analytics cookies written client-side** by Calypso's own tracks library, not
+  `public-api.wordpress.com` `set-cookie`s. Source confirms this: when `tk_ai` is absent the
+  library generates an id and writes it first-party via
+  `document.cookie = cookie.serialize( 'tk_ai', _ui )`
+  (`packages/calypso-analytics/src/tracks.ts:L94-L99`); `country_code`/`region` are likewise
+  client-set from the `/geo/` JSON body. The REST calls that populate the stream are cross-origin
+  to `public-api.wordpress.com`; probing its endpoints shows
+  `/rest/v1.1/me?http_envelope=1&meta=flags` and `/geo/` return **no** `Set-Cookie`, while the
+  rest-proxy (`/wp-admin/rest-proxy/?v=2.0`) sets the **genuine third-party** cookies `wp_api`
+  (`domain=public-api.wordpress.com; secure`) and `wp_api_sec`
+  (`domain=public-api.wordpress.com; secure; HttpOnly`). Headless Chrome accepts third-party
+  cookies by default, so the rest-proxy handshake completed and the logged-out stream loaded with
+  no exception needed. *Source-derived caveat* (`docs/install.md:L40`): if a browser **blocks**
+  third-party cookies, an exception on `https://public-api.wordpress.com` is required for
+  **authenticated** flows; the logged-out Reader needs no auth cookie and is unaffected.
+  **[OBSERVED]**
 
 
 ---
