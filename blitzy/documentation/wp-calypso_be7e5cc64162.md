@@ -499,9 +499,9 @@ remote `public-api.wordpress.com` (observed live in Q2/Q3, and documented at
   against the real remote API.
 - **Inspector port 5858** (`NODE_OPTIONS="--inspect=5858"`, `docs/install.md:L63`) is a Node
   debugger port, not application traffic. It does not contradict the single-port conclusion.
-- **`SECTION_LIMIT` / `ENTRY_LIMIT`** (`docs/install.md:L48-L50`) reduce which sections/entry
-  points build. They change build scope and warning count, not the port topology. All reported
-  values here are from the **default, unflagged** build.
+- **`SECTION_LIMIT`** (`docs/install.md:L48-L50`) / **`ENTRY_LIMIT`** (`docs/install.md:L54-L59`)
+  reduce which sections/entry points build. They change build scope and warning count, not the
+  port topology. All reported values here are from the **default, unflagged** build.
 - **"Only certain origins"** (`docs/install.md:L38`) is a statement about the remote API's
   allowed origins, i.e. why `calypso.localhost` is required — not a claim that 3000 is the only
   port a machine could ever use.
