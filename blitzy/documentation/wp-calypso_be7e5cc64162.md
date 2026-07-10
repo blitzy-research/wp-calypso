@@ -1222,7 +1222,7 @@ The following is **external** corroboration from nock's official documentation �
 - The `beforeAll` guard used by wp-calypso — `if ( ! nock.isActive() ) { nock.activate(); }` — is the same activation idiom shown across nock usage in the wild (e.g. the Snyk nock advisor examples).
 - Historically, older nock (v8-era) phrased the message "Not allow net connect"; wp-calypso pins v13, and the **observed** runtime message above ("Disallowed net connect") matches the modern v13 form exactly — external contract and captured output agree.
 
-**Sources (durable):** `https://github.com/nock/nock` (README, "Enabling requests" / `disableNetConnect`), `https://www.npmjs.com/package/nock`, and `https://snyk.io/advisor/npm-package/nock/functions/nock.disableNetConnect`. These corroborate the *contract*; the wp-calypso-specific error text, code, and `fetch`-stub behavior are the **observed** captures in §4a–§4b.
+**Sources (durable):** `https://github.com/nock/nock` (README, "Enabling requests" / `disableNetConnect`), `https://www.npmjs.com/package/nock`, and `https://security.snyk.io/package/npm/nock`. These corroborate the *contract*; the wp-calypso-specific error text, code, and `fetch`-stub behavior are the **observed** captures in §4a–§4b.
 
 ### 4d. Cross-suite summary (all executed)
 
