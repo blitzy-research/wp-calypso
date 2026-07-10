@@ -633,7 +633,7 @@ The full wiring, each step cited:
    builder at `:L358` computes `fetchCount = pageHandle ? PER_FETCH : INITIAL_FETCH` (`:L380`)
    and issues `http({ method:'GET', path, apiVersion, onSuccess: action, onFailure: action })`
    (around `:L395-L404`). On success, `handlePage` (`:L428`) dispatches `receivePosts(...)`
-   (`:L468`) and `receivePage(...)`.
+   (`:L470`) and `receivePage(...)`.
 6. **Receivers** — `client/state/reader/posts/actions.js:L63` `receivePosts` dispatches the flat
    `{ type: READER_POSTS_RECEIVE, posts }` (`:L86-L88`); `client/state/reader/streams/actions.js:L52`
    `receivePage` returns `{ type: READER_STREAMS_PAGE_RECEIVE, payload: {…} }`.
