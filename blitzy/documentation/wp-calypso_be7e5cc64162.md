@@ -595,7 +595,7 @@ Ran all test suites matching /client\/signup\/navigation-link\/test\/blitzy_adho
 **What the two lines prove:**
 
 - `[Q5E][prev lastKnownFlow=onboarding]` -> `/start/business-info`: the previous step carried `lastKnownFlow: 'onboarding'`, so `getStepUrl` was called with flow `onboarding` (`client/signup/navigation-link/index.jsx:L109`, `previousStep.lastKnownFlow || this.props.flowName`). Because `onboarding` is the default flow, its name is omitted under `/start` (`client/signup/utils.js:L63-L67`), yielding `/start/business-info`. **This is a second, override-free way to "slip into a different flow"**: the destination flow comes from _persisted progress_, not from `back_to`.
-- `[Q5E][prev stepSectionName=intro]` -> `/start/woocommerce-install/business-info/intro`: `stepSectionName` for the previous step was read from `signupProgress` (`client/signup/navigation-link/index.jsx:L100-L104`) and appended as a path segment by `getStepUrl` (`client/signup/utils.js:L47`, `section` segment). **[OBSERVED]**
+- `[Q5E][prev stepSectionName=intro]` -> `/start/woocommerce-install/business-info/intro`: `stepSectionName` for the previous step was read from `signupProgress` (`client/signup/navigation-link/index.jsx:L100-L104`) and appended as a path segment by `getStepUrl` (`client/signup/utils.js:L55`, `section` segment). **[OBSERVED]**
 
 ## Q6 - What is the computed destination for each step position?
 
