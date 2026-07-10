@@ -2,7 +2,7 @@
 
 **Source branch:** `wp-calypso_be7e5cc64162`
 **Source baseline commit:** `be7e5cc641622d153040491fd5625c6cb83e12eb` (the wp-calypso source tree that was read and run; the read-only invariant and every `file:line` reference are measured against it)
-**Delivery branch HEAD:** `a6f70ec008c963e5083e7733cb5af6a6e7dd67cd` on branch `blitzy-a558ddfc-3dde-4c87-becd-12bcb5baf875` (the commit under remediation; see **Q8** for how the two HEADs relate)
+**Delivery branch HEAD (at the authoring time of this revision):** `5dc0c857985a3a7036dffb066649803ec427cf72` on branch `blitzy-a558ddfc-3dde-4c87-becd-12bcb5baf875` — the current tip after a series of documentation-only commits stacked on the source baseline. This revision is sealed by one further documentation-only commit whose own hash cannot be embedded in the file it names; **Q8** lists the full commit chronology and shows how it relates to the baseline.
 **Node (observed):** `v22.23.1` (satisfies `engines.node` `^v22.9.0` — [package.json:L57])
 **Yarn (observed):** `4.0.2` (`packageManager: yarn@4.0.2` — [package.json:L422])
 **Repository:** Automattic/wp-calypso (Yarn Berry monorepo; `nodeLinker: node-modules`)
@@ -1875,14 +1875,19 @@ The config remap and network isolation are **not** uniform across suites. Of the
 
 ## Q8 — Operate read-only
 
-**Claim:** Exactly **one** net-new tracked artifact exists relative to the source baseline — this document, `blitzy/documentation/wp-calypso_be7e5cc64162.md`. **No** existing source, config, test, manifest, or lock file was modified, and `yarn.lock`/`package.json` are byte-identical to baseline. The prior delivery commit had additionally added an unauthorized screenshot (`blitzy/screenshots/devserver_login_page_ready.png`); this remediation **removes** it, returning the tracked tree to "baseline + this one document." Every temporary observation script/test was removed from the repository; all Node scripts, captured logs, and captured HTML bodies were kept **outside** the repository under `/tmp/qna_work_be7e5cc/`.
+**Claim:** Exactly **one** net-new tracked artifact exists relative to the source baseline — this document, `blitzy/documentation/wp-calypso_be7e5cc64162.md`. **No** existing source, config, test, manifest, or lock file was modified, and `yarn.lock`/`package.json` are byte-identical to baseline. The **first** delivery commit had additionally added an unauthorized screenshot (`blitzy/screenshots/devserver_login_page_ready.png`); a **later remediation commit removed** it, returning the tracked tree to "baseline + this one document," and every commit since has touched only this document. Every temporary observation script/test was removed from the repository; all Node scripts, captured logs, and captured HTML bodies were kept **outside** the repository under `/tmp/qna_work_be7e5cc/`. This one-file invariant is **independent of how many documentation-only commits the delivery branch accumulated**: measured against the baseline, the net change is always exactly this single added file.
 
-Two distinct commits are relevant and must not be conflated:
+The delivery branch `blitzy-a558ddfc-3dde-4c87-becd-12bcb5baf875` reached its current tip through a chronology of documentation-only commits stacked on the immutable source baseline. These commit hashes are historical facts and must not be conflated:
 
 - **Source baseline HEAD** `be7e5cc641622d153040491fd5625c6cb83e12eb` — the wp-calypso source tree this investigation read and ran; the read-only invariant is measured against it.
-- **Delivery branch HEAD** `a6f70ec008c963e5083e7733cb5af6a6e7dd67cd` on branch `blitzy-a558ddfc-3dde-4c87-becd-12bcb5baf875` — the prior delivery commit that had added **two** files (this document *and* the screenshot). The screenshot is the artifact removed here.
+- **First delivery commit** `a6f70ec008c963e5083e7733cb5af6a6e7dd67cd` — added **two** files relative to baseline: this document *and* the screenshot `blitzy/screenshots/devserver_login_page_ready.png`.
+- **Remediation commit** `9d8f48cfe48b0e69510d48d0fc325bb211ba6412` — **removed** the unauthorized screenshot and revised this document to address code-review findings, restoring the single-artifact invariant.
+- **Snyk-link fix commit** `5dc0c857985a3a7036dffb066649803ec427cf72` — a documentation-only change that corrected the broken external Snyk source link in **Q4 §4c**. This is the current delivery tip at the authoring time of this revision.
+- **Finalizing commit** (this revision) — a further documentation-only change that reconciles this Q8 provenance narrative with the true commit chronology. Its own hash cannot be embedded here, because writing the hash would alter the very file whose commit produces it (see the note in **§8a**).
 
-### 8a — The two HEADs and the baseline diff
+Every one of these commits touches only `blitzy/documentation/wp-calypso_be7e5cc64162.md` (plus the first delivery's now-removed screenshot); none modifies an existing source, config, test, manifest, or lock file. **Regardless of the commit count, the net effect measured against the baseline is exactly one added file** — that is the durable, always-true read-only invariant this section proves.
+
+### 8a — The delivery-branch tip and the baseline diff
 
 **Command:**
 
@@ -1896,18 +1901,18 @@ git diff be7e5cc641622d153040491fd5625c6cb83e12eb --stat
 **Output (complete, unedited):**
 
 ```text
-a6f70ec008c963e5083e7733cb5af6a6e7dd67cd
+5dc0c857985a3a7036dffb066649803ec427cf72
 blitzy-a558ddfc-3dde-4c87-becd-12bcb5baf875
 A	blitzy/documentation/wp-calypso_be7e5cc64162.md
- blitzy/documentation/wp-calypso_be7e5cc64162.md | 2015 +++++++++++++++++++++++
- 1 file changed, 2015 insertions(+)
+ blitzy/documentation/wp-calypso_be7e5cc64162.md | 2020 +++++++++++++++++++++++
+ 1 file changed, 2020 insertions(+)
 ```
 
-Measured against the **source baseline** `be7e5cc641622d153040491fd5625c6cb83e12eb`, the working tree adds exactly one file — `A blitzy/documentation/wp-calypso_be7e5cc64162.md` — and touches nothing else (`1 file changed, 2015 insertions(+)`). No `M`/`D`/`R` entries appear, so no existing repository file is modified, deleted, or renamed. — **observed**
+Measured against the **source baseline** `be7e5cc641622d153040491fd5625c6cb83e12eb`, the working tree adds exactly one file — `A blitzy/documentation/wp-calypso_be7e5cc64162.md` — and touches nothing else (`1 file changed, 2020 insertions(+)`). No `M`/`D`/`R` entries appear, so no existing repository file is modified, deleted, or renamed. — **observed**
 
-> **Note on the `HEAD` shown above:** `git rev-parse HEAD` returns `a6f70ec…`, the delivery HEAD **at authoring time** — the *parent* of the single remediation commit that finalizes this document and removes the screenshot. After that commit, `HEAD` is a child of `a6f70ec…`; the baseline-relative invariant proven here (baseline → `HEAD` adds only this document, and no existing file changes) is preserved and was re-verified against the committed tree. The commit hash itself is deliberately not embedded, as writing it would alter the very file it names.
+> **Note on the `HEAD` shown above:** at the authoring time of this revision `git rev-parse HEAD` returns `5dc0c857985…`, the current delivery tip — the **parent of the finalizing commit** that seals this revision. That tip is itself the third commit stacked on the source baseline (`be7e5cc641…` → first delivery `a6f70ec008…` → remediation `9d8f48cfe4…` → Snyk-link fix `5dc0c857985…`), so relative to the *first delivery* commit the finalizing commit is a **great-grandchild**, not a direct child — the earlier "single remediation commit" framing understated a chronology that in fact spans several documentation-only commits (see the list above). The finalizing commit's own hash is deliberately **not** embedded, because writing it would alter the very file whose commit produces it. The durable, always-true fact is the baseline-relative invariant proven here — baseline → `HEAD` adds only this one document, with no existing file changed — and it holds no matter how many documentation-only commits the branch accumulates.
 
-### 8b — Working-tree status and staged/unstaged split (immediately before the single remediation commit)
+### 8b — Working-tree status and staged/unstaged split (a historical snapshot: immediately before the remediation commit `9d8f48cfe4…`)
 
 **Command:**
 
@@ -1930,9 +1935,9 @@ D	blitzy/screenshots/devserver_login_page_ready.png
 M	blitzy/documentation/wp-calypso_be7e5cc64162.md
 ```
 
-This is the working-tree state captured **immediately before** the single remediation commit. Exactly two entries appear, and no others: the document is modified in the working tree (` M` / unstaged `M`), and the unauthorized screenshot deletion is staged (`D ` / staged `D`). There are **no** other modified, added, deleted, or untracked paths — confirming the change set is precisely "rewrite the one document + remove the one screenshot." After this commit the working tree is clean and the branch tip contains the document as its sole net-new artifact versus baseline (verified at commit time). — **observed**
+This is a **historical snapshot** of the working-tree state captured **immediately before the remediation commit `9d8f48cfe4…`** — the commit that removed the unauthorized screenshot and revised this document. Exactly two entries appear, and no others: the document is modified in the working tree (` M` / unstaged `M`), and the unauthorized screenshot deletion is staged (`D ` / staged `D`). There are **no** other modified, added, deleted, or untracked paths — confirming that commit's change set was precisely "rewrite the one document + remove the one screenshot." After it, the working tree was clean and the branch tip contained the document as its sole net-new artifact versus baseline; the later Snyk-link fix (`5dc0c857985…`) and this finalizing revision are subsequent documentation-only commits that likewise leave that one-file invariant intact (verified at commit time). — **observed**
 
-### 8c — What the prior delivery commit had added (the artifact this remediation removes)
+### 8c — What the first delivery commit had added (the screenshot the remediation commit removed)
 
 **Command:**
 
@@ -1947,7 +1952,7 @@ A	blitzy/documentation/wp-calypso_be7e5cc64162.md
 A	blitzy/screenshots/devserver_login_page_ready.png
 ```
 
-The prior delivery commit `a6f70ec…` had introduced **two** additions relative to baseline: the document *and* `blitzy/screenshots/devserver_login_page_ready.png`. The AAP permits exactly one net-new artifact (§0.5.2 lists "Adding any code to the repository other than the answer document" as out of scope), so the screenshot is removed by this remediation — reconciling the working tree back to the single-artifact invariant shown in 8a. — **observed**
+The first delivery commit `a6f70ec…` had introduced **two** additions relative to baseline: the document *and* `blitzy/screenshots/devserver_login_page_ready.png`. The AAP permits exactly one net-new artifact (§0.5.2 lists "Adding any code to the repository other than the answer document" as out of scope), so the remediation commit `9d8f48cfe4…` removed the screenshot — reconciling the working tree back to the single-artifact invariant shown in 8a, which every later documentation-only commit preserves. — **observed**
 
 ### 8d — Generated artifacts are git-ignored (not source changes)
 
@@ -1993,7 +1998,7 @@ The first `find` prints nothing — no temporary Jest probe (`blitzy_adhoc_test_
 
 **Grounding:** `.gitignore:L15` (`/.cache/`), `.gitignore:L17` (`node_modules`), `.gitignore:L43` (`/build`), `.gitignore:L69` (`/packages/*/dist/`); AAP §0.5.2 (one-artifact scope).
 
-**Observed vs inferred:** every line above is **observed** verbatim `git`/`find` output. The single forward-looking statement — that the tree is clean *after* the remediation commit — is verified at commit time (Phase 11) and is otherwise the direct consequence of committing exactly the two entries shown in 8b.
+**Observed vs inferred:** every line above is **observed** verbatim `git`/`find` output. The single forward-looking statement — that the tree is clean *after* the finalizing commit — is verified at commit time and is otherwise the direct consequence of committing only documentation-only changes on top of the chronology shown in 8a–8c.
 
 **Q8 coverage:** proof no existing file was modified/deleted/renamed (baseline `--name-status` shows only `A` on the doc) ✔; the unauthorized screenshot removed and its prior addition documented ✔; source-baseline vs delivery HEAD distinguished by commit hash ✔; staged vs unstaged split shown ✔; `node_modules`/`build`/`dist`/`.cache` proven git-ignored ✔; every scratch path (in-repo probes, Node scripts, captured HTML) enumerated and shown absent from the tree ✔.
 
