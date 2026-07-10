@@ -147,27 +147,43 @@ The rules require confirming stability across at least two runs. Both runs used 
 ### 1.5 Temporary observation-script inventory (verbatim) + cleanup
 
 Three shell scripts and a set of browser-console snippets were used to capture Q1 signals.
-They live under `/tmp/calypso_obs/` (outside the repository) and are removed in the cleanup
-step (see [Repository cleanliness proof](#repository-cleanliness-proof)). They are reproduced
-here verbatim so every Q1 result is reproducible.
+The scripts — and **every file they write** (the start logs, the server PID file, and the
+queued-request HTML capture) — live under `/tmp/calypso_obs/` (outside the repository) and are
+removed in the cleanup step (see [Repository cleanliness proof](#repository-cleanliness-proof)),
+so the working tree carries no observation residue. `01_run_server.sh` takes an optional run-tag
+argument (`run1`, `run2`, …) and writes a per-run log (`start_run1.raw.log`, `start_run2.raw.log`,
+…) — the exact filenames the two-run methodology in §1.4 and Q1.b cite. They are reproduced here
+verbatim so every Q1 result is reproducible.
 
 `01_run_server.sh` — canonical default build+run capturing both readiness signals:
 
 ```bash
 #!/usr/bin/env bash
 # Canonical, DEFAULT (unflagged) build+run of Calypso, capturing complete stdout with the two readiness signals.
+# Usage: 01_run_server.sh [run-tag]   (default: run1)  ->  writes /tmp/calypso_obs/start_<run-tag>.raw.log
 set -euo pipefail
-cd "$(git rev-parse --show-toplevel)"
+shopt -s inherit_errexit   # make a failed $(...) (e.g. run outside a git repo) abort non-zero, never hang
+# Resolve the repository root through git; fail loudly (non-zero) if not inside a git repo — no silent hang:
+ROOT="$( git rev-parse --show-toplevel )" || { echo "ERROR: not inside a git repository" >&2; exit 1; }
+cd "$ROOT"
+# ALL observation artifacts live OUTSIDE the repository, under /tmp/calypso_obs:
+OBS_DIR=/tmp/calypso_obs; mkdir -p "$OBS_DIR"
+RUN_TAG="${1:-run1}"
+LOG="$OBS_DIR/start_${RUN_TAG}.raw.log"
 date -u +"START: %Y-%m-%dT%H:%M:%S.%3NZ"
 # `yarn start` = check-node-version --package && node bin/welcome.js && yarn run build && yarn run start-build
-setsid bash -c 'exec yarn start' > start.raw.log 2>&1 &
-echo $! > server.pgid
-# Readiness signal #1 (bunyan boot log, printed BEFORE server.listen at client/server/index.js:L83)
-until grep -q "wp-calypso booted in" start.raw.log; do sleep 2; done
-grep "wp-calypso booted in" start.raw.log
+setsid bash -c 'exec yarn start' > "$LOG" 2>&1 &
+echo $! > "$OBS_DIR/server_${RUN_TAG}.pgid"
+# Bounded waits (max-iteration caps) so an unexpected failure surfaces as a non-zero exit, never an infinite hang.
+# Readiness signal #1 (bunyan boot log, printed just before server.listen at client/server/index.js:L83)
+for _ in $( seq 1 90 ); do grep -q "wp-calypso booted in" "$LOG" && break; sleep 2; done
+grep "wp-calypso booted in" "$LOG" || { echo "ERROR: boot log not seen within 180s" >&2; exit 1; }
 # Readiness signal #2 (webpack first-compile "Ready!")
-until grep -q "Ready! You can load" start.raw.log; do sleep 2; done
-grep -E "webpack .* compiled|Ready! You can load" start.raw.log
+for _ in $( seq 1 180 ); do grep -q "Ready! You can load" "$LOG" && break; sleep 2; done
+grep -E "webpack .* compiled|Ready! You can load" "$LOG" || { echo "ERROR: webpack Ready! not seen within 360s" >&2; exit 1; }
+# Leaves the server running (by design) so the other helpers can probe it; the PID is saved to
+# "$OBS_DIR/server_<run-tag>.pgid" for teardown (`kill -- -"$(cat "$OBS_DIR/server_${RUN_TAG}.pgid")"`),
+# and the cleanup step removes all of /tmp/calypso_obs.
 ```
 
 `02_q1_transitional.sh` — the pre-"Ready!" transitional behaviour (root holding page vs. a
@@ -177,11 +193,12 @@ queued non-root request):
 #!/usr/bin/env bash
 # Q1 transitional evidence: root holding page vs non-root queued request, captured in the pre-"Ready!" window.
 set -euo pipefail
+OBS_DIR=/tmp/calypso_obs; mkdir -p "$OBS_DIR"   # write every capture OUTSIDE the repository
 # Root "/" returns the "Welcome to Calypso!" holding page immediately:
 curl -s -m 15 -w '\n[HTTP %{http_code} | %{content_type} | %{size_download}B | %{time_total}s]\n' \
   http://calypso.localhost:3000/
 # A NON-root request (e.g. /reader) BLOCKS in waitForCompiler until the first compile finishes:
-curl -s -m 300 -o nonroot_reader.html \
+curl -s -m 300 -o "$OBS_DIR/nonroot_reader.html" \
   -w 'NONROOT /reader => HTTP %{http_code} | %{content_type} | %{size_download}B | WAITED %{time_total}s\n' \
   http://calypso.localhost:3000/reader
 ```
@@ -195,7 +212,9 @@ on port 3000):
 set -euo pipefail
 curl -sS -D - -o /dev/null http://calypso.localhost:3000/reader                       # SSR HTML
 curl -sI       http://calypso.localhost:3000/calypso/evergreen/runtime.js             # compiled asset (webpack-dev-middleware)
-curl -sN -D - -m 4 -o /dev/null http://calypso.localhost:3000/__webpack_hmr           # HMR stream (webpack-hot-middleware)
+# The HMR endpoint is a long-lived Server-Sent-Events stream; `-m 4` makes curl exit 28 (timeout) BY DESIGN.
+# Tolerate that expected timeout (|| true) so the health probe below still runs and the script exits 0.
+curl -sN -D - -m 4 -o /dev/null http://calypso.localhost:3000/__webpack_hmr || true   # HMR stream (webpack-hot-middleware)
 curl -s        http://calypso.localhost:3000/version                                  # health endpoint
 ```
 
@@ -1375,7 +1394,9 @@ plus the AAP's official-documentation research requirement.
 The source repository must be left unchanged except for the single answer document. The
 methodology used only external scratch space and transient outputs:
 
-- **Observation scripts** live under `/tmp/calypso_obs/` (outside the repo) and are removed.
+- **Observation scripts and every file they write** (`start_run*.raw.log`, `server_run*.pgid`,
+  `nonroot_reader.html`) live under `/tmp/calypso_obs/` (outside the repo) and are removed wholesale
+  by `rm -rf /tmp/calypso_obs`; no helper writes into the working tree.
 - **Build outputs** (`build/`, `public/`) produced by `yarn start` are git-ignored; they are
   removed in cleanup so the working tree carries no observation residue. Install state
   (`node_modules/`, `packages/*/dist`) is git-ignored and intentionally retained.
@@ -1390,7 +1411,7 @@ here:
 $ rm -rf blitzy/screenshots      # untracked screenshot artifact (kept repo to single deliverable)
 $ rm -rf build                   # git-ignored SSR output produced by `yarn start`
 $ rm -rf public                  # git-ignored browser-bundle output produced by `yarn start`
-$ rm -rf /tmp/calypso_obs        # all observation scripts + captured evidence (outside the repo)
+$ rm -rf /tmp/calypso_obs        # all observation scripts + every file they write (start_run*.raw.log, server_run*.pgid, nonroot_reader.html) — outside the repo
 ```
 
 **Normal status** — the only tracked change is this document; nothing untracked remains:
