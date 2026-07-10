@@ -1095,7 +1095,8 @@ source-derived; see Q4.a-adjacent note below.) The consumers of these properties
 
 ```scss
 .layout__content {                                                        /* :L48 */
-	padding: 79px 32px 32px calc(var(--sidebar-width-max) + 32px + 1px);  /* :L52 */
+	padding: 79px 32px 32px calc(var(--sidebar-width-max) + 32px + 1px);  /* :L52 — base; ACTIVE on the logged-out reader */
+	.has-no-sidebar & { padding-left: 32px; }                             /* :L57-L58 — ACTIVE override on the logged-out reader: drops the calc left → computed 79px 32px 32px 32px */
 	@include breakpoint-deprecated( "<960px" ) {                          /* :L118 */
 		padding: 71px 24px 24px calc(var(--sidebar-width-min) + 24px + 1px); /* :L119 */
 	}
@@ -1103,8 +1104,25 @@ source-derived; see Q4.a-adjacent note below.) The consumers of these properties
 /* width switches max→min under 960px */
 width: var(--sidebar-width-max);   /* :L185 */
 width: var(--sidebar-width-min);   /* :L192 (inside <960px) */
-&.has-no-sidebar .layout__content { padding-top: 0; }  /* :L415 — the reader's active branch */
+
+/* NOT active on the logged-out reader — the block below is gated on `.has-no-masterbar`, which the
+   logged-out reader does NOT carry (its layoutClass has `has-no-sidebar` but no `has-no-masterbar`,
+   so --masterbar-height stays 32px, not 0px). Source comment (:L403-L404): "Only apply the
+   no-masterbar rule to logged in sections." */
+.layout.has-no-masterbar.is-section-reader {              /* :L405-L407 (also .is-group-me / .is-group-sites) */
+	--masterbar-height: 0px;                              /* :L410 */
+	.layout__content { padding-top: 32px; }               /* :L412-L413 */
+	&.has-no-sidebar .layout__content { padding-top: 0; } /* :L415-L416 — logged-in no-masterbar sections only */
+}
 ```
+
+On the canonical logged-out Reader the **active** `.layout__content` declarations are therefore the
+base rule (`:L52`) plus the `has-no-sidebar` left override (`:L57-L58`) — observed live as
+`padding: 79px 32px 32px 32px` with `--masterbar-height: 32px`. The `padding-top: 0` rule at
+`:L415-L416` is **not** reached, because it is nested under `.has-no-masterbar` — a class the
+logged-out Reader does not carry (its layout class is `has-no-sidebar` but never `has-no-masterbar`);
+that no-masterbar branch applies only to logged-in no-masterbar sections, per the source comment at
+`:L403-L404`.
 
 **my-sites overrides (F5 citation fix; source-derived, my-sites context)** —
 `client/my-sites/sidebar/style.scss`:
@@ -1365,7 +1383,7 @@ observed at runtime.
 | 30 | `client/layout/global-sidebar/style.scss` | REFERENCE | Q4 | Exercised (CSSOM absence) | Q4.a (`.sidebar__header padding :L75`) | Not rendered on logged-out Reader; source-derived padding |
 | 31 | `client/layout/sidebar/style.scss` | REFERENCE | Q4 | Referenced | Q4.a (classic `:L4-L6,:L70-L71`) | Source-derived (not rendered) |
 | 32 | `client/layout/sidebar-v2/` | REFERENCE | Q4 | Referenced | Q4.a (`SidebarV2Header` at `client/layout/sidebar-v2/header.tsx:L8-L9`; `client/layout/sidebar-v2/style.scss:L1-L12`) | Source-derived (not rendered) |
-| 33 | `client/layout/style.scss` | REFERENCE | Q4 | Exercised | Q4.b (`calc() :L52,:L118-L119`, `has-no-sidebar :L415`) | None |
+| 33 | `client/layout/style.scss` | REFERENCE | Q4 | Exercised | Q4.b (`calc() :L52,:L118-L119`, active `has-no-sidebar :L57-L58`; inactive no-masterbar `:L415-L416`) | None |
 | 34 | `client/assets/stylesheets/shared/_variables.scss` | REFERENCE | Q4 | Exercised | Q4.b (`--masterbar-height :L7-L11`, widths `:L15-L16`) | None |
 | 35 | `client/assets/stylesheets/shared/mixins/_breakpoints.scss` | REFERENCE | Q4 | Exercised | Q4.c (`$breakpoints :L10`) | None |
 | 36 | `client/my-sites/sidebar/style.scss` | REFERENCE | Q4 | Referenced | Q4.b (295px `:L15-L17`, 69px `:L59-L61`, cascade `:L182-L189`) | Source-derived (my-sites context not rendered) |
