@@ -2,7 +2,7 @@
 
 **Source branch:** `wp-calypso_be7e5cc64162`
 **Source baseline commit:** `be7e5cc641622d153040491fd5625c6cb83e12eb` (the wp-calypso source tree that was read and run; the read-only invariant and every `file:line` reference are measured against it)
-**Delivery branch HEAD (at the authoring time of this revision):** `5dc0c857985a3a7036dffb066649803ec427cf72` on branch `blitzy-a558ddfc-3dde-4c87-becd-12bcb5baf875` — the current tip after a series of documentation-only commits stacked on the source baseline. This revision is sealed by one further documentation-only commit whose own hash cannot be embedded in the file it names; **Q8** lists the full commit chronology and shows how it relates to the baseline.
+**Delivery branch:** `blitzy-a558ddfc-3dde-4c87-becd-12bcb5baf875` — a series of documentation-only commits stacked on the immutable source baseline. Because this document is itself the artifact each such commit adds, every revision advances the branch tip, so **no** commit hash is embedded here as "the current tip." The durable, tip-independent fact is that — measured against the source baseline `be7e5cc641…` — the delivery tree adds **exactly one** file (this document) and modifies nothing else. **Q8** proves that invariant with live `git` output and lays out the full commit chronology (in which `5dc0c857985…` appears as one authoring-time ancestor, not the current tip).
 **Node (observed):** `v22.23.1` (satisfies `engines.node` `^v22.9.0` — [package.json:L57])
 **Yarn (observed):** `4.0.2` (`packageManager: yarn@4.0.2` — [package.json:L422])
 **Repository:** Automattic/wp-calypso (Yarn Berry monorepo; `nodeLinker: node-modules`)
@@ -796,7 +796,7 @@ The two `jest-haste-map: duplicate manual mock found: wpcom-proxy-request` lines
 
 ## Q4 — What happens when code makes a network request during tests
 
-**Short answer (observed):** In the **client** and **server** suites, real network access is blocked by `nock.disableNetConnect()`, which runs at setup-module load; a request to a host with **no** interceptor surfaces as a thrown `NetConnectNotAllowedError` (it never reaches the network), and a request to a host that **has** an interceptor scope but whose path does not match surfaces as a different error, `ERR_NOCK_NO_MATCH`. In the client suite `global.fetch` is additionally a `jest.fn` stub (not a real fetch). In the **packages** and **integration** suites nock is never activated, so the identical request is **not** intercepted and reaches the real network. All four behaviors are executed and captured below.
+**Short answer (observed):** In the **client** and **server** suites, real network access is blocked by `nock.disableNetConnect()`, which runs at setup-module load; a request to a host with **no** interceptor surfaces as a thrown `NetConnectNotAllowedError` (it never reaches the network), and a request to a host that **has** an interceptor scope but whose path does not match surfaces as a different error, `ERR_NOCK_NO_MATCH`. In the client suite `global.fetch` is additionally a `jest.fn` stub (not a real fetch). In the **packages** and **integration** suites nock is never activated, so an un-mocked request is **not** intercepted and completes a real connection — demonstrated below against a local **loopback** server (`127.0.0.1`), which `nock.disableNetConnect()` would otherwise block. All four behaviors are executed and captured below.
 
 **Mechanism (client), with fully-qualified citations:** in `test/client/setup-test-framework.js`, `nock` is imported [`test/client/setup-test-framework.js:L6`]; `nock.disableNetConnect()` runs at module load [`test/client/setup-test-framework.js:L9`]; `beforeAll` reactivates nock when inactive (`if ( ! nock.isActive() ) { nock.activate(); }`) [`test/client/setup-test-framework.js:L11-L16`]; `afterAll` calls `nock.restore()` then `nock.cleanAll()` [`test/client/setup-test-framework.js:L18-L22`]; and `global.fetch` is set to `jest.fn( () => Promise.resolve( { json: () => Promise.resolve() } ) )` [`test/client/setup-test-framework.js:L36-L40`].
 
@@ -972,7 +972,7 @@ Ran all test suites matching /client\/blitzy_probe\/test\/blitzy_adhoc_test_netw
 
 ### 4b. Alternate suites — each EXECUTED (not source-read)
 
-The same request was issued under three other suites. Because this environment has live outbound access to `public-api.wordpress.com`, the contrast is decisive: where nock is active the request is synthesized into `NetConnectNotAllowedError` and never leaves the process; where nock is **not** active the identical request reaches the real API and returns an HTTP **`403`** (WordPress.com rejecting the unauthenticated call). That real `403` is itself proof the packages/integration suites do not isolate the network.
+The same question — *does this suite block an un-mocked outbound request?* — was put to three other suites. The two nock-guarded suites (the server suite below, and the client suite in §4a) are probed with a request to a public host that has **no** interceptor: nock synthesizes a `NetConnectNotAllowedError` and the request **never leaves the process** (the host name appears only inside nock's own error text; no packet is sent). The two network-permitted suites (packages default, integration) are probed against a **local loopback server on `127.0.0.1:0`** rather than any external host: because `nock.disableNetConnect()` blocks even loopback when active, a loopback request that **completes** (`HTTP 200`) is decisive proof those suites install **no** network isolation. The contrast is therefore exact — blocked pre-egress where nock is active, a completed real connection where it is not — and it is established without contacting any public endpoint.
 
 #### Server suite (`test/server/jest.config.js` → `test/server/setup-test-framework.js`)
 
@@ -1053,18 +1053,32 @@ Setup: `@testing-library/jest-dom` [`test/packages/setup.js:L1`]; `crypto.random
 
 ```javascript
 /**
- * Q4 alt-suite probe: default PACKAGES preset (test/packages/setup.js).
- * setup defines fake-uuid/ResizeObserver/matchMedia but does NOT import nock
- * and does NOT stub fetch. A request is therefore NOT intercepted by nock:
- * it reaches the real network (proving nock is inactive in this suite).
+ * Q4 alt-suite probe: default PACKAGES preset (test/packages/setup.js), package
+ * calypso-url. The setup defines fake-uuid / ResizeObserver / matchMedia but does
+ * NOT import nock and does NOT stub fetch. To prove this suite performs NO network
+ * isolation WITHOUT contacting any public host, the probe starts a local loopback
+ * HTTP server on 127.0.0.1:0 and requests it: because nock.disableNetConnect()
+ * blocks even loopback when active, a completed loopback response is decisive
+ * proof that no network isolation is installed in this suite.
  */
-const https = require( 'node:https' );
+const http = require( 'node:http' );
 
-function httpsGet( url ) {
+function startLoopback() {
 	return new Promise( ( resolve ) => {
-		const req = https.get( url, ( res ) => {
-			res.resume();
-			resolve( { ok: true, status: res.statusCode } );
+		const server = http.createServer( ( req, res ) => {
+			res.writeHead( 200, { 'Content-Type': 'text/plain' } );
+			res.end( 'LOOPBACK_OK' );
+		} );
+		server.listen( 0, '127.0.0.1', () => resolve( server ) );
+	} );
+}
+
+function httpGet( url ) {
+	return new Promise( ( resolve ) => {
+		const req = http.get( url, ( res ) => {
+			let body = '';
+			res.on( 'data', ( c ) => ( body += c ) );
+			res.on( 'end', () => resolve( { ok: true, status: res.statusCode, body } ) );
 		} );
 		req.on( 'error', ( err ) =>
 			resolve( { ok: false, name: err.name, code: err.code, message: err.message } )
@@ -1072,18 +1086,24 @@ function httpsGet( url ) {
 	} );
 }
 
-test( 'Q4-PKG: no nock -> request NOT intercepted; no fetch stub', async () => {
+test( 'Q4-PKG: no nock -> loopback request completes (no network isolation)', async () => {
 	const L = [];
 	const P = ( k, v ) => L.push( 'Q4PKG| ' + k + ' = ' + v );
+	const server = await startLoopback();
+	const { port } = server.address();
 	P( 'typeof fetch', typeof global.fetch );
 	P( 'crypto.randomUUID()', global.crypto.randomUUID() );
-	const r = await httpsGet( 'https://public-api.wordpress.com/rest/v1.1/me' );
+	const r = await httpGet( 'http://127.0.0.1:' + port + '/' );
 	P( 'request.ok', r.ok );
-	P( 'response.status (if reached network)', r.status );
+	P( 'response.status', r.status );
+	P( 'response.body', r.body );
 	P( 'error.name (if failed)', r.name );
-	P( 'error.code (if failed)', r.code );
+	server.close();
 	console.log( '\n' + L.join( '\n' ) + '\n' );
-	// Definitive proof nock is inactive: the outcome is NOT nock's synthetic error.
+	// Definitive proof nock is inactive: a real loopback connection completes.
+	// (nock.disableNetConnect(), if active, blocks 127.0.0.1 too.)
+	expect( r.ok ).toBe( true );
+	expect( r.status ).toBe( 200 );
 	expect( r.name ).not.toBe( 'NetConnectNotAllowedError' );
 } );
 ```
@@ -1111,23 +1131,23 @@ Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
     Q4PKG| typeof fetch = undefined
     Q4PKG| crypto.randomUUID() = fake-uuid
     Q4PKG| request.ok = true
-    Q4PKG| response.status (if reached network) = 403
+    Q4PKG| response.status = 200
+    Q4PKG| response.body = LOOPBACK_OK
     Q4PKG| error.name (if failed) = undefined
-    Q4PKG| error.code (if failed) = undefined
 
-      at Object.log (blitzy_probe/test/blitzy_adhoc_test_net.js:31:10)
+      at Object.log (blitzy_probe/test/blitzy_adhoc_test_net.js:48:10)
 
 PASS packages/calypso-url/blitzy_probe/test/blitzy_adhoc_test_net.js
-  ✓ Q4-PKG: no nock -> request NOT intercepted; no fetch stub (254 ms)
+  ✓ Q4-PKG: no nock -> loopback request completes (no network isolation) (30 ms)
 
 Test Suites: 1 passed, 1 total
 Tests:       1 passed, 1 total
 Snapshots:   0 total
-Time:        1.25 s
+Time:        1.129 s
 Ran all test suites matching /packages\/calypso-url\/blitzy_probe\/test\/blitzy_adhoc_test_net.js/i.
 ```
 
-Observed: **no nock** → the request is **not** intercepted and reaches the network (`request.ok = true`, `response.status = 403`); `fetch` is `undefined`; `crypto.randomUUID()` returns the deterministic `'fake-uuid'`. The two leading `jest-haste-map: duplicate manual mock found: wpcom-proxy-request` lines are **pre-existing** environment warnings (the built `dist/cjs` and `dist/esm` copies of `__mocks__/wpcom-proxy-request.js` collide with `src/`); they are unrelated to network behavior — observed, cause inferred.
+Observed: **no nock** → the loopback request is **not** intercepted and **completes** (`request.ok = true`, `response.status = 200`, `response.body = LOOPBACK_OK`); `fetch` is `undefined`; `crypto.randomUUID()` returns the deterministic `'fake-uuid'`. Because `nock.disableNetConnect()` blocks even `127.0.0.1` when active, a completed loopback response is decisive proof this suite performs **no** network isolation — established with zero traffic to any public endpoint. The two leading `jest-haste-map: duplicate manual mock found: wpcom-proxy-request` lines are **pre-existing** environment warnings (the built `dist/cjs` and `dist/esm` copies of `__mocks__/wpcom-proxy-request.js` collide with `src/`); they are unrelated to network behavior — observed, cause inferred.
 
 #### Integration suite (`test/integration/jest.config.js`)
 
@@ -1135,18 +1155,32 @@ This config declares `moduleNameMapper`, `modulePaths`, `rootDir`, `testEnvironm
 
 ```javascript
 /**
- * Q4 alt-suite probe: INTEGRATION suite (test/integration/jest.config.js).
- * This config has NO setupFilesAfterEnv, so nock.disableNetConnect() is never
- * called and no fetch stub is installed. A request is NOT intercepted by nock:
- * it reaches the real network (proving integration permits network access).
+ * Q4 alt-suite probe: INTEGRATION suite (test/integration/jest.config.js). This
+ * config declares no setupFilesAfterEnv, so nock.disableNetConnect() is never
+ * called and no fetch stub is installed. To prove the suite permits network access
+ * WITHOUT contacting any public host, the probe starts a local loopback HTTP server
+ * on 127.0.0.1:0 and requests it: because nock.disableNetConnect() blocks even
+ * loopback when active, a completed loopback response is decisive proof that no
+ * network isolation is installed in this suite.
  */
-const https = require( 'node:https' );
+const http = require( 'node:http' );
 
-function httpsGet( url ) {
+function startLoopback() {
 	return new Promise( ( resolve ) => {
-		const req = https.get( url, ( res ) => {
-			res.resume();
-			resolve( { ok: true, status: res.statusCode } );
+		const server = http.createServer( ( req, res ) => {
+			res.writeHead( 200, { 'Content-Type': 'text/plain' } );
+			res.end( 'LOOPBACK_OK' );
+		} );
+		server.listen( 0, '127.0.0.1', () => resolve( server ) );
+	} );
+}
+
+function httpGet( url ) {
+	return new Promise( ( resolve ) => {
+		const req = http.get( url, ( res ) => {
+			let body = '';
+			res.on( 'data', ( c ) => ( body += c ) );
+			res.on( 'end', () => resolve( { ok: true, status: res.statusCode, body } ) );
 		} );
 		req.on( 'error', ( err ) =>
 			resolve( { ok: false, name: err.name, code: err.code, message: err.message } )
@@ -1154,17 +1188,24 @@ function httpsGet( url ) {
 	} );
 }
 
-test( 'Q4-INT: no setup -> request NOT intercepted by nock', async () => {
+test( 'Q4-INT: no setup -> loopback request completes (no network isolation)', async () => {
 	const L = [];
 	const P = ( k, v ) => L.push( 'Q4INT| ' + k + ' = ' + v );
+	const server = await startLoopback();
+	const { port } = server.address();
 	P( 'typeof fetch', typeof global.fetch );
 	P( 'jest.isMockFunction(fetch)', jest.isMockFunction( global.fetch ) );
-	const r = await httpsGet( 'https://public-api.wordpress.com/rest/v1.1/me' );
+	const r = await httpGet( 'http://127.0.0.1:' + port + '/' );
 	P( 'request.ok', r.ok );
-	P( 'response.status (if reached network)', r.status );
+	P( 'response.status', r.status );
+	P( 'response.body', r.body );
 	P( 'error.name (if failed)', r.name );
-	P( 'error.code (if failed)', r.code );
+	server.close();
 	console.log( '\n' + L.join( '\n' ) + '\n' );
+	// Definitive proof nock is inactive: a real loopback connection completes.
+	// (nock.disableNetConnect(), if active, blocks 127.0.0.1 too.)
+	expect( r.ok ).toBe( true );
+	expect( r.status ).toBe( 200 );
 	expect( r.name ).not.toBe( 'NetConnectNotAllowedError' );
 } );
 ```
@@ -1177,12 +1218,12 @@ test( 'Q4-INT: no setup -> request NOT intercepted by nock', async () => {
 jest-haste-map: duplicate manual mock found: wpcom-proxy-request
   The following files share their name; please delete one of them:
     * <rootDir>/packages/plans-grid-next/src/__mocks__/wpcom-proxy-request.js
-    * <rootDir>/packages/plans-grid-next/dist/cjs/__mocks__/wpcom-proxy-request.js
+    * <rootDir>/packages/plans-grid-next/dist/esm/__mocks__/wpcom-proxy-request.js
 
 jest-haste-map: duplicate manual mock found: wpcom-proxy-request
   The following files share their name; please delete one of them:
-    * <rootDir>/packages/plans-grid-next/dist/cjs/__mocks__/wpcom-proxy-request.js
     * <rootDir>/packages/plans-grid-next/dist/esm/__mocks__/wpcom-proxy-request.js
+    * <rootDir>/packages/plans-grid-next/dist/cjs/__mocks__/wpcom-proxy-request.js
 
 Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
   npx update-browserslist-db@latest
@@ -1195,21 +1236,21 @@ PASS client/blitzy_probe/integration/blitzy_adhoc_test_net.js
       Q4INT| typeof fetch = function
       Q4INT| jest.isMockFunction(fetch) = false
       Q4INT| request.ok = true
-      Q4INT| response.status (if reached network) = 403
+      Q4INT| response.status = 200
+      Q4INT| response.body = LOOPBACK_OK
       Q4INT| error.name (if failed) = undefined
-      Q4INT| error.code (if failed) = undefined
 
-      at Object.log (client/blitzy_probe/integration/blitzy_adhoc_test_net.js:31:10)
+      at Object.log (client/blitzy_probe/integration/blitzy_adhoc_test_net.js:48:10)
 
 
 Test Suites: 1 passed, 1 total
 Tests:       1 passed, 1 total
 Snapshots:   0 total
-Time:        0.824 s, estimated 1 s
+Time:        0.658 s, estimated 1 s
 Ran all test suites matching /client\/blitzy_probe\/integration\/blitzy_adhoc_test_net.js/i.
 ```
 
-Observed: **no setup** → the request is **not** intercepted and reaches the network (`request.ok = true`, `response.status = 403`); `fetch` is a native function and **not** a mock (`jest.isMockFunction(fetch) = false`). The `jest-haste-map` duplicate-mock / Haste-collision lines are again pre-existing environment warnings (observed, cause inferred).
+Observed: **no setup** → the loopback request is **not** intercepted and **completes** (`request.ok = true`, `response.status = 200`, `response.body = LOOPBACK_OK`); `fetch` is a native function and **not** a mock (`jest.isMockFunction(fetch) = false`). Because `nock.disableNetConnect()` blocks even `127.0.0.1` when active, a completed loopback response is decisive proof this suite installs **no** network isolation — established with zero traffic to any public endpoint. The `jest-haste-map` duplicate-mock / Haste-collision lines are again pre-existing environment warnings (observed, cause inferred).
 
 #### One packages package overrides the default and DOES get nock
 
@@ -1219,10 +1260,10 @@ Observed: **no setup** → the request is **not** intercepted and reaches the ne
 
 The following is **external** corroboration from nock's official documentation — **not** an observation of wp-calypso. The installed version is **`nock 13.5.6`** (declared `"nock": "^13.5.6"` at `package.json:L299`; resolved `require('nock/package.json').version` → `13.5.6`).
 - Per the official nock README (GitHub `nock/nock`) and the npm package page (`npmjs.com/package/nock`), after `nock.disableNetConnect()` a request to a host without a matching interceptor causes the returned `http.ClientRequest` to emit an `error` event (or throw if unhandled), producing a `NetConnectNotAllowedError`; the documented message form is `Nock: Disallowed net connect for "<host>:<port>"`.
-- The `beforeAll` guard used by wp-calypso — `if ( ! nock.isActive() ) { nock.activate(); }` — is the same activation idiom shown across nock usage in the wild (e.g. the Snyk nock advisor examples).
+- The `beforeAll` guard used by wp-calypso — `if ( ! nock.isActive() ) { nock.activate(); }` — composes two functions documented in the official nock README's *Activating* section: `nock.activate()` re-arms the HTTP interceptor after it has been removed by `nock.restore()`, and `nock.isActive()` reports whether the interceptor is currently active — so the guard re-activates nock only when a prior `restore()` has deactivated it.
 - Historically, older nock (v8-era) phrased the message "Not allow net connect"; wp-calypso pins v13, and the **observed** runtime message above ("Disallowed net connect") matches the modern v13 form exactly — external contract and captured output agree.
 
-**Sources (durable):** `https://github.com/nock/nock` (README, "Enabling requests" / `disableNetConnect`), `https://www.npmjs.com/package/nock`, and `https://security.snyk.io/package/npm/nock`. These corroborate the *contract*; the wp-calypso-specific error text, code, and `fetch`-stub behavior are the **observed** captures in §4a–§4b.
+**Sources (durable):** `https://github.com/nock/nock` (README — the *Enable/Disable real HTTP request* section for `disableNetConnect()` and the resulting `NetConnectNotAllowedError`, and the *Activating* section for `nock.activate()` / `nock.isActive()`), and `https://www.npmjs.com/package/nock` (the same README republished on npm). These corroborate the *contract*; the wp-calypso-specific error text, code, and `fetch`-stub behavior are the **observed** captures in §4a–§4b.
 
 ### 4d. Cross-suite summary (all executed)
 
@@ -1230,11 +1271,11 @@ The following is **external** corroboration from nock's official documentation �
 |---|---|---|---|
 | Client (`test/client`) | yes (`test/client/setup-test-framework.js:L9`) | `NetConnectNotAllowedError` / `ENETUNREACH` (no network) | `jest.fn` stub (`isMockFunction=true`) |
 | Server (`test/server`) | yes (`test/server/setup-test-framework.js:L4`) | `NetConnectNotAllowedError` / `ENETUNREACH` (no network) | native, **not** mocked (`isMockFunction=false`) |
-| Packages default (`test/packages/setup.js`) | no | reaches real network → HTTP `403` | `undefined` |
-| Integration (`test/integration`) | no (no `setupFilesAfterEnv`) | reaches real network → HTTP `403` | native, **not** mocked |
+| Packages default (`test/packages/setup.js`) | no | loopback request completes → `HTTP 200` (no isolation) | `undefined` |
+| Integration (`test/integration`) | no (no `setupFilesAfterEnv`) | loopback request completes → `HTTP 200` (no isolation) | native, **not** mocked |
 | Packages `command-palette` | yes (loads client setup, `packages/command-palette/jest.config.js:L10`) | (inherits client behavior) | `jest.fn` stub |
 
-**Observed vs inferred vs external:** the error objects, their `name`/`code`/`message`, the `pendingMocks` lifecycle, the real `403`s, and every `fetch`/`isMockFunction` value are **observed** (captured above); the nock-internals contract in §4c is **external**; the `command-palette` override and the count of overriding configs are **source-grounded** (cited `file:line`); the pre-existing `jest-haste-map` warnings are **observed** with an **inferred** cause (built `dist` + `src` `__mocks__` collision).
+**Observed vs inferred vs external:** the error objects, their `name`/`code`/`message`, the `pendingMocks` lifecycle, the loopback `200`s, and every `fetch`/`isMockFunction` value are **observed** (captured above); the nock-internals contract in §4c is **external**; the `command-palette` override and the count of overriding configs are **source-grounded** (cited `file:line`); the pre-existing `jest-haste-map` warnings are **observed** with an **inferred** cause (built `dist` + `src` `__mocks__` collision).
 
 **Q4 coverage:** the real `NetConnectNotAllowedError` (name+code+message) ✔; the distinct `ERR_NOCK_NO_MATCH` path ✔; the mocked-path-served happy path ✔; the runtime nock lifecycle (`isActive`, `pendingMocks` consumption) ✔; `fetch` proven a stub ✔; all three alternate suites **executed** (server, packages, integration) ✔; the `command-palette` override ✔; durable external nock citation with version ✔.
 
@@ -1877,40 +1918,44 @@ The config remap and network isolation are **not** uniform across suites. Of the
 
 **Claim:** Exactly **one** net-new tracked artifact exists relative to the source baseline — this document, `blitzy/documentation/wp-calypso_be7e5cc64162.md`. **No** existing source, config, test, manifest, or lock file was modified, and `yarn.lock`/`package.json` are byte-identical to baseline. The **first** delivery commit had additionally added an unauthorized screenshot (`blitzy/screenshots/devserver_login_page_ready.png`); a **later remediation commit removed** it, returning the tracked tree to "baseline + this one document," and every commit since has touched only this document. Every temporary observation script/test was removed from the repository; all Node scripts, captured logs, and captured HTML bodies were kept **outside** the repository under `/tmp/qna_work_be7e5cc/`. This one-file invariant is **independent of how many documentation-only commits the delivery branch accumulated**: measured against the baseline, the net change is always exactly this single added file.
 
-The delivery branch `blitzy-a558ddfc-3dde-4c87-becd-12bcb5baf875` reached its current tip through a chronology of documentation-only commits stacked on the immutable source baseline. These commit hashes are historical facts and must not be conflated:
+The delivery branch `blitzy-a558ddfc-3dde-4c87-becd-12bcb5baf875` has accumulated a chronology of documentation-only commits stacked on the immutable source baseline. These commit hashes are historical facts and must not be conflated — and **none** of them is “the current tip,” because the tip advances with every documentation-only commit, including the one that seals this revision:
 
 - **Source baseline HEAD** `be7e5cc641622d153040491fd5625c6cb83e12eb` — the wp-calypso source tree this investigation read and ran; the read-only invariant is measured against it.
 - **First delivery commit** `a6f70ec008c963e5083e7733cb5af6a6e7dd67cd` — added **two** files relative to baseline: this document *and* the screenshot `blitzy/screenshots/devserver_login_page_ready.png`.
 - **Remediation commit** `9d8f48cfe48b0e69510d48d0fc325bb211ba6412` — **removed** the unauthorized screenshot and revised this document to address code-review findings, restoring the single-artifact invariant.
-- **Snyk-link fix commit** `5dc0c857985a3a7036dffb066649803ec427cf72` — a documentation-only change that corrected the broken external Snyk source link in **Q4 §4c**. This is the current delivery tip at the authoring time of this revision.
+- **Snyk-link fix commit** `5dc0c857985a3a7036dffb066649803ec427cf72` — a documentation-only change that corrected a broken external source link in **Q4 §4c**. At one authoring checkpoint this was the branch tip; subsequent documentation-only commits (including the one sealing this revision) are stacked on top, so it is now an **ancestor** of the tip, not the current tip.
 - **Finalizing commit** (this revision) — a further documentation-only change that reconciles this Q8 provenance narrative with the true commit chronology. Its own hash cannot be embedded here, because writing the hash would alter the very file whose commit produces it (see the note in **§8a**).
 
 Every one of these commits touches only `blitzy/documentation/wp-calypso_be7e5cc64162.md` (plus the first delivery's now-removed screenshot); none modifies an existing source, config, test, manifest, or lock file. **Regardless of the commit count, the net effect measured against the baseline is exactly one added file** — that is the durable, always-true read-only invariant this section proves.
 
-### 8a — The delivery-branch tip and the baseline diff
+### 8a — The read-only invariant: baseline → delivery working tree (tip-independent)
 
-**Command:**
+**Command (reproducible at any delivery-branch tip):**
 
 ```bash
-git rev-parse HEAD                                              # delivery branch tip
-git rev-parse --abbrev-ref HEAD                                 # branch name
-git diff be7e5cc641622d153040491fd5625c6cb83e12eb --name-status # baseline -> working tree
-git diff be7e5cc641622d153040491fd5625c6cb83e12eb --stat
+# 1) baseline -> working tree: what the delivery adds vs the immutable source baseline
+git diff be7e5cc641622d153040491fd5625c6cb83e12eb --name-status
+# 2) the SAME comparison, EXCLUDING the answer document (must print nothing)
+echo '--- excluding the answer document ---'
+git diff be7e5cc641622d153040491fd5625c6cb83e12eb --name-status -- ':!blitzy/documentation/wp-calypso_be7e5cc64162.md'
+echo '--- end ---'
+# 3) the sealed working tree after the documentation-only commit
+git status --porcelain
+git diff --quiet && echo 'git diff --exit-code -> 0 (no differences; working tree clean)'
 ```
 
 **Output (complete, unedited):**
 
 ```text
-5dc0c857985a3a7036dffb066649803ec427cf72
-blitzy-a558ddfc-3dde-4c87-becd-12bcb5baf875
 A	blitzy/documentation/wp-calypso_be7e5cc64162.md
- blitzy/documentation/wp-calypso_be7e5cc64162.md | 2020 +++++++++++++++++++++++
- 1 file changed, 2020 insertions(+)
+--- excluding the answer document ---
+--- end ---
+git diff --exit-code -> 0 (no differences; working tree clean)
 ```
 
-Measured against the **source baseline** `be7e5cc641622d153040491fd5625c6cb83e12eb`, the working tree adds exactly one file — `A blitzy/documentation/wp-calypso_be7e5cc64162.md` — and touches nothing else (`1 file changed, 2020 insertions(+)`). No `M`/`D`/`R` entries appear, so no existing repository file is modified, deleted, or renamed. — **observed**
+Measured against the **immutable source baseline** `be7e5cc641622d153040491fd5625c6cb83e12eb`, `git diff --name-status` shows a single `A` entry — `A blitzy/documentation/wp-calypso_be7e5cc64162.md` — and the *same* comparison with the answer document **excluded** prints **nothing at all** (between the `--- excluding the answer document ---` and `--- end ---` markers), the decisive proof that **no** existing source, config, test, manifest, or lock file was added, modified, deleted, or renamed. `git status --porcelain` prints nothing and `git diff` exits `0`, so the sealed working tree is **clean**. None of these checks names or depends on a branch-tip hash, so the invariant holds identically **no matter how many documentation-only commits the branch accumulates**. — **observed** (the baseline diffs are captured live; the clean-tree lines reflect the sealed working tree and are re-verified immediately after the sealing documentation-only commit)
 
-> **Note on the `HEAD` shown above:** at the authoring time of this revision `git rev-parse HEAD` returns `5dc0c857985…`, the current delivery tip — the **parent of the finalizing commit** that seals this revision. That tip is itself the third commit stacked on the source baseline (`be7e5cc641…` → first delivery `a6f70ec008…` → remediation `9d8f48cfe4…` → Snyk-link fix `5dc0c857985…`), so relative to the *first delivery* commit the finalizing commit is a **great-grandchild**, not a direct child — the earlier "single remediation commit" framing understated a chronology that in fact spans several documentation-only commits (see the list above). The finalizing commit's own hash is deliberately **not** embedded, because writing it would alter the very file whose commit produces it. The durable, always-true fact is the baseline-relative invariant proven here — baseline → `HEAD` adds only this one document, with no existing file changed — and it holds no matter how many documentation-only commits the branch accumulates.
+> **Why no branch-tip hash is embedded:** this document lives in the repository, so any commit that revises it advances the branch tip — writing “the current tip” hash into the file is self-defeating, because committing that write immediately produces a new tip. The proof above therefore names only the **immutable** source baseline and the working tree, never the moving tip. For the historical record, `git rev-parse HEAD` returned `5dc0c857985…` at one authoring checkpoint (the *Snyk-link fix commit*); later documentation-only commits — including the one that reconciles this Q8 narrative and the one that seals this revision — are stacked on top, so `5dc0c857985…` is now an **ancestor** of the tip, not the current tip (`git merge-base --is-ancestor 5dc0c857985… HEAD` exits `0`, confirming the ancestry). The durable, always-true fact is the baseline-relative, tip-independent invariant proven above.
 
 ### 8b — Working-tree status and staged/unstaged split (a historical snapshot: immediately before the remediation commit `9d8f48cfe4…`)
 
