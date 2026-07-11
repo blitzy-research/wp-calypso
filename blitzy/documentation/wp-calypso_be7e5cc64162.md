@@ -15,11 +15,17 @@ source tree.
   that drive the `calc()` layout, and the viewport breakpoints where layout changes.
 
 **Commit provenance.** The pinned Calypso source under investigation is branch
-`wp-calypso_be7e5cc64162`, source HEAD `be7e5cc641622d153040491fd5625c6cb83e12eb`. The
-destination checkout that contains this pinned tree is at HEAD
-`acf63ee7ad64a96491ba2945a70db04f96d89627`; every `file:line` citation below was verified
-against that checkout. All runtime output was captured on Node.js `v22.23.1` / Yarn `4.0.2`
-on Linux.
+`wp-calypso_be7e5cc64162`, **source HEAD `be7e5cc641622d153040491fd5625c6cb83e12eb`** — a frozen
+commit that never changes. **Every `file:line` citation in this document is anchored to that
+frozen source commit** and was verified against it. The destination checkout that carries this
+pinned source tree (and this answer document) is on branch
+`blitzy-f1d51966-8d37-4dd3-9955-7234d47b43af`; its HEAD **advances with each doc-only revision**
+of this file, so no single destination-HEAD hash is stable enough to be load-bearing. For
+transparency, the destination HEAD immediately before the commit that adds this revision of the
+document was `4fa651ddbd44a2732cccf1ad7c3c3113e8e324e2`, and it advances by one commit when this
+revision is committed. Because the source tree the citations point at is frozen at `be7e5cc…`,
+the citations remain valid regardless of how the destination HEAD moves. All runtime output was
+captured on Node.js `v22.23.1` / Yarn `4.0.2` on Linux.
 
 **Observed vs. inferred.** Values labelled **[OBSERVED]** were captured live from the running
 server or browser. Values labelled **[SOURCE-DERIVED]** were read from SCSS/JS that compiles
@@ -43,6 +49,7 @@ synthetic probe and are never the basis of a reported canonical value.
 - [Q2 — Reader stream: endpoints and Redux actions on initial load](#q2--reader-stream-endpoints-and-redux-actions-on-initial-load)
 - [Q3 — Authentication detection before render, and storage inspected](#q3--authentication-detection-before-render-and-storage-inspected)
 - [Q4 — Responsive sidebar: header padding/margin, custom properties, breakpoints](#q4--responsive-sidebar-header-paddingmargin-custom-properties-breakpoints)
+- [Observed UI and accessibility findings (completeness disclosure)](#observed-ui-and-accessibility-findings-completeness-disclosure)
 - [Architecture and data-flow diagrams](#architecture-and-data-flow-diagrams)
 - [Coverage pass — every named item: Observed vs. Inferred](#coverage-pass--every-named-item-observed-vs-inferred)
 - [AAP compliance matrix (complete)](#aap-compliance-matrix-complete)
@@ -706,6 +713,57 @@ failure was swallowed by the registered `onError: noop`
 its prior stream contents. (Note the "Latest" view uses `/read/tags/posts` with
 `orderBy=date`, `number=4 == INITIAL_FETCH`, confirming Q2.b.) **[OBSERVED]**
 
+**User-facing consequence of `onError: noop` (offline search, exercised live).** The
+Redux/network trace above shows the failure is swallowed silently at the data-layer. The same
+failure was then exercised through the *canonical UI entry point* to record what the user
+actually sees. On `http://calypso.localhost:3000/reader/search`, DevTools network emulation was
+set to **Offline** and a fresh, uncached query was submitted. The search-results area surfaces
+**no inline error and no retry control** — it remains on the loading skeleton indefinitely:
+
+```text
+# DevTools evaluate_script over the search-results container, sampled ~8s and again ~18s after
+# the offline query was submitted (state identical at both samples):
+{ "online": false,
+  "loadingSkeletonHeadings": 8,      // "Loading interesting posts…" PostPlaceholder headings
+  "placeholderElements": 58,         // gray skeleton cards still mounted
+  "retryAffordancesInContent": 0,    // no "Retry"/"Try again" control anywhere in the results area
+  "inlineErrorInContentArea": false, // no inline error text in the results area
+  "connectivityToastPresent": true } // the only feedback: a single global top-right notice
+```
+
+The only user feedback is a **transient, non-actionable global toast** ("Could not get results
+for query: …") — not an inline, retryable error inside the stream. This is the direct UI
+expression of the swallowed failure: `onError: noop`
+(`client/state/data-layer/wpcom/read/streams/index.js:L519`, `:L526`; handler-registration block
+`:L514`–`:L529`) never dispatches a failure action and never clears the stream's `isRequesting`
+flag, so `placeholderFactory` in `client/reader/search-stream/post-results.jsx:L18`–`:L27` keeps
+rendering `PostPlaceholder` skeletons for as long as a query is present. Evidence:
+`blitzy/screenshots/reverify_f1_offline_search_stuck_desktop.png`. **[OBSERVED]**
+
+**Reconnect behavior — recovery is tied to a new user action, not to reconnection.** After
+restoring connectivity (**Fast 4G**), the stuck query did **not** re-request or clear on its own
+within ~21 s of observation — the skeleton state persisted (still 8 headings / 58 placeholders /
+0 result cards). Recovery occurred only when a **new** query was submitted, which rendered real
+results (0 skeleton headings). Evidence:
+`blitzy/screenshots/reverify_f1_search_recovered_desktop.png`. This **refines** any
+characterization of an "automatic retry on reconnect": because `onError: noop` leaves the stream
+in a non-re-requesting state, the offline stream is **non-terminal and non-actionable**, and the
+UI does not self-heal on reconnect — the user must re-issue the query. This is a Calypso
+*application* behavior; under the read-only-source scope of this task (AAP §0.3.2), it is
+disclosed here for completeness and no source-code change is made. **[OBSERVED]**
+
+### Q2.g — Intermittent unexpected-error page on stream navigation
+
+Navigating between Reader streams (for example, Recommended → First Posts) can *intermittently*
+land on Calypso's generic unexpected-error page — title "We're sorry, but an unexpected error has
+occurred" (`client/layout/error.jsx:L16`; server-rendered equivalent
+`client/document/500.jsx:L25`). Exercised live, the Recommended → First Posts navigation
+**did not** reproduce the error on retry: the First Posts stream loaded normally with fresh
+content. The condition is therefore **intermittent and not consistently reproducible** on a
+single canonical run, and — as a Calypso application behavior — it is out of scope for a
+source-code change under AAP §0.3.2; it is disclosed here for completeness.
+**[OBSERVED — intermittent, did not reproduce on retry]**
+
 
 ---
 
@@ -1003,8 +1061,19 @@ layoutClass: "layout is-group-reader is-section-reader focus-content has-header-
 counts     : { .sidebar:0, .sidebar__header:0, .global-sidebar:0, .sidebar-v2:0, .sidebar-v2__header:0 }
 ```
 
-A CSSOM scan (51 stylesheets / 14,358 rules) matched **zero** sidebar selectors — the sidebar
-SCSS is code-split out of the logged-out Reader bundle entirely. A real sidebar requires a
+A CSSOM scan matched **zero** sidebar-**component** selectors. The scan's raw stylesheet/rule
+totals are **transient** — they vary run-to-run with code-splitting and HMR chunk loading (for
+example, `51 stylesheets / 14,358 rules` on one run versus `43 stylesheets / 13,158 rules` on a
+later run), so the count itself is **not** load-bearing and is reported only for context. What
+is stable and load-bearing is the selector result: the sidebar-**component** selectors that
+would carry the Q4 header padding/margin — `.sidebar__header`, `.global-sidebar`, `.sidebar-v2`,
+`.sidebar-v2__header` — match **zero** rules across runs (`componentSelectorMatches: 0`), i.e.
+the sidebar-component SCSS is code-split out of the logged-out Reader bundle. Only two generic
+layout descendant rules that reference a bare `.sidebar` remain in the always-loaded core layout
+stylesheet (`.layout__secondary .sidebar` and `.layout.focus-sites .layout__secondary .sidebar`;
+`bareSidebarMatches: 2`), and they style a `.sidebar` element that never mounts here — the live
+DOM has zero sidebar nodes (`counts` above) and the layout root carries `has-no-sidebar`. A real
+sidebar requires a
 logged-in my-sites/reader context; no credentials were available (the blocker). A screenshot
 of the rendered page confirms a **top horizontal masthead** (logo left; "Discover / Popular
 Tags / Search / Log In / Sign Up" right) with a centered content column and **no left
@@ -1181,6 +1250,179 @@ at which the sidebar/layout changes; the masterbar (782) and WP base-styles (600
 thresholds are separate. This corrects any overstatement that the declared scale is the
 complete breakpoint set.
 
+### Q4.d — Responsive layout defects observed on the logged-out Reader (masterbar overflow, mobile search overlap)
+
+Q4.0 established that no left sidebar mounts on the logged-out Reader, so the sidebar's own
+responsive collisions cannot be observed in that state. That does **not** mean the logged-out
+Reader is free of responsive layout defects: exercising the *canonical* logged-out surfaces at
+mobile widths surfaces two concrete, measurable layout breakages — a masterbar horizontal
+overflow and a search-sorter/input overlap. Both are Calypso **application** behaviors; under
+the read-only-source scope of this task (AAP §0.3.2) they are disclosed here for completeness
+and no source-code change is made.
+
+**F3 — masterbar horizontal overflow / "Sign Up" clipping (375px and 500px).** For the
+logged-out Reader masterbar, the reader nav items live in a `.masterbar__login-links` wrapper
+(`client/layout/masterbar/logged-out.jsx:L234`, rendered only when `sectionName === 'reader'`,
+`:L233`–`:L240`), and below 781px each item is laid out with `height: 30px; width: unset
+!important; padding: 0 8px; margin: 8px 8px 0 0`
+(`client/layout/masterbar/style.scss:L88`–`:L105`, i.e. `@media (max-width: 781px)`). Because
+the items are not allowed to wrap or compress, the row's intrinsic width exceeds the viewport
+and the document overflows horizontally. Measured live (network restored, `online: true`):
+
+```text
+# 375px viewport, GET http://calypso.localhost:3000/discover (logged-out Reader):
+{ "innerWidth": 375, "docScrollWidth": 383, "horizontalOverflowPx": 8,
+  "masterbar":  { "scrollWidth": 383, "clientWidth": 375, "overflowInternal": 8 },
+  "loginLinks": { "right": 382.63 },                  // wrapper extends 7.63px past the 375 edge
+  "signUp":     { "right": 374.63, "clippedPastViewportRightBy": -0.37 } }
+
+# 500px viewport, same route:
+{ "innerWidth": 500, "docScrollWidth": 554, "horizontalOverflowPx": 54,
+  "masterbarOverflowInternal": 54,
+  "loginLinksRight": 553.63, "loginLinksRightPastViewport": 53.63,
+  "signUpRight": 545.63, "signUpRightPastViewport": 45.63 }   // "Sign Up" clipped ~46px past edge
+```
+
+At 375px the row overflows the viewport by 8px; at 500px the overflow grows to 54px and the
+"Sign Up" button's right edge lands 45.63px beyond the viewport, so the button renders
+truncated (only "Si" is visible). Evidence:
+`blitzy/screenshots/reverify_f3_masterbar_overflow_375.png` (8px overflow) and
+`blitzy/screenshots/reverify_f3_signup_clipped_500.png` ("Sign Up" clipped to "Si").
+**[OBSERVED]**
+
+**F4 — search sort-picker overlaps the search input at narrow widths (~383px).** On
+`/reader/search` with a query present, the "Relevance / Date" sorter is rendered inside the
+fixed area (`client/reader/search-stream/index.jsx:L196`–`:L210`) with the class
+`search-stream__sort-picker` (`:L127`–`:L129`). That class is `position: absolute`
+(`client/reader/search-stream/style.scss:L227`–`:L228`; base `right: 16px; top: 100px; width:
+170px` at `:L230`–`:L232`), and for the logged-out Reader it is repositioned to `top: 64px;
+right: 85px` (`div.is-section-reader:not(.is-logged-in) .search-stream__sort-picker`,
+`:L244`–`:L247`). Because it is absolutely positioned over the same fixed area that holds the
+search input card (`.search-stream__input-card`, `index.jsx:L182`), at narrow widths it lands
+on top of the input. Measured live at 383px:
+
+```text
+# 383px viewport, GET http://calypso.localhost:3000/reader/search?q=photography:
+sortPicker : { position: "absolute", cssTop: "64px", cssRight: "85px",
+               left: 128, right: 298, top: 354, bottom: 394, width: 170, height: 40 }
+searchBox  : { left: 89, right: 294, top: 348, bottom: 399, width: 205, height: 51 }
+overlap(sortPicker vs searchBox): { xOverlapPx: 166, yOverlapPx: 40, overlaps: true }
+```
+
+The sorter overlaps the search input by 166px horizontally and 40px vertically, covering the
+right portion of the field so the typed query is visually truncated (only "photo…" of
+"photography" remains visible beside the "Relevance | Date" pills). The computed `cssTop: 64px`,
+`cssRight: 85px`, `width: 170px` match the logged-out override at
+`client/reader/search-stream/style.scss:L232,L246-L247` exactly. Evidence:
+`blitzy/screenshots/reverify_f4_search_sorter_overlap_383.png`. **[OBSERVED]**
+
+**Correction to earlier framing.** These two findings correct any implication (including in
+Q4.0) that responsive collision/overflow is "not observable" on the logged-out Reader for lack
+of a sidebar: the sidebar variant is indeed absent, but the masterbar and the search sorter
+exhibit their own observable, measurable responsive breakages at mobile widths. As Calypso
+application defects they remain out of scope for a source-code fix under AAP §0.3.2, and are
+recorded here solely to keep the answer complete and honest. **[OBSERVED]**
+
+
+---
+
+## Observed UI and accessibility findings (completeness disclosure)
+
+The four questions do not ask about accessibility or console health directly, but the rules
+require exercising *every condition the question implies* — including error/edge and
+transitional states — and answering completely and honestly. While observing the canonical
+logged-out Reader at runtime to answer Q2 and Q4, three additional Calypso **application**
+behaviors were observed on the same surfaces. They are recorded here for completeness. Under the
+read-only-source scope of this task (AAP §0.3.2 — "Any modification, addition, or deletion of
+existing source-repository files" and "any code contribution beyond the answer document" are out
+of scope), no source-code change is made; each item is cited to its code-level root cause and
+labelled `[OBSERVED]`.
+
+### F2 — The Reader "Subscribe" control is a mouse-only `<div>` (keyboard-inoperable)
+
+On the compact Reader post card the follow control is rendered as
+`<ReaderFollowButton tagName="div" … iconSize={ 20 } />`
+(`client/blocks/reader-post-card/compact.jsx:L69`, `:L72`). `ReaderFollowButton`'s default
+`tagName` is `'button'` (`client/blocks/follow-button/button.jsx:L28`), but the explicit
+`tagName="div"` makes it render via
+`createElement( this.props.tagName, { onClick, className, title }, [ … ] )`
+(`:L80`–`:L88`) — which attaches only an `onClick` handler and supplies **no** `role`, **no**
+`tabIndex`, and **no** keyboard handler. A live DOM audit of the logged-out `/discover` stream
+confirms every follow control is a non-focusable div:
+
+```text
+# live evaluate_script over all follow/subscribe controls on /discover (375px viewport):
+followControlCount : 7
+each control        : { tagName: "div", role: null, tabIndex: -1, hasTabIndexAttr: false,
+                        ariaLabel: null, title: "Subscribe",
+                        className: "button follow-button has-icon", width: 20, height: 25 }
+anyFollowTabbable   : false     # none of the 7 controls are reachable by keyboard Tab
+```
+
+Because `tabIndex` is `-1` and the element is a `<div>` with no `role`, the control is skipped by
+sequential keyboard navigation and cannot be activated with Enter/Space — it is operable only by
+mouse/touch. Evidence: `blitzy/screenshots/reverify_f2_f5_subscribe_target_375.png` (the small
+"+" affordance at the card byline). **[OBSERVED]**
+
+### F5 — Multiple interactive touch targets are below the 44×44px guideline
+
+The same audit measured the rendered size of representative interactive elements on the
+logged-out Reader; several fall under the commonly-cited 44×44px minimum touch-target size (the
+`@media (max-width: 781px)` masterbar items are explicitly `height: 30px` at
+`client/layout/masterbar/style.scss:L94`, and the follow button uses `iconSize: 20` at
+`client/blocks/follow-button/button.jsx:L27`):
+
+```text
+# live getBoundingClientRect (375px viewport), width × height, under44 flag:
+subscribe/follow control : 20    × 25   under44=true
+masterbar nav link       : 61.89 × 30   under44=true   (height 30 < 44)
+section nav tab          : 126.3 × 37   under44=true   (height 37 < 44)
+Share button             : 35.69 × 40   under44=true   (both dimensions < 44)
+byline author link       : 53.11 × 14   under44=true   (height 14 < 44)
+```
+
+Every measured target is under 44px in at least one dimension; the subscribe control (20×25) and
+the byline link (…×14) are the smallest. Evidence:
+`blitzy/screenshots/reverify_f2_f5_subscribe_target_375.png`. **[OBSERVED]**
+
+### F7 — Opening the Reader Share menu emits a React "key"-spread warning
+
+The Share popover builds a `popoverProps` object that includes a `key`:
+`const popoverProps = { key: 'menu', context, isVisible, position, className }`
+(`client/blocks/reader-share/index.jsx:L118`–`:L124`), and the social-share selection then
+spreads that object into the menu component:
+`<ReaderPopoverMenu { ...props.popoverProps } … />`
+(`client/blocks/reader-share/social.jsx:L112`–`:L114`). Spreading an object that carries `key`
+through JSX triggers React's key-spread warning. Clicking a post's "Share" button on the
+logged-out `/discover` stream produced it verbatim in the console:
+
+```text
+Warning: A props object containing a "key" prop is being spread into JSX:
+  let props = %s;
+  <%s {...props} />
+React keys must be passed directly to JSX without using spread:
+  let props = %s;
+  <%s key={someKey} {...props} />%s
+  {key: someKey, context: ..., isVisible: ..., position: ..., className: ...,
+   popoverTitle: ..., onClose: ..., children: ...} ReaderPopoverMenu
+    at ReaderSocialShareSelection (app:///./blocks/reader-share/social.jsx:100:77)
+    at ReaderShare (app:///./blocks/reader-share/index.jsx:61:5)
+    at CompactPost (app:///./blocks/reader-post-card/compact.jsx:62:5)
+    …
+```
+
+The warning fires specifically when the Share menu opens; the popover itself renders and
+functions correctly (Facebook / X / Copy link options), so this is a developer-console warning
+rather than a user-visible break. Evidence:
+`blitzy/screenshots/reverify_f7_share_keyspread_375.png`. (For completeness: the logged-out
+Reader console also carries unrelated, pre-existing React-18-migration warnings —
+`ReactDOM.render` deprecation, `findDOMNode` deprecation, a string-ref warning, and a
+`selectedItem` unknown-prop warning — none introduced by this documentation task and all out of
+scope under AAP §0.3.2.) **[OBSERVED]**
+
+All three items are Calypso application behaviors; per AAP §0.3.2 the repository source is
+read-only for this task, so they are disclosed here rather than fixed in code.
+
 
 ---
 
@@ -1289,6 +1531,64 @@ marks how each value was established.
 - Breakpoints — **[OBSERVED]** 782px masterbar triplet (46→32, inclusive); declared scale vs.
   actually-consumed queries disambiguated.
 
+**Additional observed findings (QA completeness disclosures).** Beyond the four question
+clusters, runtime QA surfaced onboarding-relevant behaviours that this document discloses in
+full. Each is a Calypso **application-code** matter; per AAP §0.3.2 (read-only source) the code
+remediation is **out of scope**, so each is recorded here as an observation with `file:line`
+grounding and screenshot evidence rather than fixed.
+
+- **F1 — Offline Reader-search failure UX** — **[OBSERVED]** (Q2.f). With the network forced
+  Offline mid-query the stream stays on an indefinite loading skeleton (8 heading placeholders /
+  58 placeholder elements, `retryAffordancesInContent:0`, `inlineErrorInContentArea:false`); a
+  connectivity toast appears but the content area never shows an inline error or retry. Recovery
+  occurs only when a **new** query is issued — this **refines** the QA-alleged "auto-retry on
+  reconnect". Root cause: the data-layer `onError: noop` (`client/state/data-layer/wpcom/read/streams/index.js:L519,:L526`)
+  and the placeholder-only render (`client/reader/search-stream/post-results.jsx:L18-L27`). Evidence:
+  `blitzy/screenshots/reverify_f1_offline_search_stuck_desktop.png`,
+  `blitzy/screenshots/reverify_f1_search_recovered_desktop.png`.
+- **F2 — "Subscribe" control is a mouse-only `<div>`** — **[OBSERVED]** (§"Observed UI and
+  accessibility findings" → F2). All 7 follow controls render as `<div class="button follow-button">`
+  with `role:null`, `tabIndex:-1`, not focusable/operable by keyboard (`anyFollowTabbable:false`).
+  Root cause: `client/blocks/reader-post-card/compact.jsx:L69` passes `tagName="div"`;
+  `client/blocks/follow-button/button.jsx:L80`–`:L88` emits only an `onClick` handler
+  (no `role`/`tabIndex`/key handler; default `tagName` is `'button'` at `:L28`). Evidence:
+  `blitzy/screenshots/reverify_f2_f5_subscribe_target_375.png`.
+- **F3 — Masterbar horizontal overflow at narrow widths** — **[OBSERVED]** (Q4.d). At 375px the
+  logged-out masterbar overflows by 8px (`docScrollWidth:383`); at 500px it overflows by 54px
+  and "Sign Up" is clipped to "Si". Root cause: fixed-layout login links
+  `client/layout/masterbar/logged-out.jsx:L233-L240` under `client/layout/masterbar/style.scss:L88-L105`
+  (`@media (max-width:781px)` sets `height:30px; width:unset!important; padding:0 8px`, no wrap/scroll).
+  Evidence: `blitzy/screenshots/reverify_f3_masterbar_overflow_375.png`,
+  `blitzy/screenshots/reverify_f3_signup_clipped_500.png`.
+- **F4 — Mobile Reader-search sort picker overlaps the search input** — **[OBSERVED]** (Q4.d).
+  At ~383px the absolutely-positioned `.search-stream__sort-picker`
+  (`client/reader/search-stream/style.scss:L244-L247` logged-out override `top:64px; right:85px`)
+  overlaps the search input by ~166×40px (`overlaps:true`). Root cause:
+  `client/reader/search-stream/index.jsx:L127-L129,:L182,:L196-L210` +
+  `client/reader/search-stream/style.scss:L227-L232`. Evidence:
+  `blitzy/screenshots/reverify_f4_search_sorter_overlap_383.png`.
+- **F5 — Interactive targets below the 44×44px guideline** — **[OBSERVED]** (§"Observed UI and
+  accessibility findings" → F5). Measured: subscribe 20×25, masterbar link 61.89×30, section
+  tab 126.3×37, Share 35.69×40, byline link 53.11×14 (all `under44:true`). Grounded in
+  `client/layout/masterbar/style.scss:L88-L105` and the follow-button icon size
+  `client/blocks/follow-button/button.jsx:L27` (`iconSize:20`). Evidence:
+  `blitzy/screenshots/reverify_f2_f5_subscribe_target_375.png`.
+- **F7 — Reader Share menu emits a React "key"-spread warning** — **[OBSERVED]** (§"Observed UI
+  and accessibility findings" → F7). Opening Share logs the verbatim React warning about a `key`
+  prop spread into JSX, originating at `client/blocks/reader-share/social.jsx:L112-L114`
+  (`{...props.popoverProps}` into `ReaderPopoverMenu`) with the `key` set at
+  `client/blocks/reader-share/index.jsx:L118-L124`. Evidence:
+  `blitzy/screenshots/reverify_f7_share_keyspread_375.png`.
+- **I1 — Intermittent unexpected-error page on stream navigation** — **[OBSERVED, intermittent]**
+  (Q2.g). A First-Posts navigation intermittently rendered the generic 500 page
+  (`client/document/500.jsx:L25`, client error view `client/layout/error.jsx:L16`);
+  not consistently reproducible, so labelled intermittent rather than deterministic.
+- **I2 — Pre-existing dependency advisories** — **[OBSERVED, pre-existing]**. `yarn install`
+  surfaced npm-audit advisories in transitive dependencies of the existing `yarn.lock`. These are
+  **not introduced** by this delivery (this task adds a single Markdown file and changes no
+  manifest or lockfile — AAP §0.4.2 "no dependency changes"); they are noted for onboarding
+  awareness only. Remediation (dependency bumps) is out of scope per AAP §0.3.2.
+
 
 ---
 
@@ -1320,7 +1620,7 @@ marked **PASS (source-derived)** with the documented blocker.
 | 17 | Q2 initial Redux sequence + payload context | ✅ PASS | Q2.c (two loads, shim, payload limitation) | Payload key names shim-vantage-dependent (stated) |
 | 18 | Q2 pagination trigger/request/response | ✅ PASS | Q2.e (full URL, PER_FETCH=7) | Cursor redacted per §1.6 |
 | 19 | Q2 sibling endpoint map, source-labeled | ✅ PASS | Q2.b table | None |
-| 20 | Q2 failure behavior (`onError: noop`) | ✅ PASS | Q2.f (exercised offline) | None |
+| 20 | Q2 failure behavior (`onError: noop`) | ✅ PASS | Q2.f (offline exercised: stuck skeleton, no inline error/retry, recovery only on a **new** query — **refines** the alleged "auto-retry on reconnect"; screenshots) + Q2.g (intermittent First-Posts 500, I1) | User-facing failure UX is a Calypso app defect (F1); code fix out of scope per AAP §0.3.2 |
 | 21 | Q3 SSR cookie/context/cache/redirect/bootstrap | ✅ PASS | Q3.c (`:L93,:L138,:L364,:L372,:L586-L588`) | None |
 | 22 | Q3 server `/me`, absent-cookie error, `setCurrentUser` | ✅ PASS (source-derived) | Q3.a/f (`user-bootstrap:L13/L28/L34`, `:L391`) | Server bootstrap gated OFF by default (blocker) |
 | 23 | Q3 canonical default client `/me` flow | ✅ PASS | Q3.b (chain observed; `/me`→403) | None |
@@ -1331,15 +1631,15 @@ marked **PASS (source-derived)** with the documented blocker.
 | 28 | Q4 identify active rendered variant | ✅ PASS | Q4.0 (no sidebar; explicit) | Logged-out Reader renders no sidebar (documented) |
 | 29 | Q4 exact source/computed spacing + geometry | ✅ PASS | Q4.a (source-derived), Q4.b/c (observed vars/breakpoint) | Header geometry source-derived (no sidebar) |
 | 30 | Q4 declarations/overrides/fallbacks/`calc()` consumers | ✅ PASS | Q4.b (F5 citations corrected) | None |
-| 31 | Q4 boundary-state evidence + collision/overflow | ✅ PASS | Q4.c (782px triplet observed) | Collision/overflow not observable without a sidebar (blocker) |
+| 31 | Q4 boundary-state evidence + collision/overflow | ✅ PASS | Q4.c (782px masterbar triplet observed) + Q4.d (**observed** masterbar overflow at 375px/500px [F3] and mobile search-sorter overlap at ~383px [F4], with pixel geometry + screenshots) | Earlier "not observable without a sidebar" framing **corrected**: overflow/collision were observed in the masterbar and search-stream (not the unmounted sidebar). App-code fix out of scope per AAP §0.3.2 |
 | 32 | Official Automattic corroboration | ✅ PASS | §2 | Supplementary to observation (by design) |
 | 33 | Every claim has exact current-HEAD citation | ✅ PASS | Throughout; validated programmatically | None |
 | 34 | Complete unedited output + narrow redaction | ✅ PASS | §1.6 policy; tightened blocks | Large bodies summarized structurally (policy) |
 | 35 | Security/privacy handling; no secret exposure | ✅ PASS | §1.6 | None |
 | 36 | Cleanup + pristine repository proof | ✅ PASS | Repository cleanliness proof (finalized at commit) | None |
-| 37 | Complete final AAP + Rules coverage matrices | ✅ PASS | This matrix + Rules matrix | None |
-| 38 | No placeholders / unsupported inference / universal certainty | ✅ PASS | Scoped language; Observed/Source-derived labels | None |
-| 39 | Concise, comprehensive onboarding usefulness | ✅ PASS | Whole document | None |
+| 37 | Complete final AAP + Rules coverage matrices | ✅ PASS | This matrix + Rules matrix; both reconciled against the QA completeness findings (F1–F5, F7, I1, I2) enumerated in the coverage pass and reflected in rows 20/31 | None |
+| 38 | No placeholders / unsupported inference / universal certainty | ✅ PASS | Scoped language; Observed/Source-derived labels; earlier over-broad "not observable"/unqualified-PASS wording **corrected** against runtime evidence (rows 20, 31; Q4.d; §"Observed UI and accessibility findings") | None |
+| 39 | Concise, comprehensive onboarding usefulness | ✅ PASS | Whole document; onboarding-relevant defects (responsive masterbar/search overflow, keyboard-inoperable subscribe, sub-44px targets, Share console warning) disclosed with observed evidence | None |
 | 40 | No out-of-scope tracked source work | ✅ PASS | git diff (only the `.md`) | None |
 
 ### AAP file-plan coverage (§0.6.1)
@@ -1410,9 +1710,9 @@ plus the AAP's official-documentation research requirement.
 | 5 | Exercise the canonical entry point (no bypass/mock) | **Met** | Real `yarn start` + real `/reader`→`/discover`; `MOCK_WORDPRESSDOTCOM` labelled NON-CANONICAL | None |
 | 6 | Default, canonical configuration; state exact commands | **Met** | Unflagged `yarn start`; commands shown throughout; non-default flags labelled | None |
 | 7 | Persist until the signal is captured; label inferred | **Met** | Boot log, Ready, network, actions, storage, CSS vars, breakpoint all captured live; source-derived items labelled | Sidebar render & real login infeasible → labelled SOURCE-DERIVED/blocker |
-| 8 | Exercise every condition (primary, alt, error, transitional) | **Met** | Q1 before/during/after; Q2 pagination + offline failure; Q3 alt modes; Q4 breakpoint triplet | Some alt paths source-derived with stated blockers |
+| 8 | Exercise every condition (primary, alt, error, transitional) | **Met** | Q1 before/during/after; Q2 pagination + offline failure (F1) + intermittent 500 (I1); Q3 alt modes; Q4 breakpoint triplet + responsive defects observed at 375/500/383px (F3/F4) | Some alt paths source-derived with stated blockers |
 | 9 | Include actual, complete output with its command | **Met** | Raw blocks with preceding commands; no `// ...` elision; only narrow `[REDACTED: …]` per §1.6 | Large bodies summarized structurally (redaction policy) |
-| 10 | Answer every part and every named item | **Met** | Coverage pass enumerates each named item Observed/Inferred | None |
+| 10 | Answer every part and every named item | **Met** | Coverage pass enumerates each named item Observed/Inferred, plus the QA completeness findings (F1–F5, F7, I1, I2) with labels and screenshot evidence | None |
 | 11 | Be exact & grounded (`file:line`, named symbols) | **Met** | Every claim carries `file:line`; symbols named (functions, selectors, constants) | None |
 | 12 | Scope: read-only source; remove temp scripts | **Met** | Only the answer doc created; cleanup proof below | None |
 | 13 | Official Automattic documentation corroboration (AAP §0.2.2) | **Met** | §2 (in-repo `README`/`docs/install.md`/`docs/yarn-start.md` + current published docs) | Stated as supplementary, not primary |
@@ -1427,50 +1727,54 @@ methodology used only external scratch space and transient outputs:
 - **Observation scripts and every file they write** (`start_run*.raw.log`, `server_run*.pgid`,
   `nonroot_reader.html`) live under `/tmp/calypso_obs/` (outside the repo) and are removed wholesale
   by `rm -rf /tmp/calypso_obs`; no helper writes into the working tree.
-- **Build outputs** (`build/`, `public/`) produced by `yarn start` are git-ignored; they are
-  removed in cleanup so the working tree carries no observation residue. Install state
-  (`node_modules/`, `packages/*/dist`) is git-ignored and intentionally retained.
+- **Build outputs** (`build/`, `public/`) produced by `yarn start` are git-ignored and never
+  enter the tracked change set. Install state (`node_modules/`, `packages/*/dist`) is git-ignored
+  and intentionally retained.
+- **QA re-verification evidence** (screenshots and screen recordings under
+  `blitzy/qa-screenshots/`, `blitzy/screen_recordings/`, and `blitzy/screenshots/`) is written
+  into the working tree during runtime observation but is **left untracked** — never staged and
+  never committed.
 - **The only tracked change** is `blitzy/documentation/wp-calypso_be7e5cc64162.md`.
 
-The final proof (normal and ignored-aware `git status`) is captured after cleanup and embedded
-here:
+The proof below is the actual `git status --porcelain` captured immediately before commit:
 
-**Cleanup commands executed** (specific paths inside the working tree only):
+**Cleanup commands executed** (external scratch only; in-tree QA evidence intentionally retained):
 
 ```bash
-$ rm -rf blitzy/screenshots      # untracked screenshot artifact (kept repo to single deliverable)
-$ rm -rf build                   # git-ignored SSR output produced by `yarn start`
-$ rm -rf public                  # git-ignored browser-bundle output produced by `yarn start`
-$ rm -rf /tmp/calypso_obs        # all observation scripts + every file they write (start_run*.raw.log, server_run*.pgid, nonroot_reader.html) — outside the repo
+$ rm -rf /tmp/calypso_obs        # observation scripts + every file they wrote (start*.raw.log,
+                                 # server*.pid) — OUTSIDE the repo
+# Note: build/ and public/ (git-ignored `yarn start` outputs) may remain in the working tree;
+# they are git-ignored and never enter the tracked change set. node_modules/ and packages/*/dist
+# install state is git-ignored and intentionally retained.
 ```
 
-**Normal status** — the only tracked change is this document; nothing untracked remains:
+**Actual `git status --porcelain` captured this pass, immediately before commit** (unedited):
 
 ```console
 $ git status --porcelain
  M blitzy/documentation/wp-calypso_be7e5cc64162.md
+?? blitzy/qa-screenshots/
+?? blitzy/screen_recordings/
+?? blitzy/screenshots/
 ```
 
-**Ignored-aware status** — no observation residue (`build/`, `public/`, `blitzy/screenshots/`)
-remains; the 83 remaining ignored entries are exclusively install state that is intentionally
-retained (`node_modules/`, each `packages/*/dist/`, `.cache/`, `.husky/_/`,
-`.yarn/install-state.gz`):
+Interpretation, precisely:
 
-```console
-$ git status --ignored --porcelain | grep -E '^!! (build|public)/$' \
-    || echo 'none — no top-level build/ or public/ residue'
-none — no top-level build/ or public/ residue
+- **Exactly one tracked change**: `blitzy/documentation/wp-calypso_be7e5cc64162.md` — the single
+  additive answer document. No existing source-repository file is modified, added, or deleted, so
+  the read-only-source rule (AAP §0.3.2) holds.
+- **Three untracked directories** hold this verification pass's QA evidence and are
+  **intentionally left untracked** (never `git add`-ed, never committed): `blitzy/qa-screenshots/`
+  (8 files), `blitzy/screen_recordings/` (4 files), and `blitzy/screenshots/` (98 files, including
+  the `reverify_*` captures referenced throughout this document). Because they are never staged,
+  the committed change set remains exactly the one answer document; these artifacts persist in the
+  working tree only as the evidence trail backing the `[OBSERVED]` claims.
+- **Correction to an earlier draft of this section:** a previous version claimed
+  `blitzy/screenshots/` had been `rm -rf`'d and that "nothing untracked remains." That was
+  inaccurate — the evidence directories are deliberately retained (untracked). This section now
+  reports the true working-tree state.
 
-$ git status --ignored --porcelain | grep -c '^!!'
-83
-
-$ git status --ignored --porcelain | grep -E 'screenshots' \
-    || echo 'none — no blitzy/screenshots residue'
-none — no blitzy/screenshots residue
-```
-
-The `git status --porcelain` above was captured immediately before `git add`/`git commit` of
-this document; the commit records exactly that single tracked modification. The source
-repository is therefore left unchanged apart from the single answer document, satisfying the
-read-only-source rule.
+The commit that records this document therefore introduces exactly one tracked file change; the
+source repository is left unchanged apart from that single additive answer document, satisfying
+the read-only-source rule. The three untracked evidence directories are not part of the commit.
 
