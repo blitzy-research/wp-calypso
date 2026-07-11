@@ -22,7 +22,7 @@ pinned source tree (and this answer document) is on branch
 `blitzy-f1d51966-8d37-4dd3-9955-7234d47b43af`; its HEAD **advances with each doc-only revision**
 of this file, so no single destination-HEAD hash is stable enough to be load-bearing. For
 transparency, the destination HEAD immediately before the commit that adds this revision of the
-document was `4fa651ddbd44a2732cccf1ad7c3c3113e8e324e2`, and it advances by one commit when this
+document was `b668139fdbb6513159f791454ad40aec22cde8ae`, and it advances by one commit when this
 revision is committed. Because the source tree the citations point at is frozen at `be7e5cc…`,
 the citations remain valid regardless of how the destination HEAD moves. All runtime output was
 captured on Node.js `v22.23.1` / Yarn `4.0.2` on Linux.
@@ -938,7 +938,7 @@ cookies (names)          : [ tk_ai, country_code, region, tk_qs ]   # analytics 
 localStorage keys        : [ tusSupport ]                            # value [REDACTED: 4 chars]; NO wpcom_token fallback
 sessionStorage keys      : [ ]                                       # empty; NO 'flags' (OAuth path not taken; oauth:false)
 window.initialReduxState : present; top-level keys = [ documentHead ]  # server injected NO current user
-IndexedDB                : database "calypso" v2; store "calypso_store"; 17 keys (all prefixed redux-state-logged-out)
+IndexedDB                : database "calypso" v2; store "calypso_store"; 17 keys (16 prefixed redux-state-logged-out, plus one browser-storage control key)
 ```
 
 The 17 IndexedDB keys (read-only):
@@ -952,6 +952,16 @@ redux-state-logged-out:reader, redux-state-logged-out:readerUi, redux-state-logg
 redux-state-logged-out:signup, redux-state-logged-out:siteSettings, redux-state-logged-out:teams,
 redux-state-logged-out:ui, redux-state-logged-out:userSuggestions
 ```
+
+The seventeenth key is not a `redux-state-logged-out` entry but a browser-storage **control
+key** that varies run-to-run: either `browser-storage-sanity-test` (the `SANITY_TEST_KEY`,
+`client/lib/browser-storage/index.ts:L24`) as captured in the run above, or
+`was-state-randomly-cleared` (the `WAS_STATE_RANDOMLY_CLEARED_KEY`,
+`client/state/constants.ts:L6`) on a run where Calypso's development-only "sympathy" feature
+randomly cleared persisted state and wrote the flag via
+`setStoredItem( WAS_STATE_RANDOMLY_CLEARED_KEY, true )` (`client/state/initial-state.js:L192`;
+the feature is described at `:L34`). The key **count** (17) and the sixteen
+`redux-state-logged-out` entries are stable across runs; only this one control key differs.
 
 Authority for the IndexedDB names: `client/lib/browser-storage/index.ts:L20`
 `DB_NAME = 'calypso'`, `:L22` `STORE_NAME = 'calypso_store'`. The key prefix
@@ -1765,7 +1775,7 @@ Interpretation, precisely:
   the read-only-source rule (AAP §0.3.2) holds.
 - **Three untracked directories** hold this verification pass's QA evidence and are
   **intentionally left untracked** (never `git add`-ed, never committed): `blitzy/qa-screenshots/`
-  (8 files), `blitzy/screen_recordings/` (4 files), and `blitzy/screenshots/` (98 files, including
+  (8 files), `blitzy/screen_recordings/` (4 files), and `blitzy/screenshots/` (110 files, including
   the `reverify_*` captures referenced throughout this document). Because they are never staged,
   the committed change set remains exactly the one answer document; these artifacts persist in the
   working tree only as the evidence trail backing the `[OBSERVED]` claims.
