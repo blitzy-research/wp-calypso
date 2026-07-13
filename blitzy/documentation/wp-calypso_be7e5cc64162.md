@@ -41,11 +41,15 @@ of the command shown on its first `$ …` line. Real exit codes are shown via a 
 identical line repeats N times (for example the Browserslist notice the webpack build prints once
 per child compilation), every repeat is shown. Where a fact is _inferred from source_ rather than
 observed at runtime, it is explicitly labelled **(inferred)**. Every `file:line` citation points at
-the exact lines in the read-only source tree.
+the exact lines in the read-only source tree. **Citation shorthand:** a bare `:line` or `:start-end`
+(with no path) refers to the file named most recently in the same paragraph — e.g. once
+`packages/calypso-config/src/index.ts` has been cited in full, a following `:105-109` denotes that
+same file.
 
 **Read-only integrity (Q8 preview).** The only file this task adds is this document. A single
 temporary Jest probe was created to observe runtime facts and was then removed; the full creation
-command, its output, and the removal + clean `git status` are shown under Q8.
+command, its output, the removal, a clean `git status`, and a base-to-`HEAD` name-status diff proving
+the single added file are shown under Q8.
 
 ---
 
@@ -109,17 +113,29 @@ $
 exit=0
 ```
 
-Note: piping through `cat` makes `chalk` detect a non-TTY and emit **no** ANSI colour escapes — a
-hexdump of the raw bytes contained no `ESC` (`0x1b`) byte. Nothing was stripped; the plain bytes
-above are exactly what the command produced.
-
-### Step 3 — the build (observed, run twice)
-
-Run #1, complete and unedited. The single three-line Browserslist notice repeats **34 times** (once
-per webpack child compilation); all 34 repeats are shown rather than elided:
+Note: piping through `cat` makes `chalk` detect a non-TTY and emit **no** ANSI colour escapes.
+Counting the raw bytes proves this directly — every `od` byte token is scanned and the number of
+`ESC` (`0x1b`) bytes is **zero**:
 
 ```text
-$ CI=true NODE_OPTIONS=--max-old-space-size=8192 yarn run build     # run #1
+$ node bin/welcome.js | od -An -tx1 | awk '{for(i=1;i<=NF;i++) if($i=="1b") c++} END{print c+0}' ; echo "exit=$?"
+0
+exit=0
+```
+
+Nothing was stripped; the plain bytes above are exactly what the command produced.
+
+### Step 3 — the build (observed, run twice, both captured to logs)
+
+The build was run **twice**, each invocation's full `stdout`+`stderr` redirected to its own file and
+its exit code validated. Run #1's complete, unedited output is shown below via `cat run1.log`; the
+single three-line Browserslist notice repeats **34 times** (once per webpack child compilation) and
+all 34 repeats are shown rather than elided:
+
+```text
+$ CI=true NODE_OPTIONS=--max-old-space-size=8192 yarn run build > run1.log 2>&1 ; echo "run1-exit=$?"
+run1-exit=0
+$ cat run1.log
 Packages are built.
 Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
   npx update-browserslist-db@latest
@@ -223,38 +239,52 @@ Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
 Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
   npx update-browserslist-db@latest
   Why you should do it regularly: https://github.com/browserslist/update-db#readme
-exit=0
 ```
 
-Run #2 produced the identical output. Rather than paste a second identical 104-line block, the
-byte-for-byte equality of the two runs is demonstrated directly with `diff` (empty output +
-`diff-exit=0` ⇒ identical):
+Run #2 was captured to its own log the same way, and its exit code validated. Rather than paste a
+second identical 103-line block, the byte-for-byte equality of the two runs is demonstrated
+directly: the real `diff` of the two captured logs produces empty output with `diff-exit=0`, and
+both logs share a single `md5sum` and line count:
 
 ```text
-$ CI=true NODE_OPTIONS=--max-old-space-size=8192 yarn run build     # run #2
-# (run #2 produced exit=0; full output captured to run2.log)
-$ diff <(cat run1.log) <(cat run2.log) ; echo "diff-exit=$?"
+$ CI=true NODE_OPTIONS=--max-old-space-size=8192 yarn run build > run2.log 2>&1 ; echo "run2-exit=$?"
+run2-exit=0
+$ diff run1.log run2.log ; echo "diff-exit=$?"
 diff-exit=0
-# empty diff + diff-exit=0  => run #2 output is BYTE-IDENTICAL to run #1
+$ md5sum run1.log run2.log
+c06cec1a041d59ca9f76fb0fac98afde  run1.log
+c06cec1a041d59ca9f76fb0fac98afde  run2.log
+$ wc -l run1.log run2.log
+  103 run1.log
+  103 run2.log
+  206 total
 ```
+
+Empty `diff` + `diff-exit=0` + one shared `md5sum` (`c06cec1a…`) ⇒ run #2's captured log is
+byte-identical to run #1's. Both `run1.log` and `run2.log` are temporary observation artifacts that
+are removed after this investigation (see Q8); they are not part of the tracked tree.
 
 ### The emitted artifact (observed)
 
-The build emits `build/server.js`. Its **size is stable at `7,935,308` bytes** across runs; the
-`md5sum` differs run-to-run because webpack embeds run-specific metadata (build hashes/timestamps)
-into the bundle — so the _size_ is the stable magnitude, not the checksum:
+The build emits `build/server.js`. Its **size is stable at `7,935,308` bytes** across both runs
+(observed), while its `md5sum` **differs** run-to-run (observed). The _cause_ is source-derived
+(inferred from the config, not read out of the emitted bytes): `client/webpack.config.node.js`
+injects run-specific metadata into the bundle through `DefinePlugin` — `BUILD_TIMESTAMP:
+JSON.stringify( new Date().toISOString() )` [client/webpack.config.node.js:163] is re-evaluated on
+every build, and `COMMIT_SHA` [client/webpack.config.node.js:164] is likewise embedded. So the
+stable magnitude is the _size_, not the checksum:
 
 ```text
-# after build run #2:
+# after build run #1 (captured in-session, immediately after run #1):
 $ stat -c "%s %n" build/server.js
 7935308 build/server.js
 $ md5sum build/server.js
-214b145d0de21972649c1b737ce91247  build/server.js
-# after build run #3:
+614b3585ad70602f04eae7d21a588fa4  build/server.js
+# after build run #2 (run #2 overwrote the artifact; this value is reproducible from current disk):
 $ stat -c "%s %n" build/server.js
 7935308 build/server.js
 $ md5sum build/server.js
-515215fa382fbc9d992026a1d98a6264  build/server.js
+0646a043b60f8878d313886c9a6daf86  build/server.js
 ```
 
 Full directory listing, plus proof the artifact is git-ignored (so the build leaves the tracked
@@ -264,20 +294,20 @@ tree unchanged):
 $ ls -la build/
 total 25280
 drwxr-sr-x  2 root root     4096 Jul 13 17:01 .
-drwxr-sr-x 27 root root     4096 Jul 13 17:52 ..
--rw-r--r--  1 root root  5808560 Jul 13 18:12 devdocs-search-index.json
--rw-r--r--  1 root root   200095 Jul 13 18:12 devdocs-selectors-index.json
+drwxr-sr-x 27 root root     4096 Jul 13 22:33 ..
+-rw-r--r--  1 root root  5808560 Jul 13 22:33 devdocs-search-index.json
+-rw-r--r--  1 root root   200095 Jul 13 22:33 devdocs-selectors-index.json
 -rw-r--r--  1 root root    11800 Jul 13 16:41 server.client_lib_promote-post_string_ts.js
 -rw-r--r--  1 root root    18981 Jul 13 16:41 server.client_lib_promote-post_string_ts.js.map
--rw-r--r--  1 root root  7935308 Jul 13 18:12 server.js
+-rw-r--r--  1 root root  7935308 Jul 13 22:33 server.js
 -rw-r--r--  1 root root 11891104 Jul 13 16:41 server.js.map
 
 $ git check-ignore build/server.js ; echo "exit=$?"
 build/server.js
 exit=0
 
-$ git status --porcelain
-(empty above => build/ produced no tracked change)
+$ git status --porcelain build/ public/
+(empty above => the git-ignored build/ and public/ outputs produce no tracked change)
 ```
 
 ### Rationale
@@ -303,7 +333,9 @@ dates, points the (unused) document URL at `https://example.com`
 (`test/client/jest.config.js:17-19`), and — critically — **replaces** the preset's
 `setupFilesAfterEnv` with its own bootstrap. A development boot is the opposite on every axis:
 `NODE_ENV=development`, a long-lived process, a real browser runtime for client code, and the
-machine's local timezone.
+inherited process timezone. _(These development-boot facts are **source-derived / inferred** — a
+live server boot was not performed in this environment, see Q1 — whereas every test-harness fact
+below is **observed** at runtime.)_
 
 ### The shared preset (the common base)
 
@@ -371,8 +403,8 @@ _environment class_ is Node. The environment class is proven at runtime: in a No
 is no `window` global. The probe (full listing under Q3) reports:
 
 ```text
-PROBE typeof_window=undefined (node testEnvironment=>undefined; jsdom=>object)
 PROBE NODE_ENV=test TZ=UTC
+PROBE typeof_window=undefined (node testEnvironment=>undefined; jsdom=>object)
 ```
 
 `typeof window === 'undefined'` confirms the effective environment is **Node** (a jsdom environment
@@ -383,14 +415,24 @@ seeds the URL should a file opt into jsdom.
 
 ### Summary of divergence from a dev boot
 
-| Axis            | Jest test harness (observed)                                 | Development boot (`yarn start`)             |
-| --------------- | ------------------------------------------------------------ | ------------------------------------------- |
-| `NODE_ENV`      | `test` (Jest default; probe: `NODE_ENV=test`)                | `development` (`package.json:110` chain)    |
-| Environment     | Node (`jest-preset.js:11`; probe `typeof window=undefined`)  | real browser runtime for client code        |
-| Timezone        | `TZ=UTC` for client (`package.json:122`)                     | machine local timezone                      |
-| Module resolver | preset `enhanced-resolve` (`jest-preset.js:9`)               | webpack (`build-server`, `package.json:81`) |
-| Network         | disabled in client/server (Q4); permitted in integration/E2E | real network                                |
-| Lifetime        | short-lived worker per file                                  | long-lived HTTP server                      |
+| Axis            | Jest test harness (observed)                                 | Development boot (`yarn start`) — source-derived / inferred                                  |
+| --------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `NODE_ENV`      | `test` (Jest default; probe: `NODE_ENV=test`)                | `development` (source-derived; baked by `DefinePlugin`, `client/webpack.config.node.js:165`) |
+| Environment     | Node (`jest-preset.js:11`; probe `typeof window=undefined`)  | real browser runtime for client code                                                         |
+| Timezone        | `TZ=UTC` for client (`package.json:122`)                     | inherited process timezone (no `TZ` forced)                                                  |
+| Module resolver | preset `enhanced-resolve` (`jest-preset.js:9`)               | webpack (`build-server`, `package.json:81`)                                                  |
+| Network         | disabled in client/server (Q4); permitted in integration/E2E | real network                                                                                 |
+| Lifetime        | short-lived worker per file                                  | long-lived HTTP server                                                                       |
+
+The development-boot column is **source-derived / inferred**, not observed — no live server boot was
+performed in this environment (see Q1). In particular, `NODE_ENV=development` is **not** set by the
+`start` script (`package.json:110` sets no `NODE_ENV`); it originates from the config `env` default
+`process.env.CALYPSO_ENV || process.env.NODE_ENV || 'development'`
+(`client/server/config/index.js:6`), which webpack reads as `bundleEnv = config( 'env' )`
+(`client/webpack.config.node.js:16`) and bakes into the bundle through `DefinePlugin` as
+`'process.env.NODE_ENV': JSON.stringify( bundleEnv )` (`client/webpack.config.node.js:165`). Likewise
+no `TZ` is forced for the dev server, so it inherits the process timezone, whereas the client test
+script pins `TZ=UTC` (`package.json:122`).
 
 ---
 
@@ -405,7 +447,11 @@ test-only **globals defined by config** are `google` and `__i18n_text_domain__`
 `TransformStream`, `Worker`, `structuredClone`, `crypto.*` — are **standard Web/Node platform APIs,
 not test-invented names**. What is _test-specific_ is the **implementation** injected into the Node
 test process (a Jest **mock**, a **polyfill**, or a Node built-in surfaced as a global), because a
-Node `testEnvironment` does not provide the browser variants natively. Two of them
+Node `testEnvironment` does not provide the browser variants natively. Separately, the client
+project's `setupFiles: [ 'jest-canvas-mock' ]` (`test/client/jest.config.js:20`) installs the
+**Canvas API** globals (`Path2D`, `CanvasRenderingContext2D`, `DOMMatrix`, and six more), but — as
+proven below — **only** for files that opt into a jsdom environment; under the default Node
+environment it is inert. Two of them
 (`structuredClone`, `crypto.subtle`) are installed **only if missing** — and in Node 22 they are
 _not_ missing, so the bootstrap's fallback does not fire and the values are the ones Node already
 provides (proven below).
@@ -438,10 +484,10 @@ PASS client/state/country-states/test/blitzy_adhoc_test_probe.js
       PROBE crypto typeof=object crypto.randomUUID typeof=function crypto.subtle typeof=object crypto.subtle.digest typeof=function
       PROBE __i18n_text_domain__=default typeof_google=object
       PROBE config_env_id=test
-      PROBE isEnabled(google-my-business)=false  [dev resolves true]
-      PROBE isEnabled(individual-subscriber-stats)=false  [dev resolves true]
-      PROBE isEnabled(ssr/prefetch-timebox)=true  [dev resolves false]
-      PROBE isEnabled(redirect-fallback-browsers)=true  [dev resolves false]
+      PROBE isEnabled(google-my-business)=false
+      PROBE isEnabled(individual-subscriber-stats)=false
+      PROBE isEnabled(ssr/prefetch-timebox)=true
+      PROBE isEnabled(redirect-fallback-browsers)=true
       PROBE ACTIVE_FEATURE_FLAGS=(unset)
       PROBE network=NetConnectNotAllowedError: Nock: Disallowed net connect for "public-api.wordpress.com:443/rest/v1.1/me"
 
@@ -456,13 +502,24 @@ Ran all test suites matching /client\/state\/country-states\/test\/blitzy_adhoc_
 exit=0
 ```
 
-Stability across two runs (all `PROBE` lines byte-identical):
+Stability across two runs — each run is captured to its own log with its exit validated, then the
+two logs' `PROBE` lines are compared with a real `diff` (empty output + `diff-exit=0` ⇒ identical),
+and each log is confirmed to hold the same number of `PROBE` lines:
 
 ```text
-$ diff <(grep "PROBE " probe_run1.log) <(grep "PROBE " probe_run2.log) ; echo "diff-exit=$?"
+$ TZ=UTC CI=1 npx jest -c=test/client/jest.config.js client/state/country-states/test/blitzy_adhoc_test_probe.js > probe_run1.log 2>&1 ; echo "run1-exit=$?"
+run1-exit=0
+$ TZ=UTC CI=1 npx jest -c=test/client/jest.config.js client/state/country-states/test/blitzy_adhoc_test_probe.js > probe_run2.log 2>&1 ; echo "run2-exit=$?"
+run2-exit=0
+$ diff <(grep ' PROBE ' probe_run1.log) <(grep ' PROBE ' probe_run2.log) ; echo "diff-exit=$?"
 diff-exit=0
-# empty diff + diff-exit=0 => all PROBE lines identical across the two runs
+$ grep -c ' PROBE ' probe_run1.log ; grep -c ' PROBE ' probe_run2.log
+19
+19
 ```
+
+`probe_run1.log`/`probe_run2.log` are temporary observation artifacts, removed after this
+investigation (see Q8).
 
 ### Classification of every installed global (name → what's test-specific)
 
@@ -517,10 +574,98 @@ effect — i.e. the fallback at `:71-73` did **not** run under Node 22. Likewise
 Therefore, for a `typeof`-only check these names would look "installed by the bootstrap," but they
 are actually **retained from Node** — the distinction the earlier draft missed.
 
+### Canvas globals — installed by `jest-canvas-mock`, only under a per-file jsdom environment (F6)
+
+Beyond the bootstrap's `setupFilesAfterEnv` globals above, the **client** project also lists
+`setupFiles: [ 'jest-canvas-mock' ]` (`test/client/jest.config.js:20`). This is a **separate**
+mechanism — `setupFiles` runs before the test framework — and `jest-canvas-mock` installs the Canvas
+API globals `Path2D`, `CanvasGradient`, `CanvasPattern`, `CanvasRenderingContext2D`, `DOMMatrix`,
+`ImageData`, `TextMetrics`, `ImageBitmap`, `createImageBitmap`, and mocks
+`HTMLCanvasElement.prototype.getContext`.
+
+**Crucial nuance (observed): these canvas globals exist only when the test file opts into the jsdom
+environment.** `jest-canvas-mock` patches `window`; in the project's default **Node** environment
+there is no `window`, so it is **inert** and none of the canvas globals are defined. The same probe
+was run under both environments to prove this directly.
+
+Under a per-file jsdom docblock (`/** @jest-environment jsdom */`), all nine globals are functions
+and `getContext('2d')` returns a mocked `CanvasRenderingContext2D`:
+
+```text
+$ TZ=UTC CI=1 npx jest -c=test/client/jest.config.js client/state/country-states/test/blitzy_adhoc_test_canvas_jsdom.js
+Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+PASS client/state/country-states/test/blitzy_adhoc_test_canvas_jsdom.js
+  ● Console
+
+    console.log
+      PROBE env typeof_window=object typeof_document=object
+      PROBE Path2D typeof=function
+      PROBE CanvasGradient typeof=function
+      PROBE CanvasPattern typeof=function
+      PROBE CanvasRenderingContext2D typeof=function
+      PROBE DOMMatrix typeof=function
+      PROBE ImageData typeof=function
+      PROBE TextMetrics typeof=function
+      PROBE ImageBitmap typeof=function
+      PROBE createImageBitmap typeof=function
+      PROBE HTMLCanvasElement.getContext("2d") => CanvasRenderingContext2D ; fillRect typeof=function ; getContext._isMockFunction=true
+
+      at Object.log (state/country-states/test/blitzy_adhoc_test_canvas_jsdom.js:21:10)
+
+
+Test Suites: 1 passed, 1 total
+Tests:       1 passed, 1 total
+Snapshots:   0 total
+Time:        0.908 s, estimated 1 s
+Ran all test suites matching /client\/state\/country-states\/test\/blitzy_adhoc_test_canvas_jsdom.js/i.
+exit=0
+```
+
+Under the **default Node** environment (no docblock), `window`/`document` are `undefined` and every
+canvas global is `undefined`, confirming `jest-canvas-mock` installed nothing:
+
+```text
+$ TZ=UTC CI=1 npx jest -c=test/client/jest.config.js client/state/country-states/test/blitzy_adhoc_test_canvas_node.js
+Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+PASS client/state/country-states/test/blitzy_adhoc_test_canvas_node.js
+  ● Console
+
+    console.log
+      PROBE env typeof_window=undefined typeof_document=undefined
+      PROBE Path2D typeof=undefined
+      PROBE CanvasGradient typeof=undefined
+      PROBE CanvasPattern typeof=undefined
+      PROBE CanvasRenderingContext2D typeof=undefined
+      PROBE DOMMatrix typeof=undefined
+      PROBE ImageData typeof=undefined
+      PROBE TextMetrics typeof=undefined
+      PROBE ImageBitmap typeof=undefined
+      PROBE createImageBitmap typeof=undefined
+
+      at Object.log (state/country-states/test/blitzy_adhoc_test_canvas_node.js:16:10)
+
+
+Test Suites: 1 passed, 1 total
+Tests:       1 passed, 1 total
+Snapshots:   0 total
+Time:        0.678 s, estimated 1 s
+Ran all test suites matching /client\/state\/country-states\/test\/blitzy_adhoc_test_canvas_node.js/i.
+exit=0
+```
+
+So `jest-canvas-mock` contributes canvas globals **only to test files that opt into jsdom**; under
+the project's default Node environment they are absent. Like the bootstrap globals, these are
+test-only implementations of a standard browser API (a real browser provides canvas natively).
+
 ### Presence in the running application
 
 These names are **not absent from the browser app** — `fetch`, `CSS`, `matchMedia`, `ResizeObserver`,
-streams, `structuredClone`, and Web Crypto are provided **natively by the browser** at dev time. They
+streams, canvas, `structuredClone`, and Web Crypto are provided **natively by the browser** at dev
+time. They
 are "test-only" only in the sense that the Node test process lacks the browser variants, so the
 bootstrap injects **test implementations** (mocks/polyfills) or surfaces Node built-ins. The truly
 app-absent items are the **mock behaviours** (an empty-`json` `fetch`, `jest.fn` `matchMedia`/
@@ -536,20 +681,61 @@ the socket layer**: `nock.disableNetConnect()` makes any un-intercepted connecti
 `NetConnectNotAllowedError`. Independently, the client also replaces `global.fetch` with a
 `jest.fn()` mock that resolves to an empty-JSON response, so browser-style `fetch` calls never reach
 the network either. Only the **integration** suite permits real network access. This was observed
-directly: the probe issued a genuine `https.get` to the WordPress.com API and the request threw.
+directly across all three suites with dedicated probes: client and server `http.get`/`https.get`
+both threw `NetConnectNotAllowedError`, while an integration-suite request to a local server
+succeeded (evidence below).
 
-### Observed — a real request is rejected
+### Observed — real requests across all three suites
 
-The probe's last line is the result of a real `require('https').get(...)` to
-`https://public-api.wordpress.com/rest/v1.1/me` (full probe under Q3/Q8):
+Dedicated probes issued real `http.get`, `https.get`, and `fetch` calls from each suite through its
+canonical Jest project. In the **client** suite both raw transports are rejected with nock's
+`NetConnectNotAllowedError` — note the ports (`:80` for HTTP, `:443` for HTTPS) — while the separate
+`global.fetch` mock resolves without any nock error:
 
 ```text
-PROBE network=NetConnectNotAllowedError: Nock: Disallowed net connect for "public-api.wordpress.com:443/rest/v1.1/me"
+$ TZ=UTC CI=1 npx jest -c=test/client/jest.config.js client/state/country-states/test/blitzy_adhoc_test_net.js
+PASS client/state/country-states/test/blitzy_adhoc_test_net.js
+      PROBE client http.get => NetConnectNotAllowedError: Nock: Disallowed net connect for "public-api.wordpress.com:80/rest/v1.1/me"
+      PROBE client https.get => NetConnectNotAllowedError: Nock: Disallowed net connect for "public-api.wordpress.com:443/rest/v1.1/me"
+      PROBE client fetch => resolved _isMockFunction=true json=undefined
+Tests:       1 passed, 1 total
 ```
 
+The **server** suite blocks both raw transports the same way — its bootstrap also calls
+`nock.disableNetConnect()` (`test/server/setup-test-framework.js:4`) — and it installs no `fetch`
+mock, so only the two raw-transport lines appear:
+
+```text
+$ CI=1 npx jest -c=test/server/jest.config.js client/server/config/test/blitzy_adhoc_test_net.js
+PASS client/server/config/test/blitzy_adhoc_test_net.js
+      PROBE server http.get => NetConnectNotAllowedError: Nock: Disallowed net connect for "public-api.wordpress.com:80/rest/v1.1/me"
+      PROBE server https.get => NetConnectNotAllowedError: Nock: Disallowed net connect for "public-api.wordpress.com:443/rest/v1.1/me"
+Tests:       1 passed, 1 total
+```
+
+The **integration** suite permits network access: it has no nock bootstrap
+(`test/integration/jest.config.js:7` sets only `testEnvironment: 'node'`). To prove this **without
+relying on external internet**, the probe starts a local `127.0.0.1` HTTP server and requests it; the
+connection is allowed and returns `status=200`:
+
+```text
+$ CI=1 npx jest -c=test/integration/jest.config.js client/server/api/integration/blitzy_adhoc_test_net.js
+PASS client/server/api/integration/blitzy_adhoc_test_net.js
+      PROBE integration local http.get => status=200 body=qa-local-ok
+Tests:       1 passed, 1 total
+```
+
+**Scope of the integration observation (Limited).** What is observed is that the integration suite
+does **not** block outbound connections at the socket layer — a loopback (`127.0.0.1`) request
+succeeds where the unit suites throw. Reachability of a **public** host was **not** tested here (no
+external internet was used), so "real network" is proven in the sense of "not socket-blocked,"
+against a local server.
+
 The error class (`NetConnectNotAllowedError`) and message form
-(`Nock: Disallowed net connect for "<host:port><path>"`) are nock's own, confirming the block comes
-from `nock.disableNetConnect()` rather than a DNS/socket failure.
+(`Nock: Disallowed net connect for "<host:port><path>"`) are nock's own, confirming the client/server
+block comes from `nock.disableNetConnect()` rather than a DNS/socket failure. The `fetch` line is a
+**separate** mechanism (a `jest.fn()` mock, not nock): it resolves rather than throwing, which is why
+it produces no `NetConnectNotAllowedError`.
 
 ### The two mechanisms
 
@@ -772,8 +958,10 @@ loader `client/server/config/index.js` (`test/client/jest.config.js:11`; server 
 `test/server/jest.config.js:10-11`). That loader exports `createConfig( serverData )`
 (`client/server/config/index.js:11`) — i.e. Node tests receive the **server** data set. The browser
 build instead uses `packages/calypso-config/src/index.ts`, which reads `window.configData`
-(`:46`) and supports `?flags=` URL overrides (`applyFlags`, `:59-65`); that browser variant is **not**
-used by Node tests.
+(`packages/calypso-config/src/index.ts:46`) and supports `?flags=` URL overrides: the query string is
+matched and applied by `applyFlags( …, 'URL' )` (`packages/calypso-config/src/index.ts:105-109`),
+inside a guard that runs only in development, on a listed flag environment, or on Calypso Live
+(`packages/calypso-config/src/index.ts:86-90`). That browser variant is **not** used by Node tests.
 
 ### The complete resolution order (`client/server/config/parser.js`)
 
@@ -789,8 +977,14 @@ order:
    enable, **`DISABLE_FEATURES` wins** a conflict.
 3. **Override `protocol` / `hostname` / `port`** from `PROTOCOL` / `HOST` / `PORT` env vars
    (`:61-63`).
-4. **Split into server vs client data:** `serverData = data + secrets.json` (`:65`); `clientData =
-data` only (`:66`) — so **secrets are server-only** and never reach the client bundle.
+4. **Select the secrets file, then split into server vs client data.** The secrets path is chosen as
+   `secrets.json` **if it exists, else `empty-secrets.json`**
+   (`secretsPath = fs.existsSync( realSecretsPath ) ? realSecretsPath : emptySecretsPath`,
+   `:36-38`); in this repository `config/secrets.json` is **absent** and `config/empty-secrets.json`
+   is present, so the empty file is selected. That selected file is merged **only** into the server
+   set — `serverData = Object.assign( {}, data, getDataFromFile( secretsPath ) )` (`:65`) — whereas
+   `clientData = Object.assign( {}, data )` (`:66`) receives no secrets. So **secrets are
+   server-only** and never reach the client bundle.
 5. **Optionally override API secrets** from env, **server data only**
    (`wpcom_calypso_rest_api_key`, `wpcom_calypso_support_session_rest_api_key`, `:68-73`).
 6. **Conditionally disable `wpcom-user-bootstrap`**: if that feature is on but no
@@ -798,8 +992,8 @@ data` only (`:66`) — so **secrets are server-only** and never reach the client
    with a `console.error` (`:75-85`).
 
 So two environments with the same JSON can still resolve differently depending on `ENABLE_FEATURES`/
-`DISABLE_FEATURES`, `PROTOCOL`/`HOST`/`PORT`, the presence of `secrets.json`, and the API-key
-condition. The earlier "pure function of env name + JSON" framing is therefore incorrect.
+`DISABLE_FEATURES`, `PROTOCOL`/`HOST`/`PORT`, which secrets file is selected (`secrets.json` or the
+`empty-secrets.json` fallback), and the API-key condition. The earlier "pure function of env name + JSON" framing is therefore incorrect.
 
 ### How `isEnabled` decides (and the `ACTIVE_FEATURE_FLAGS` caveat)
 
@@ -834,8 +1028,9 @@ dev server — the concrete divergence quantified in Q7.
 `jest.mock( '@automattic/calypso-config' )` turns `isEnabled` into a `jest.fn()`, and the test then
 sets its return with `isEnabled.mockReturnValue( … )`. The proof that a test sees a **different** value
 than the dev server: without any mock, the resolved `test` config disables flags that
-`development` enables — e.g. `google-my-business` is `true` in dev but `false` in test — observed at
-runtime.
+`development` enables — e.g. `google-my-business` resolves `false` in the test worker (**observed** via
+the probe below), versus `true` in `config/development.json:67` (**source-derived**; a live dev boot
+was not exercised here — see Q1).
 
 ### (F9) The real, working per-test mechanism
 
@@ -891,11 +1086,14 @@ is cited here only as documented-but-stale, superseded by the `mockReturnValue` 
 ### Proof of divergence — dev vs. test resolve different values
 
 Computed by loading both `config/development.json` and `config/test.json` and diffing their resolved
-feature sets (run twice for stability; both runs agree on `differ 97`):
+feature sets. The command is run twice, each invocation captured to its own log, and a byte-level
+`diff` of the two logs (`diff-exit=0`) proves the result is stable across runs:
 
 ```text
-### RUN #1
-$ node -e "const d=require('./config/development.json').features,t=require('./config/test.json').features;const dk=Object.keys(d),tk=Object.keys(t),all=[...new Set([...dk,...tk])];let common=0,valDiff=0,devOnly=0,testOnly=0;const vd=[];for(const k of all){const id=k in d,it=k in t;if(id&&it){common++;if(d[k]!==t[k]){valDiff++;vd.push(k+' dev='+d[k]+' test='+t[k]);}}else if(id)devOnly++;else testOnly++;}console.log('devKeys',dk.length,'testKeys',tk.length,'differ',devOnly+testOnly+valDiff);console.log('common',common,'valDiff',valDiff,'devOnly',devOnly,'testOnly',testOnly);console.log('value-diff flags (same key, different value):');vd.forEach(l=>console.log('  '+l));" ; echo "exit=$?"
+### RUN #1 — captured to div_run1.log
+$ node -e "const d=require('./config/development.json').features,t=require('./config/test.json').features;const dk=Object.keys(d),tk=Object.keys(t),all=[...new Set([...dk,...tk])];let common=0,valDiff=0,devOnly=0,testOnly=0;const vd=[];for(const k of all){const id=k in d,it=k in t;if(id&&it){common++;if(d[k]!==t[k]){valDiff++;vd.push(k+' dev='+d[k]+' test='+t[k]);}}else if(id)devOnly++;else testOnly++;}console.log('devKeys',dk.length,'testKeys',tk.length,'differ',devOnly+testOnly+valDiff);console.log('common',common,'valDiff',valDiff,'devOnly',devOnly,'testOnly',testOnly);console.log('value-diff flags (same key, different value):');vd.forEach(l=>console.log('  '+l));" > div_run1.log 2>&1 ; echo "run1-exit=$?"
+run1-exit=0
+$ cat div_run1.log
 devKeys 178 testKeys 101 differ 97
 common 96 valDiff 10 devOnly 82 testOnly 5
 value-diff flags (same key, different value):
@@ -909,11 +1107,12 @@ value-diff flags (same key, different value):
   redirect-fallback-browsers dev=false test=true
   rum-tracking/logstash dev=true test=false
   ssr/prefetch-timebox dev=false test=true
-exit=0
 
-### RUN #2 (stability)
-devKeys 178 testKeys 101 differ 97
-exit=0
+### RUN #2 — identical command captured to div_run2.log; stability proven by a byte-level diff
+$ node -e "const d=require('./config/development.json').features,t=require('./config/test.json').features;const dk=Object.keys(d),tk=Object.keys(t),all=[...new Set([...dk,...tk])];let common=0,valDiff=0,devOnly=0,testOnly=0;const vd=[];for(const k of all){const id=k in d,it=k in t;if(id&&it){common++;if(d[k]!==t[k]){valDiff++;vd.push(k+' dev='+d[k]+' test='+t[k]);}}else if(id)devOnly++;else testOnly++;}console.log('devKeys',dk.length,'testKeys',tk.length,'differ',devOnly+testOnly+valDiff);console.log('common',common,'valDiff',valDiff,'devOnly',devOnly,'testOnly',testOnly);console.log('value-diff flags (same key, different value):');vd.forEach(l=>console.log('  '+l));" > div_run2.log 2>&1 ; echo "run2-exit=$?"
+run2-exit=0
+$ diff div_run1.log div_run2.log ; echo "diff-exit=$?"
+diff-exit=0
 
 ### env_id from each file
 $ node -e "console.log('development.json env_id =',require('./config/development.json').env_id);console.log('test.json env_id =',require('./config/test.json').env_id);" ; echo "exit=$?"
@@ -932,18 +1131,23 @@ reading the **remapped** `@automattic/calypso-config` with no per-test mock appl
 
 ```text
       PROBE config_env_id=test
-      PROBE isEnabled(google-my-business)=false  [dev resolves true]
-      PROBE isEnabled(individual-subscriber-stats)=false  [dev resolves true]
-      PROBE isEnabled(ssr/prefetch-timebox)=true  [dev resolves false]
-      PROBE isEnabled(redirect-fallback-browsers)=true  [dev resolves false]
+      PROBE isEnabled(google-my-business)=false
+      PROBE isEnabled(individual-subscriber-stats)=false
+      PROBE isEnabled(ssr/prefetch-timebox)=true
+      PROBE isEnabled(redirect-fallback-browsers)=true
       PROBE ACTIVE_FEATURE_FLAGS=(unset)
 ```
 
 Concretely, `google-my-business` is `true` in `config/development.json:67` but `false` in
-`config/test.json:47`; the probe's `isEnabled(google-my-business)=false` confirms the test process
-resolves the **test** value, which is the opposite of what the dev server (`development.json`) would
-resolve. Four flags are shown flipping in both directions (`…=false [dev resolves true]` and
-`…=true [dev resolves false]`), so the divergence is demonstrated, not asserted.
+`config/test.json:47`. The probe's `isEnabled(google-my-business)=false` is **observed** inside the
+running test worker, confirming the test process resolves the **test** value. The paired dev value is
+**source-derived** from `config/development.json:67` (`true`): the loader selects its env file by
+`CALYPSO_ENV || NODE_ENV || 'development'` (`client/server/config/index.js:6`), so a dev boot would
+resolve the `development.json` value — but a live dev-server boot was not exercised here to read that
+value back at runtime (**Limited**; see Q1 and §0.8.1). The `node -e` diff above enumerates all ten
+same-key value flips in **both** directions (e.g. `google-my-business dev=true test=false` and
+`redirect-fallback-browsers dev=false test=true`), so the divergence is demonstrated from the source
+of truth, not asserted.
 
 ### Two layers, one conclusion
 
@@ -957,10 +1161,12 @@ above prove layer (1).
 
 ## Q8 — Read-only scope and cleanup
 
-**Direct answer.** The investigation honoured read-only scope: the **only** file added to the
-repository is this document. The single temporary observation probe was created via the exact command
-shown below, run under the canonical client Jest project, and then **removed**; `git status
---porcelain` is empty apart from this document, and build artifacts are git-ignored (shown in Q1).
+**Direct answer.** The investigation honoured read-only scope. Diffing the source base commit against
+`HEAD` shows the **only** tracked change is a single **A**dded file — this document
+(`git diff --name-status <base>..HEAD` → one `A` line, `wc -l` → `1`; both shown below). The single
+temporary observation probe was created via the exact command shown below, run under the canonical
+client Jest project, and then **removed**, so `git status --porcelain` is empty (no leftover temporary
+artifact); build artifacts are git-ignored (shown in Q1).
 
 ### The temporary probe — exact creation command and full source (F3)
 
@@ -998,12 +1204,12 @@ test( 'blitzy probe: capture test-environment facts', async () => {
 	L.push( 'PROBE crypto typeof=' + typeof crypto + ' crypto.randomUUID typeof=' + typeof ( crypto && crypto.randomUUID ) + ' crypto.subtle typeof=' + typeof ( crypto && crypto.subtle ) + ' crypto.subtle.digest typeof=' + typeof ( crypto && crypto.subtle && crypto.subtle.digest ) );
 	// Q3 config-level test globals from test/client/jest.config.js
 	L.push( 'PROBE __i18n_text_domain__=' + ( typeof __i18n_text_domain__ !== 'undefined' ? __i18n_text_domain__ : '(undefined)' ) + ' typeof_google=' + typeof google );
-	// Q6/Q7 config via the remapped @automattic/calypso-config (canonical mapper path)
+	// Q6/Q7 config via the remapped @automattic/calypso-config (canonical mapper path) — TEST-env measurement only
 	L.push( 'PROBE config_env_id=' + config( 'env_id' ) );
-	L.push( 'PROBE isEnabled(google-my-business)=' + config.isEnabled( 'google-my-business' ) + '  [dev resolves true]' );
-	L.push( 'PROBE isEnabled(individual-subscriber-stats)=' + config.isEnabled( 'individual-subscriber-stats' ) + '  [dev resolves true]' );
-	L.push( 'PROBE isEnabled(ssr/prefetch-timebox)=' + config.isEnabled( 'ssr/prefetch-timebox' ) + '  [dev resolves false]' );
-	L.push( 'PROBE isEnabled(redirect-fallback-browsers)=' + config.isEnabled( 'redirect-fallback-browsers' ) + '  [dev resolves false]' );
+	L.push( 'PROBE isEnabled(google-my-business)=' + config.isEnabled( 'google-my-business' ) );
+	L.push( 'PROBE isEnabled(individual-subscriber-stats)=' + config.isEnabled( 'individual-subscriber-stats' ) );
+	L.push( 'PROBE isEnabled(ssr/prefetch-timebox)=' + config.isEnabled( 'ssr/prefetch-timebox' ) );
+	L.push( 'PROBE isEnabled(redirect-fallback-browsers)=' + config.isEnabled( 'redirect-fallback-browsers' ) );
 	L.push( 'PROBE ACTIVE_FEATURE_FLAGS=' + ( process.env.ACTIVE_FEATURE_FLAGS === undefined ? '(unset)' : JSON.stringify( process.env.ACTIVE_FEATURE_FLAGS ) ) );
 	// Q4 real network attempt -> expect NetConnectNotAllowedError
 	const net = await new Promise( ( resolve ) => {
@@ -1030,34 +1236,61 @@ $ rm client/state/country-states/test/blitzy_adhoc_test_probe.js
 $ ls client/state/country-states/test/blitzy_adhoc_test_probe.js ; echo "exit=$?"
 ls: cannot access 'client/state/country-states/test/blitzy_adhoc_test_probe.js': No such file or directory
 exit=2
-
-$ git status --porcelain
-(empty above => probe removed, tree byte-for-byte clean)
 ```
+
+### Two distinct read-only proofs (F7)
+
+`git status --porcelain` and a base-to-`HEAD` diff prove **different** things, so both are shown. The
+porcelain check alone is _not_ sufficient evidence of the one-file scope, because it only compares the
+working tree/index against `HEAD` — it says nothing about how `HEAD` differs from the source base.
+
+**(a) Working-tree cleanliness.** Empty `git status --porcelain` output means no tracked file is
+modified and no untracked temporary file (probe, log) is left behind after cleanup:
+
+```text
+$ git status --porcelain
+(empty output => no tracked file modified and no untracked temp file remaining)
+```
+
+**(b) One-file delta vs the source base commit.** Diffing the source base commit
+(`be7e5cc641622d153040491fd5625c6cb83e12eb`) against `HEAD` shows the _entire_ delta this task
+introduces is a single **A**dded path, with nothing else created, modified, or deleted:
+
+```text
+$ git diff --name-status be7e5cc641622d153040491fd5625c6cb83e12eb..HEAD
+A	blitzy/documentation/wp-calypso_be7e5cc64162.md
+$ git diff --name-only be7e5cc641622d153040491fd5625c6cb83e12eb..HEAD | wc -l
+1
+```
+
+The `A` status on exactly one path (`wc -l` → `1`) is the load-bearing evidence for read-only scope;
+the empty `git status --porcelain` in (a) is the complementary proof that no temporary artifact was
+left in the working tree.
 
 ### Read-only integrity
 
 - No existing source, test, configuration, build, or documentation file was modified.
 - No code was added to the repository other than this answer document.
 - The temporary probe was created under an existing `test/` folder (so it ran under the real client
-  project) and deleted afterwards; `git status --porcelain` reports it is gone.
+  project) and deleted afterwards; the working-tree status in (a) confirms it is gone.
 - Build outputs (`build/server.js` etc.) are git-ignored — proven in Q1 (`git check-ignore
 build/server.js` → `exit=0`) — so the `yarn run build` runs left no tracked change either.
 
-Net effect: the tracked tree is byte-for-byte unchanged except for
-`blitzy/documentation/wp-calypso_be7e5cc64162.md`.
+Net effect: relative to the source base commit `be7e5cc641622d153040491fd5625c6cb83e12eb`, the tracked
+tree gains exactly one file — `blitzy/documentation/wp-calypso_be7e5cc64162.md` (the `A` in proof (b))
+— and is otherwise byte-for-byte unchanged.
 
 ---
 
 ## Summary
 
-| Q   | Question                                    | Direct answer (observed)                                                                                                                                                                  |
-| --- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Q1  | Start the dev server & confirm it runs      | Build pipeline runs to `exit=0` and emits `build/server.js` (`7,935,308` bytes), reproducibly; live HTTP boot (`start-build`) deferred (env limitation)                                   |
-| Q2  | Test boot vs. dev boot                      | Jest = Node `testEnvironment` (`jest-preset.js:11`), `NODE_ENV=test`, client `TZ=UTC`; per-project setup replaces the preset; dev = `development`/browser                                 |
-| Q3  | Test-only globals / env vars / polyfills    | Env var `NODE_ENV=test`; config globals `google`/`__i18n_text_domain__`; injected browser-API **implementations** (mocks/polyfills); `structuredClone`/`crypto.subtle` retained from Node |
-| Q4  | Network during tests                        | Blocked by `nock.disableNetConnect()` (client `:9`, server `:4`) → `NetConnectNotAllowedError`; `fetch` is a `jest.fn` mock; integration permits network                                  |
-| Q5  | Mocked API traced through an action creator | `nock` → `wpcom.req.get` (Node/`wpcom-xhr-request`, `/rest/v1.1/...`) → thunk dispatch → `jest.fn` spy assertions; `country-states` passes 5/5                                            |
-| Q6  | Differential config resolution              | Env = `CALYPSO_ENV\|\|NODE_ENV\|\|'development'` (`client/server/config/index.js:6`) → `test.json` vs `development.json`; multi-file merge + env overrides + `ACTIVE_FEATURE_FLAGS`       |
-| Q7  | Test-controlled config + proof              | `jest.mock('@automattic/calypso-config')` + `isEnabled.mockReturnValue(...)`; proof: `google-my-business` dev=`true`/test=`false`, probe resolves `false`                                 |
-| Q8  | Read-only scope + cleanup                   | Only this doc added; temporary probe created via a shown heredoc and removed; `git status --porcelain` clean; build artifacts git-ignored                                                 |
+| Q   | Question                                    | Direct answer (observed)                                                                                                                                                                                                        |
+| --- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Q1  | Start the dev server & confirm it runs      | Build pipeline runs to `exit=0` and emits `build/server.js` (`7,935,308` bytes), reproducibly; live HTTP boot (`start-build`) deferred (env limitation)                                                                         |
+| Q2  | Test boot vs. dev boot                      | Jest = Node `testEnvironment` (`jest-preset.js:11`), `NODE_ENV=test`, client `TZ=UTC`; per-project setup replaces the preset; dev = `development`/browser                                                                       |
+| Q3  | Test-only globals / env vars / polyfills    | Env var `NODE_ENV=test`; config globals `google`/`__i18n_text_domain__`; injected browser-API **implementations** (mocks/polyfills); `structuredClone`/`crypto.subtle` retained from Node                                       |
+| Q4  | Network during tests                        | Blocked by `nock.disableNetConnect()` (client `:9`, server `:4`) → `NetConnectNotAllowedError`; `fetch` is a `jest.fn` mock; integration permits network                                                                        |
+| Q5  | Mocked API traced through an action creator | `nock` → `wpcom.req.get` (Node/`wpcom-xhr-request`, `/rest/v1.1/...`) → thunk dispatch → `jest.fn` spy assertions; `country-states` passes 5/5                                                                                  |
+| Q6  | Differential config resolution              | Env = `CALYPSO_ENV\|\|NODE_ENV\|\|'development'` (`client/server/config/index.js:6`) → `test.json` vs `development.json`; multi-file merge + env overrides + `ACTIVE_FEATURE_FLAGS`                                             |
+| Q7  | Test-controlled config + proof              | `jest.mock('@automattic/calypso-config')` + `isEnabled.mockReturnValue(...)`; proof: `google-my-business` dev=`true`/test=`false`, probe resolves `false`                                                                       |
+| Q8  | Read-only scope + cleanup                   | `git diff --name-status <base>..HEAD` = a single `A blitzy/documentation/wp-calypso_be7e5cc64162.md` (`wc -l`→`1`); probe created via a shown heredoc then removed; `git status --porcelain` clean; build artifacts git-ignored |
