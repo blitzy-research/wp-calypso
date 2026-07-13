@@ -2,7 +2,7 @@
 
 > **Question being answered (verbatim):** _"I have a component that retrieves filtered data from a central store, and I'm seeing stale results being returned in certain conditions even after the underlying data has changed."_ Plus six specific follow-up questions (Q1–Q6, below).
 
-This is a **run-first, read-only investigation**. Every behavioral claim below was produced by executing the **real** utility source through its canonical public API and capturing the complete, unedited output; no source file was modified. Each claim carries the exact command, the complete unedited output, and a full-path `file:line` reference. **Observed** facts (from my runs) are separated from **Inferred** facts (reasoned from the source).
+This is a **run-first, read-only investigation**. Every behavioral claim below was produced by executing the **real** utility code through its canonical entry — `treeSelect` from its real TypeScript source `packages/tree-select/src/index.ts` (imported directly via Node 22's native type-stripping, since the module is pure and self-contained), and `createSelector` from the **published** `@automattic/state-utils` package entry (`require.resolve` → `dist/cjs/index.js`, the exact module Calypso app code imports) — and capturing the complete, unedited output; no source file was modified. Each claim carries the exact command, the complete unedited output, and a full-path `file:line` reference. **Observed** facts (from my runs) are separated from **Inferred** facts (reasoned from the source).
 
 All code fences are labelled: `sh` for commands, `text` for captured program/test output, and `ts`/`js` for source excerpts.
 
@@ -22,7 +22,7 @@ All code fences are labelled: `sh` for commands, `text` for captured program/tes
 
 **Runtime-version resolution (per AAP §0.8.2).** The environment setup notes mention installing Node 20.x, but the repository's `engines.node` requires `^v22.9.0` and `.nvmrc` pins `22.9.0`. Node 20 would violate the engine constraint, so the **canonical supported runtime, Node 22.9.0+ (installed `v22.23.1`)**, was used for all observations. This lets the utility run exactly as it does in CI (`cimg/node:22.9.0`). Exact captured versions are in the **Evidence Appendix (§L.5)**.
 
-**Command conventions.** Every command below was run with the working directory at the repository root and the environment variable `REPO` exported to that same absolute path, i.e. `REPO="$PWD" = /tmp/blitzy/wp-calypso/blitzy-5e68b844-58da-44ac-a571-c83312f22855_d114d9`. Observation scripts import the real source with a dynamic import so they are portable and re-runnable:
+**Command conventions.** Every command below was run with the working directory at the repository root and the environment variable `REPO` exported to that same absolute path, i.e. `REPO="$PWD" = /tmp/blitzy/wp-calypso/blitzy-5e68b844-58da-44ac-a571-c83312f22855_d114d9`. So that each observation reproduces its documented output **regardless of the caller's ambient environment**, every development-mode command explicitly **unsets** `NODE_ENV` with `env -u NODE_ENV` (making `process.env.NODE_ENV === undefined`, which keeps the development-mode guards active), and every production-mode command explicitly sets `NODE_ENV=production`. Observation scripts import the real source with a dynamic import so they are portable and re-runnable:
 
 ```js
 const treeSelect = ( await import( process.env.REPO + '/packages/tree-select/src/index.ts' ) )
@@ -32,10 +32,10 @@ const treeSelect = ( await import( process.env.REPO + '/packages/tree-select/src
 **Why a standalone harness is canonical.** `treeSelect` is a pure, self-contained module whose only runtime dependency (`tslib`) is not exercised by the memoization logic `[packages/tree-select/package.json:L36-L38]`. Node 22 strips TypeScript types natively, so the **real** `packages/tree-select/src/index.ts` was imported directly with no build step, via:
 
 ```sh
-REPO="$PWD" node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/<script>.mjs
+env -u NODE_ENV REPO="$PWD" node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/<script>.mjs
 ```
 
-A benign `MODULE_TYPELESS_PACKAGE_JSON` warning is emitted by Node when a `.ts` file is imported directly; the complete, unedited warning is reproduced in **§L.5**. It is a runtime artifact of type-stripping, **not** a code issue, and the repo `package.json` was **not** edited to silence it. By default `process.env.NODE_ENV` is `undefined`, so the utility's **development-mode guards are active** unless a scenario explicitly sets `NODE_ENV=production`.
+A benign `MODULE_TYPELESS_PACKAGE_JSON` warning is emitted by Node when a `.ts` file is imported directly; the complete, unedited warning is reproduced in **§L.5**. It is a runtime artifact of type-stripping, **not** a code issue, and the repo `package.json` was **not** edited to silence it. The `env -u NODE_ENV` prefix removes any inherited `NODE_ENV` so `process.env.NODE_ENV` is `undefined` and the utility's **development-mode guards are active**; production scenarios instead set `NODE_ENV=production` explicitly. This makes each command's output independent of the shell that invokes it.
 
 **Two-run stability.** Every count-bearing scenario is driven by a self-contained script that executes the scenario **twice in-process** and prints a labelled `===== RUN 1 =====` / `===== RUN 2 =====` block; the `createSelector` contrast is additionally invoked as two separate processes (§L.6). Only values **identical across both runs** are reported. The at-scale scenario (Q2 B) issues **1000** identical calls. All commands and complete unedited outputs appear both inline (per question) and in the **Evidence Appendix (§L)**.
 
@@ -128,10 +128,10 @@ In short: **all dependent objects must be reference-identical (WeakMap identity 
         Cached result
 ```
 
-**Observed (runtime).** Two calls with the **same** `state.posts` reference and the same argument produce **one** computation and return the **identical** object; a **deep-equal but different** `state.posts` reference forces a **second** computation and a **different** result object (though equal by value). This proves the dependent layer is identity-based, not deep-equality.
+**Observed (runtime).** Two calls with the **same** `state.posts` reference and the same argument produce **one** computation and return the **identical** object; a **deep-equal but different** `state.posts` reference forces a **second** computation and a **different** result object (though equal by value). This proves the dependent layer is identity-based, not deep-equality. A second selector with **multiple** dependents (`getDependents` returning `[ state.a, state.b ]`) further shows that **each** dependent is compared by reference identity: changing **either** dependent reference is a miss, and returning to a prior `(a, b)` reference pair is a **hit** (the earlier branch is retained).
 
 ```sh
-REPO=$PWD node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/q1_comparison.mjs
+env -u NODE_ENV REPO="$PWD" node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/q1_comparison.mjs
 ```
 
 Complete unedited output (both runs identical):
@@ -141,15 +141,18 @@ Complete unedited output (both runs identical):
 same-ref: calls = 1 | r1===r2 (identity) = true
 deep-equal-diff-ref: calls = 2 | r1===r3 = false
 JSON r1 == JSON r3 (values equal) = true
+multi-dependent [a,b] returned-value sequence = [1,1,2,1,3,4] | total computations = 4
 ===== RUN 2 =====
 same-ref: calls = 1 | r1===r2 (identity) = true
 deep-equal-diff-ref: calls = 2 | r1===r3 = false
 JSON r1 == JSON r3 (values equal) = true
+multi-dependent [a,b] returned-value sequence = [1,1,2,1,3,4] | total computations = 4
 ```
 
 - `same-ref … calls = 1` → same dependent reference + same arg = cache HIT (selector ran once) `[packages/tree-select/src/index.ts:L86-L89]`.
 - `deep-equal-diff-ref … calls = 2` and `r1===r3 = false` → a new (deep-equal) dependent reference is a MISS `[packages/tree-select/src/index.ts:L84]`.
 - `JSON … values equal = true` → the two results are value-equal, confirming the miss is purely reference-driven on the dependent layer, not value-driven.
+- `multi-dependent [a,b] returned-value sequence = [1,1,2,1,3,4]` with **total computations = 4** → the selector (which returns its computation index) is invoked for the pairs `(a1,b1)`, `(a2,b1)`, `(a1,b2)`, `(a2,b2)` but **not** for the repeated `(a1,b1)` calls. The `1` at the **4th** position is the key detail: after `(a2,b1)` computed `2`, calling `(a1,b1)` **again** returned the original `1` — proving each dependent position is keyed by reference identity along the `WeakMap` tree and the earlier `(a1,b1)` branch was **retained**, not evicted `[packages/tree-select/src/index.ts:L84,L116-L131]`.
 
 **Contrast (Observed, §I).** `createSelector` compares differently: it snapshots the dependants and clears its cache when a **shallow** (`@wordpress/is-shallow-equal`) comparison against the previous snapshot fails `[packages/state-utils/src/create-selector/index.ts:L103-L104]`, using lodash `memoize` for the per-argument cache `[packages/state-utils/src/create-selector/index.ts:L90]`.
 
@@ -159,10 +162,10 @@ JSON r1 == JSON r3 (values equal) = true
 
 ## Section C — Q2: how many times the underlying selector runs (with concrete numbers)
 
-**Run scale & stability (Observed).** A call counter wraps the underlying `selector`. The script runs the whole set **twice in-process** (`RUN 1`/`RUN 2`); the counts were **identical across both runs**. The at-scale scenario issues **1000** identical calls.
+**Run scale & stability (Observed).** A call counter wraps the underlying `selector`. The script runs the whole set **twice in-process** (`RUN 1`/`RUN 2`); the counts were **identical across both runs**. Three scenarios run at the declared magnitude of **1000** calls each: B (same state + same key ×1000), E (alternating between **two** keys under a stable dependent ×1000), and F (a **fresh** dependent reference on each of the 1000 calls).
 
 ```sh
-REPO=$PWD node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/q2_counts.mjs
+env -u NODE_ENV REPO="$PWD" node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/q2_counts.mjs
 ```
 
 Complete unedited output (both runs identical):
@@ -173,19 +176,25 @@ A same-state x2 -> calls = 1
 B same-state x1000 -> calls = 1
 C changed-dependent (spread) -> calls = 2
 D distinct-args -> calls = 2
+E alternating two keys, same dependent, x1000 -> calls = 2
+F fresh dependent reference each of 1000 calls -> calls = 1000
 ===== RUN 2 =====
 A same-state x2 -> calls = 1
 B same-state x1000 -> calls = 1
 C changed-dependent (spread) -> calls = 2
 D distinct-args -> calls = 2
+E alternating two keys, same dependent, x1000 -> calls = 2
+F fresh dependent reference each of 1000 calls -> calls = 1000
 ```
 
-| Scenario | Sequence                                             | Underlying selector calls | Why                                                                                                    |
-| -------- | ---------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------ |
-| A        | same `state`, same arg, ×2                           | **1**                     | second call is a cache HIT `[packages/tree-select/src/index.ts:L87-L89]`                               |
-| B        | same `state`, same arg, ×1000                        | **1**                     | memoization holds at scale; only the first call computes `[packages/tree-select/src/index.ts:L87-L93]` |
-| C        | changed dependent via immutable spread `{ ...post }` | **2**                     | new reference for the dependent = MISS `[packages/tree-select/src/index.ts:L84]`                       |
-| D        | two distinct arguments                               | **2**                     | distinct leaf keys `args.join()` = two computations `[packages/tree-select/src/index.ts:L86]`          |
+| Scenario | Sequence                                                  | Underlying selector calls | Why                                                                                                              |
+| -------- | --------------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| A        | same `state`, same arg, ×2                                | **1**                     | second call is a cache HIT `[packages/tree-select/src/index.ts:L87-L89]`                                         |
+| B        | same `state`, same arg, ×1000                             | **1**                     | memoization holds at scale; only the first call computes `[packages/tree-select/src/index.ts:L87-L93]`           |
+| C        | changed dependent via immutable spread `{ ...post }`      | **2**                     | new reference for the dependent = MISS `[packages/tree-select/src/index.ts:L84]`                                 |
+| D        | two distinct arguments                                    | **2**                     | distinct leaf keys `args.join()` = two computations `[packages/tree-select/src/index.ts:L86]`                    |
+| E        | alternating **two** keys, stable dependent, ×1000         | **2**                     | two coexisting leaf entries under one dependent branch; each key computes once, then hits `[packages/tree-select/src/index.ts:L86-L93]` |
+| F        | **fresh** dependent reference on each call, ×1000         | **1000**                  | every call walks a brand-new `WeakMap` branch, so every call is a MISS `[packages/tree-select/src/index.ts:L84]` |
 
 **Cross-reference to the committed test suite (canonical "test runs").** These numbers match the repository's own assertions:
 
@@ -205,32 +214,34 @@ Running the committed suite (complete unedited output in **§L.2**) confirms **1
 
 **Critical caveat — the default key can collide (Observed).** The default key function is `args.join()` `[packages/tree-select/src/index.ts:L11-L12]`. Coexistence is therefore guaranteed **only for arguments that produce _distinct generated strings_**. When two semantically different calls stringify to the **same** join, they share one entry and the first cached result is returned for both. This is the mechanism a component must understand to avoid _incorrect_ cache hits.
 
-**Observed (runtime).** Three demonstrations run twice in-process: (1) coexistence with `id1, id2, id1`; (2) the join collision `('a,b')` vs `('a','b')`; (3) numeric/string `1` vs `'1'`; and the nullish/empty collision `null` vs `undefined` vs `''` (all join to `""`).
+**Observed (runtime).** Three demonstrations run twice in-process: (1) coexistence with the full interleaving `id1, id2, id1, id2`, proving **both** the `id1` **and** `id2` results survive across the interleave; (2) the join collision `('a,b')` vs `('a','b')`; (3) numeric/string `1` vs `'1'`; and the nullish/empty collision `null` vs `undefined` vs `''` (all join to `""`).
 
 ```sh
-REPO=$PWD node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/q3_coexistence.mjs
+env -u NODE_ENV REPO="$PWD" node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/q3_coexistence.mjs
 ```
 
 Complete unedited output (both runs identical):
 
 ```text
 ===== RUN 1 =====
-coexistence: calls = 2 (3 calls issued: id1,id2,id1)
+coexistence A/B/A/B: calls = 2 (4 calls issued: id1,id2,id1,id2)
 first id1 result survived: a === c = true
-id2 entry distinct: a === b = false
+first id2 result survived: b === d = true
+id1 vs id2 entries distinct: a === b = false
 COLLISION join: "a,b" vs "a","b" -> calls = 1 | same result = true
 COLLISION numeric/string: 1 vs "1" -> calls = 1 | same result = true
 COLLISION nullish/empty: null vs undefined vs "" -> calls = 1 | all same result = true
 ===== RUN 2 =====
-coexistence: calls = 2 (3 calls issued: id1,id2,id1)
+coexistence A/B/A/B: calls = 2 (4 calls issued: id1,id2,id1,id2)
 first id1 result survived: a === c = true
-id2 entry distinct: a === b = false
+first id2 result survived: b === d = true
+id1 vs id2 entries distinct: a === b = false
 COLLISION join: "a,b" vs "a","b" -> calls = 1 | same result = true
 COLLISION numeric/string: 1 vs "1" -> calls = 1 | same result = true
 COLLISION nullish/empty: null vs undefined vs "" -> calls = 1 | all same result = true
 ```
 
-- `coexistence: calls = 2` for **3** issued calls, `a === c = true`, `a === b = false` → the intervening `id2` call did **not** evict the `id1` entry; the first `id1` result object is returned again on the third call (distinct keys coexist).
+- `coexistence A/B/A/B: calls = 2` for **4** issued calls (`id1, id2, id1, id2`), with `a === c = true` **and** `b === d = true`, `a === b = false` → the interleaved calls each hit their own retained entry: the third call re-uses the first `id1` result **and** the fourth call re-uses the first `id2` result. Neither the `id2` call evicted `id1` nor did the second `id1` call evict `id2` — both per-argument entries coexist for the whole interleave (distinct keys coexist).
 - `COLLISION join: "a,b" vs "a","b" -> calls = 1 | same result = true` → a single argument `'a,b'` and two arguments `'a','b'` both produce `args.join() === "a,b"`, so the second call is served the **first** cached result although the argument shapes differ.
 - `COLLISION numeric/string: 1 vs "1" -> calls = 1 | same result = true` → `1` and `'1'` both join to `"1"`.
 - `COLLISION nullish/empty: null vs undefined vs "" -> calls = 1 | all same result = true` → `null`, `undefined`, and `''` all join to `""`.
@@ -255,10 +266,10 @@ cachedSelector.clearCache = () => {
 
 Because the entire tree hangs off that single root `WeakMap` `[packages/tree-select/src/index.ts:L65,L84]`, replacing it invalidates **all** entries at once.
 
-**Observed (runtime).** Before clearing, a repeated call returns the **identical** object; after `clearCache()`, the next call computes a **new** result object (equal by value, different reference).
+**Observed (runtime).** Before clearing, a repeated call returns the **identical** object; after `clearCache()`, the next call computes a **new** result object (equal by value, different reference). A second demonstration populates **two** coexisting leaf entries (two distinct argument keys under one dependent), confirms **both** are cache hits, then calls `clearCache()` **once** and shows that **both** entries recompute — proving the clear invalidates the *entire* cache, not just the most-recent entry.
 
 ```sh
-REPO=$PWD node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/q4_clearcache.mjs
+env -u NODE_ENV REPO="$PWD" node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/q4_clearcache.mjs
 ```
 
 Complete unedited output (both runs identical):
@@ -268,15 +279,21 @@ Complete unedited output (both runs identical):
 before clearCache: calls = 1 | memoizedResult === firstResult = true
 after clearCache:  calls = 2 | afterClearResult === firstResult = false
 value still equal after clear: JSON equal = true
+multi-entry populate (2 keys): calls = 2 | preHitA = true | preHitB = true | calls after hits = 2
+multi-entry after clearCache: calls = 4 | A recomputed = true | B recomputed = true
 ===== RUN 2 =====
 before clearCache: calls = 1 | memoizedResult === firstResult = true
 after clearCache:  calls = 2 | afterClearResult === firstResult = false
 value still equal after clear: JSON equal = true
+multi-entry populate (2 keys): calls = 2 | preHitA = true | preHitB = true | calls after hits = 2
+multi-entry after clearCache: calls = 4 | A recomputed = true | B recomputed = true
 ```
 
 - `before … calls = 1 … === firstResult = true` → the second call was a cache HIT.
 - `after … calls = 2 … === firstResult = false` → `clearCache()` forced recomputation; the new result is a different object reference `[packages/tree-select/src/index.ts:L96-L99]`.
 - `value still equal … JSON equal = true` → the recomputed value is equal by content, confirming only the cache (not the logic) changed.
+- `multi-entry populate (2 keys): calls = 2 | preHitA = true | preHitB = true | calls after hits = 2` → two distinct argument keys each computed once (`calls = 2`), and re-calling both was a HIT for each (`calls after hits` stays `2`), so **two** entries coexist in the cache before the clear.
+- `multi-entry after clearCache: calls = 4 | A recomputed = true | B recomputed = true` → a single `clearCache()` recreated the root `WeakMap` `[packages/tree-select/src/index.ts:L96-L99]`, so **both** previously-cached entries recomputed (`calls` went `2 → 4`, both results are new references). This confirms whole-cache invalidation rather than single-entry eviction.
 
 **Cross-reference.** The committed test "should bust the cache when clearCache() method is called" asserts the post-clear result is `not.toBe` the pre-clear result `[packages/tree-select/test/index.js:L197-L217]`.
 
@@ -299,10 +316,10 @@ const weakMapKey = key || NULLISH_KEY;
 - **`null` and `undefined` (nullish) — memoized.** `key != null` is `false` for both, so the throw is skipped; the falsy key is replaced by a shared sentinel object `const NULLISH_KEY = {};` `[packages/tree-select/src/index.ts:L107,L121]`. Every nullish dependent thus maps to the **same** `WeakMap` slot, so repeated calls memoize normally.
 - **Non-nullish primitives (number, boolean, string) — throw.** For a value like `1`, `true`, `'a'`, `0`, `false`, or `''`, `key != null` is `true` and `Object(key) !== key` is `true` (a primitive is not its own boxed object), so it **throws** a `TypeError` whose message is `` key must be an object, `null`, or `undefined` `` `[packages/tree-select/src/index.ts:L118-L120]`.
 
-**Observed (runtime), addressing `null`, `undefined`, number, and boolean each by name:**
+**Observed (runtime), addressing `null`, `undefined`, number, and boolean each by name (plus `null`-only, `undefined`-only, the `null → undefined` transition, and Symbol/BigInt _arguments_):**
 
 ```sh
-REPO=$PWD node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/q5_nullish_primitive.mjs
+env -u NODE_ENV REPO="$PWD" node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/q5_nullish_primitive.mjs
 ```
 
 Complete unedited output (both runs identical):
@@ -324,6 +341,14 @@ arg = "foo" | threw = false
 arg = true | threw = false
 arg = null | threw = false
 arg = undefined | threw = false
+--- nullish dependents by name (call counts) ---
+null-only dependent [null] x2 -> calls = 1
+undefined-only dependent [undefined] x2 -> calls = 1
+null -> undefined transition: calls = 1 | firstResult === secondResult (identity) = true
+--- Symbol ARGUMENT (args.join stringification path) ---
+arg = Symbol(x) | threw = true | TypeError: Cannot convert a Symbol value to a string
+--- BigInt/number/string ARGUMENT collision via args.join() ---
+args 1n, 1, "1" -> calls = 1 (all collide to key "1")
 ===== RUN 2 =====
 nullish dependents [null, undefined]: firstResult === secondResult = true
 --- non-nullish primitive dependents (each thrown error captured) ---
@@ -340,19 +365,35 @@ arg = "foo" | threw = false
 arg = true | threw = false
 arg = null | threw = false
 arg = undefined | threw = false
+--- nullish dependents by name (call counts) ---
+null-only dependent [null] x2 -> calls = 1
+undefined-only dependent [undefined] x2 -> calls = 1
+null -> undefined transition: calls = 1 | firstResult === secondResult (identity) = true
+--- Symbol ARGUMENT (args.join stringification path) ---
+arg = Symbol(x) | threw = true | TypeError: Cannot convert a Symbol value to a string
+--- BigInt/number/string ARGUMENT collision via args.join() ---
+args 1n, 1, "1" -> calls = 1 (all collide to key "1")
 ```
 
 By name:
 
-- **`null`** → memoized (shares `NULLISH_KEY`); `firstResult === secondResult = true`.
-- **`undefined`** → memoized (shares `NULLISH_KEY`); returned in the same `[ null, undefined ]` dependents pair.
+- **`null`** → memoized (shares `NULLISH_KEY`); `firstResult === secondResult = true`. A `null`-**only** dependent `[ null ]` called twice computes **once** (`calls = 1`).
+- **`undefined`** → memoized (shares `NULLISH_KEY`); returned in the same `[ null, undefined ]` dependents pair. An `undefined`-**only** dependent `[ undefined ]` called twice also computes **once** (`calls = 1`).
+- **`null → undefined` transition** → `calls = 1` with `firstResult === secondResult (identity) = true`: because both `null` and `undefined` are falsy, `const weakMapKey = key || NULLISH_KEY` folds **both** to the same sentinel object `[packages/tree-select/src/index.ts:L107,L121]`, so a dependent that changes from `null` to `undefined` (with unchanged args) is a **cache HIT** — the two nullish values are indistinguishable to the cache.
 - **number** → `1` throws; `0` (a falsy number) **also** throws — note `0` is _not_ treated as nullish here, because the throw check at `[packages/tree-select/src/index.ts:L118]` runs **before** the `|| NULLISH_KEY` fallback at `[packages/tree-select/src/index.ts:L121]`.
 - **boolean** → `true` throws; `false` (a falsy boolean) **also** throws, for the same ordering reason.
 - string (incl. empty `''`) → throws as well, shown for completeness.
+- **Symbol _argument_ → throws a _different_ error.** A `Symbol` passed as a selector **argument** (not a dependent) reaches `getCacheKey(...args)` → `args.join()`, which cannot stringify a Symbol, so it throws `` TypeError: Cannot convert a Symbol value to a string `` `[packages/tree-select/src/index.ts:L11-L12,L86]`. This is the native `Array.prototype.join` failure, not the dependent guard's `` key must be an object … `` message, and it is **unconditional** (not `NODE_ENV`-guarded).
+- **BigInt / number / string _arguments_ that stringify identically collide.** `1n`, `1`, and `'1'` all produce `args.join() === "1"`, so three calls share **one** leaf entry (`calls = 1`). This is the same default-key collision described in §D applied to the primitive-argument path.
 
 **Cross-reference.** The committed tests assert this precisely: "should memoize a nullish value returned by getDependents" returns identical results for `[ null, undefined ]` `[packages/tree-select/test/index.js:L219-L229]`; "throws on a non-nullish primitive value returned by getDependents" iterates exactly `[ true, 1, 'a', false, '', 0 ]` and expects each to throw `[packages/tree-select/test/index.js:L231-L241]`.
 
-**CRITICAL NUANCE — do not conflate dependents with arguments (Observed).** Q5 is about values `getDependents` **returns**. Primitives passed as **arguments** to the selector are an entirely different code path: they are joined into the cache key via `getCacheKey(...args)` and do **not** throw. The output above shows arguments `[ 1, '', 'foo', true, null, undefined ]` **all** succeeding (`threw = false`), matching the committed test "should not throw an error in development when given primitives" `[packages/tree-select/test/index.js:L115-L124]`. Keep the two cases separate: **primitive dependents throw; primitive arguments are fine.**
+**CRITICAL NUANCE — do not conflate dependents with arguments (Observed).** Q5 is about values `getDependents` **returns**. Primitives passed as **arguments** to the selector are an entirely different code path: they are joined into the cache key via `getCacheKey(...args)` (default `args.join()`) `[packages/tree-select/src/index.ts:L11-L12,L86]`. The output above shows the common primitive arguments `[ 1, '', 'foo', true, null, undefined ]` **all** succeeding (`threw = false`), matching the committed test "should not throw an error in development when given primitives" `[packages/tree-select/test/index.js:L115-L124]`. Keep the two cases separate: **primitive _dependents_ throw the guard `TypeError`, whereas most primitive _arguments_ are accepted** (they are stringified into the key).
+
+**Two exceptions on the argument path (Observed) — the general phrasing "primitive arguments are always fine" is inaccurate.** Because arguments are handled by `args.join()`, two things differ from the "always safe" intuition:
+
+1. **A `Symbol` argument throws.** `args.join()` cannot convert a Symbol to a string, so passing `Symbol('x')` as an argument throws `` TypeError: Cannot convert a Symbol value to a string `` (a _native_ `Array.prototype.join` error, distinct from the dependent-guard message, and unconditional across `NODE_ENV`). Observed above: `arg = Symbol(x) | threw = true`.
+2. **Arguments that stringify identically collide into one cache entry.** `1n` (BigInt), `1` (number), and `'1'` (string) all join to `"1"`, so three distinct-typed calls share a single leaf entry — observed above as `args 1n, 1, "1" -> calls = 1`. This is not an error, but it means "one entry per distinct argument" holds only when the argument's **string form** is distinct (see §D and the §G custom-key remedy).
 
 **Environment note (forward-reference to §K).** The primitive-**dependent** `TypeError` at `[packages/tree-select/src/index.ts:L118-L120]` is **unconditional** — it is _not_ wrapped in a `NODE_ENV` guard and therefore throws in **both** development and production.
 
@@ -377,10 +418,10 @@ The rationale: the default key is `args.join()`, and objects stringify to `"[obj
 
 **With `options.getCacheKey`, object arguments are enabled and deduplication is controlled by the returned key.**
 
-**Observed (runtime).**
+**Observed (runtime, development).** The command uses `env -u NODE_ENV` so the dev-only object-arg guard is active regardless of the caller's ambient environment (see §K):
 
 ```sh
-REPO=$PWD node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/q6_cachekey.mjs
+env -u NODE_ENV REPO="$PWD" node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/q6_cachekey.mjs
 ```
 
 Complete unedited output (both runs identical):
@@ -404,6 +445,26 @@ then distinct siteId: calls = 2 | thirdResult === firstResult = false
 
 **Cross-reference.** The committed test "accepts a getCacheKey option that enables object arguments" builds exactly this selector with ``{ getCacheKey: ( query ) => `key:${ query.siteId }` }`` and asserts the second call returns the memoized result `[packages/tree-select/test/index.js:L243-L264]`.
 
+**Production behavior — the object-arg guard is skipped, so a default-key object collision silently returns the WRONG result (Observed).** The guard at `[packages/tree-select/src/index.ts:L75-L79]` is wrapped in `if ( process.env.NODE_ENV !== 'production' )`, so under `NODE_ENV=production` it does **not** run. Passing two **distinct** object arguments **without** a custom key then does not throw; both stringify to `"[object Object]"` via `args.join()` and **collide into one leaf entry** — the second call returns the **first** object's cached result. This is exactly the incorrect cache hit the dev guard is designed to prevent, so it is important to know it re-appears in production if a custom key is omitted:
+
+```sh
+NODE_ENV=production REPO="$PWD" node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/q6_prod.mjs
+```
+
+Complete unedited output (both runs identical):
+
+```text
+===== RUN 1 =====
+PROD default-key, two DISTINCT object args: threw = false | calls = 1 | secondObservedId = A | first === second = true
+PROD custom getCacheKey: calls = 2 | sameLogicalIdentity (r1===r2) = true | differentIdentity (r3!==r1) = true
+===== RUN 2 =====
+PROD default-key, two DISTINCT object args: threw = false | calls = 1 | secondObservedId = A | first === second = true
+PROD custom getCacheKey: calls = 2 | sameLogicalIdentity (r1===r2) = true | differentIdentity (r3!==r1) = true
+```
+
+- `PROD default-key, two DISTINCT object args: threw = false | calls = 1 | secondObservedId = A | first === second = true` → in production the guard is skipped (**no throw**), the two distinct query objects both key to `"[object Object]"`, so only **one** computation runs (`calls = 1`) and the second call returns the **first** object's result (`secondObservedId = A`, `first === second = true`). A component relying on the default key with object arguments would receive **stale/incorrect** data in production `[packages/tree-select/src/index.ts:L11-L12,L75-L79,L86]`.
+- `PROD custom getCacheKey: calls = 2 | sameLogicalIdentity (r1===r2) = true | differentIdentity (r3!==r1) = true` → the custom-key path is **environment-independent**: two objects sharing a key dedupe (`r1===r2`), a distinct key recomputes (`r3!==r1`), for a total of **2** computations — identical to the development result above. Supplying `options.getCacheKey` is therefore the correct remedy in **both** environments.
+
 **Real consumer pattern (Observed from source).** This is precisely how `getSiteStatsNormalizedData` serializes a complex `query` object into a stable string key `[client/state/stats/lists/selectors.js:L155-L158]`:
 
 ```js
@@ -422,7 +483,7 @@ then distinct siteId: calls = 2 | thirdResult === firstResult = false
 **Reproduction (Observed).** To make staleness unambiguous, the selector returns a **derived** value (a filtered list of post ids whose `status === 'published'`), not a reference to the mutated objects. `getDependents` returns a **stable** `state.posts` reference while a nested field is mutated in place (`postsObj.id1.status = 'draft'`). The contrasting case performs an immutable update (new `state.posts` and new post object).
 
 ```sh
-REPO=$PWD node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/rootcause.mjs
+env -u NODE_ENV REPO="$PWD" node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/rootcause.mjs
 ```
 
 Complete unedited output (both runs identical):
@@ -470,38 +531,33 @@ IMMUTABLE: FRESH (now []) = true
 
 **Correction on "invalidation" (Observed).** `treeSelect` does **not** invalidate a branch when a dependent changes. A changed dependent reference simply routes the tree walk down a **different** `WeakMap` path, creating new nodes; the original branch is **left intact**. The Q3 observation proves retention directly: after calling with `id1`, then `id2`, then `id1` again, the third call returned the **original** `id1` result object (`a === c = true`) — the `id1` branch was retained, not evicted (§D). Old branches whose dependent objects are no longer referenced anywhere become eligible for garbage collection precisely because they are held via `WeakMap` keys `[packages/tree-select/README.md:L4]`; the only _active_ whole-cache reset is `clearCache()` `[packages/tree-select/src/index.ts:L96-L99]`.
 
-**Observed — wholesale-clear contrast.** Using the real `createSelector` logic (provenance labelled below), I drove two distinct arguments under a **stable** dependants snapshot, then changed the dependants reference. The scenario is run **twice in-process** (`RUN 1`/`RUN 2`) and the whole command is **invoked twice as separate processes** (both invocations shown in **§L.6**). First invocation:
+**Observed — wholesale-clear contrast (canonical public entry).** Using the **real, published** `createSelector` — loaded through the package's public entry point exactly as Calypso app code imports it — I drove two distinct arguments under a **stable** dependants snapshot, then changed the dependants reference. So the returned-value sequence directly reveals which calls recomputed, the selector **returns its computation index**. The scenario is run **twice in-process** (`RUN 1`/`RUN 2`) and the whole command is **invoked twice as separate processes** (both invocations shown in **§L.6**). First invocation:
 
 ```sh
-CS_BUNDLE=/tmp/obs/cs/create-selector.bundle.mjs node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/cs/createselector_contrast.mjs
+env -u NODE_ENV REPO="$PWD" node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/cs/createselector_canonical.mjs
 ```
 
 Complete unedited output (invocation 1; invocation 2 in §L.6 is identical):
 
 ```text
+canonical entry resolved = /tmp/blitzy/wp-calypso/blitzy-5e68b844-58da-44ac-a571-c83312f22855_d114d9/packages/state-utils/dist/cjs/index.js
+createSelector typeof = function
 ===== RUN 1 =====
-argA (state1):          calls = 1
-argB (state1):          calls = 2
-argA again (state1):    calls = 2 (coexist -> stays 2)
-argA (state2, new ref): calls = 3 (wholesale clear -> recompute)
-argB (state2):          calls = 4 (B entry was wiped too)
+returned-value sequence = [1,2,1,3,4] | total computations = 4
 ===== RUN 2 =====
-argA (state1):          calls = 1
-argB (state1):          calls = 2
-argA again (state1):    calls = 2 (coexist -> stays 2)
-argA (state2, new ref): calls = 3 (wholesale clear -> recompute)
-argB (state2):          calls = 4 (B entry was wiped too)
+returned-value sequence = [1,2,1,3,4] | total computations = 4
 ===== WARN (complex object argument) =====
 complex-arg: threw = false | warnCount = 1 | message = "Do not pass complex objects as arguments for a memoized selector"
 ```
 
-- Under a stable dependants snapshot, `argA` and `argB` **coexist** (calls `1 → 2 → 2`), similar to `treeSelect` (§D).
-- When the dependants reference changes (shallow-unequal), **both** argument entries are wiped and recomputed (calls `3`, then `4`) — the **wholesale** invalidation `[packages/state-utils/src/create-selector/index.ts:L103-L104]`. This is the key behavioral difference from `treeSelect`'s per-branch **retention** (§D).
+- `canonical entry resolved = …/packages/state-utils/dist/cjs/index.js` → the value came from the package's **published CommonJS entry** (`"main": "dist/cjs/index.js"` `[packages/state-utils/package.json:L11]`), resolved via `require.resolve( '@automattic/state-utils' )` — the same module app code loads. No bundler, mock, or debug bypass is used to obtain the behavior (the ephemeral `/tmp/blitzy/…` prefix is just this environment's checkout path).
+- `returned-value sequence = [1,2,1,3,4]` with `total computations = 4` → call 1 (`argA`) computes `1`; call 2 (`argB`, same snapshot) computes `2` and **coexists**; call 3 (`argA` again, snapshot unchanged) is a **HIT** returning the cached `1`; call 4 changes the dependants reference (shallow-unequal), triggering a **wholesale clear**, then recomputes `argA` as `3`; call 5 (`argB`) finds its entry was **also wiped** and recomputes as `4`.
+- The decisive contrast with `treeSelect` is call 5: under `treeSelect`, changing one dependent leaves other per-argument entries **retained** (§D, sequence `[1,1,2,1,3,4]` — the earlier branch is reused); under `createSelector`, **any** dependants change clears the **entire** memoize cache, so `argB`'s previously-cached `2` is gone and it recomputes to `4` `[packages/state-utils/src/create-selector/index.ts:L103-L104]`.
 
-**PROVENANCE LABEL (mandatory — NON-CANONICAL bundled path).** `createSelector` imports `import { memoize } from 'lodash'`, `import isShallowEqual from '@wordpress/is-shallow-equal'`, and `import warn from '@wordpress/warning'` `[packages/state-utils/src/create-selector/index.ts:L1-L3]`. Node's raw ESM loader **cannot** consume the CJS **named** export `memoize` from `lodash` (it fails with `SyntaxError: Named export 'memoize' not found`), which the repo's build normally handles. So — unlike the fully-canonical `treeSelect` runs — the `createSelector` values come from a **bundled** path: the **real in-repo source** was bundled read-only with `esbuild`, which resolves the CJS named import exactly like the repo bundler. The complete, reproducible provenance (source hash, byte-identical copy, exact `esbuild` command and flags, bundle hash, dependency resolution from the installed tree **and** the lockfile, and both process invocations) is in **§L.6**. Key facts:
+**PROVENANCE (canonical public entry).** The `createSelector` values above come from the package's **published entry point**, `require.resolve( '@automattic/state-utils' )` → `packages/state-utils/dist/cjs/index.js` (the manifest's `"main"` `[packages/state-utils/package.json:L11]`), loaded via `createRequire` — the identical module Calypso app code imports. This is the **canonical path**: no bundler, mock, fallback, or debug stand-in is involved in loading the utility. Why the canonical entry works directly (and no bundle is needed): `createSelector` imports the CJS **named** export `memoize` from `lodash` `[packages/state-utils/src/create-selector/index.ts:L3]`; Node's **raw ESM** loader cannot consume that named export from a `.ts` source (`SyntaxError: Named export 'memoize' not found`), but the **published `dist/cjs` build is CommonJS**, and CommonJS `require()` resolves `lodash`'s named exports natively — so the pre-built public entry sidesteps the ESM-named-export limitation entirely. The complete provenance (resolved path printed by the harness, both process invocations, source→build hash corroboration, and locked dependency versions) is in **§L.6**. Key facts:
 
-- Real source hash: `sha256(packages/state-utils/src/create-selector/index.ts) = 2c351c697acb433e47c01799710c0c48018cd158c7c34ac6cd154597d5ae3c02` (unchanged before/after bundling; `git status` stayed clean).
-- Bundle produced by `esbuild@0.25.1`; bundle `sha256 = e228332500b29580272e454804801512da5858ec00d0b1c4b1f2e1ed6d317305`.
+- Canonical resolved entry (printed by the harness each run): `packages/state-utils/dist/cjs/index.js`, exporting `createSelector` (a `function`).
+- The published `dist/cjs` build is git-ignored (`.gitignore:L69` `/packages/*/dist/`) and was produced by the repository's own install/postinstall (`tsc`), so reading it does **not** modify the repository and it reflects the committed TypeScript source. Corroborating source hash: `sha256(packages/state-utils/src/create-selector/index.ts) = 2c351c697acb433e47c01799710c0c48018cd158c7c34ac6cd154597d5ae3c02` (`git status` stayed clean throughout).
 - Dependencies resolved against the repository's **installed** tree, whose **exact locked** versions (from `yarn.lock`, distinct from the caret ranges in the manifest) are:
   - `lodash` → manifest range `^4.17.21` `[packages/state-utils/package.json:L35]`; **locked** `4.17.21` `[yarn.lock:L24074-L24078]`.
   - `@wordpress/is-shallow-equal` → manifest range `^5.21.0` `[packages/state-utils/package.json:L33]`; **locked** `5.21.0` `[yarn.lock:L10683-L10690]`.
@@ -534,10 +590,10 @@ Per the read-only constraint of this investigation, this is noted as an **observ
 2. **Object-argument guard (dev-only).** On call, throws for object arguments when the default key function is used `[packages/tree-select/src/index.ts:L75-L79]`.
 3. **Primitive-dependent guard (UNCONDITIONAL).** Inside `insertDependentKey`, throws for a non-nullish primitive dependent — **not** wrapped in any `NODE_ENV` check `[packages/tree-select/src/index.ts:L118-L120]`.
 
-**Observed — dev mode (`NODE_ENV` unset):**
+**Observed — dev mode (`NODE_ENV` unset).** The command prefixes `env -u NODE_ENV` to **remove** any inherited `NODE_ENV` from the caller's shell, guaranteeing the dev-mode output (`NODE_ENV = undefined`, both argument guards active) is reproduced **regardless** of the ambient environment. Without this prefix, running the same script in a shell where `NODE_ENV=production` is already exported would instead skip the guards and print the production output below — so the prefix is what makes this observation deterministic:
 
 ```sh
-REPO=$PWD node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/devprod.mjs
+env -u NODE_ENV REPO="$PWD" node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/devprod.mjs
 ```
 
 ```text
@@ -556,7 +612,7 @@ primitive dependent (number 1): threw = true | TypeError: key must be an object,
 **Observed — production mode (`NODE_ENV=production`):**
 
 ```sh
-REPO=$PWD NODE_ENV=production node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/devprod.mjs
+NODE_ENV=production REPO="$PWD" node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/devprod.mjs
 ```
 
 ```text
@@ -595,15 +651,16 @@ primitive dependent (number 1): threw = true | TypeError: key must be an object,
 
 | Item                            | Command (harness in `/tmp/obs`)                | Observed key result                                                                    | Source citation                                                                                                  |
 | ------------------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Q1 comparison                   | `node … q1_comparison.mjs`                     | same-ref calls=1 (hit); deep-equal diff-ref calls=2 (miss), values equal               | `[packages/tree-select/src/index.ts:L84-L89,L116-L131]`, `[packages/tree-select/README.md:L40]`                  |
-| Q2 counts                       | `node … q2_counts.mjs`                         | 1 / 1 (×1000) / 2 / 2                                                                  | `[packages/tree-select/test/index.js:L33-L46,L126-L159]`                                                         |
-| Q3 coexistence + collisions     | `node … q3_coexistence.mjs`                    | 3 calls → 2 computations; first id1 survives; join/numeric/nullish collisions → 1 comp | `[packages/tree-select/src/index.ts:L86-L93,L11-L12]`, `[packages/tree-select/test/index.js:L161-L186]`          |
-| Q4 clearCache                   | `node … q4_clearcache.mjs`                     | before: same ref; after clearCache: new ref, equal value                               | `[packages/tree-select/src/index.ts:L96-L99]`, `[packages/tree-select/test/index.js:L197-L217]`                  |
-| Q5 nullish/primitive            | `node … q5_nullish_primitive.mjs`              | null+undefined memoized; [true,1,'a',false,'',0] throw; primitive args OK              | `[packages/tree-select/src/index.ts:L107,L116-L120]`, `[packages/tree-select/test/index.js:L115-L124,L219-L241]` |
-| Q6 getCacheKey                  | `node … q6_cachekey.mjs`                       | object-arg no-key throws; with key, same-siteId dedupes (calls=1); distinct → 2        | `[packages/tree-select/src/index.ts:L24-L27,L67,L75-L78,L86]`, `[packages/tree-select/test/index.js:L243-L264]`  |
-| Root cause                      | `node … rootcause.mjs`                         | in-place mutation → calls stays 1 (stale, before===after); immutable → calls 2 (fresh) | `[packages/tree-select/src/index.ts:L84-L89]`, `[packages/tree-select/test/index.js:L142-L159]`                  |
-| Dev vs prod                     | `node … devprod.mjs` (± `NODE_ENV=production`) | arg guards dev-only; primitive-dependent throw unconditional                           | `[packages/tree-select/src/index.ts:L57-L63,L75-L79,L118-L120]`                                                  |
-| createSelector contrast         | `node … cs/createselector_contrast.mjs`        | wholesale clear 1,2,2 → 3,4; warn (not throw), warnCount=1                             | `[packages/state-utils/src/create-selector/index.ts:L41-L52,L90,L103-L104]`                                      |
+| Q1 comparison                   | `env -u NODE_ENV node … q1_comparison.mjs`     | same-ref calls=1 (hit); deep-equal diff-ref calls=2 (miss), values equal; multi-dependent `[a,b]` returned-value sequence `[1,1,2,1,3,4]` → 4 computations (repeated `(a1,b1)` reused) | `[packages/tree-select/src/index.ts:L84-L89,L116-L131]`, `[packages/tree-select/README.md:L40]`                  |
+| Q2 counts                       | `env -u NODE_ENV node … q2_counts.mjs`         | same-state×2 → 1; same-state×1000 → 1; changed-dependent → 2; distinct-args → 2; alternating two keys ×1000 → 2; fresh dependent each of 1000 calls → 1000 | `[packages/tree-select/test/index.js:L33-L46,L126-L159]`                                                         |
+| Q3 coexistence + collisions     | `env -u NODE_ENV node … q3_coexistence.mjs`    | A/B/A/B (4 calls, keys id1,id2,id1,id2) → 2 computations; first id1 survives (a===c), first id2 survives (b===d), id1≠id2 entries distinct (a≠b); join/numeric/nullish collisions → 1 comp | `[packages/tree-select/src/index.ts:L86-L93,L11-L12]`, `[packages/tree-select/test/index.js:L161-L186]`          |
+| Q4 clearCache                   | `env -u NODE_ENV node … q4_clearcache.mjs`     | single entry — before: same ref (calls=1); after clearCache: new ref, equal value (calls=2); multi-entry — populate 2 keys → 2, both pre-clear hits, after one clearCache both recompute → 4 (A & B both recomputed) | `[packages/tree-select/src/index.ts:L96-L99]`, `[packages/tree-select/test/index.js:L197-L217]`                  |
+| Q5 nullish/primitive            | `env -u NODE_ENV node … q5_nullish_primitive.mjs` | null+undefined memoized; null-only calls=1, undefined-only calls=1, null→undefined transition calls=1 identity=true; dependents [true,1,'a',false,'',0] throw; common primitive args OK; **Symbol arg throws** `Cannot convert a Symbol value to a string`; BigInt/number/string `1n,1,'1'` collide → calls=1 | `[packages/tree-select/src/index.ts:L11-L12,L86,L107,L116-L120]`, `[packages/tree-select/test/index.js:L115-L124,L219-L241]` |
+| Q6 getCacheKey (dev)            | `env -u NODE_ENV node … q6_cachekey.mjs`       | object-arg no-key throws (dev); with key, same-siteId dedupes (calls=1); distinct → 2  | `[packages/tree-select/src/index.ts:L24-L27,L67,L75-L78,L86]`, `[packages/tree-select/test/index.js:L243-L264]`  |
+| Q6 getCacheKey (prod)           | `NODE_ENV=production node … q6_prod.mjs`       | prod default-key two DISTINCT objects: threw=false, calls=1, secondObservedId=A, first===second=true (collision); prod custom-key: calls=2, sameLogicalIdentity=true, differentIdentity=true | `[packages/tree-select/src/index.ts:L11-L12,L75-L79,L86]`, `[packages/tree-select/test/index.js:L103-L113,L243-L264]` |
+| Root cause                      | `env -u NODE_ENV node … rootcause.mjs`         | in-place mutation → calls stays 1 (stale, before===after); immutable → calls 2 (fresh) | `[packages/tree-select/src/index.ts:L84-L89]`, `[packages/tree-select/test/index.js:L142-L159]`                  |
+| Dev vs prod                     | `env -u NODE_ENV node … devprod.mjs` (dev) / `NODE_ENV=production node … devprod.mjs` (prod) | arg guards dev-only (skipped in prod); primitive-dependent throw unconditional (both)  | `[packages/tree-select/src/index.ts:L57-L63,L75-L79,L118-L120]`                                                  |
+| createSelector contrast (canonical) | `env -u NODE_ENV node … cs/createselector_canonical.mjs` | canonical entry resolves to `dist/cjs/index.js`; returned-value sequence `[1,2,1,3,4]`, total computations=4 (wholesale clear on dependants change); warn (not throw), warnCount=1 | `[packages/state-utils/package.json:L11]`, `[packages/state-utils/src/create-selector/index.ts:L41-L52,L90,L103-L104]` |
 | Committed tree-select suite     | see §L.2                                       | 17 passed, 17 total                                                                    | `[packages/tree-select/test/index.js:L21-L264]`                                                                  |
 | Committed create-selector suite | see §L.3                                       | 13 passed, 13 total                                                                    | `[packages/state-utils/src/create-selector/test/index.js:L7-L291]`                                               |
 
@@ -710,14 +767,14 @@ Ran all test suites matching /packages\/state-utils\/src\/create-selector/i.
 
 **Observed (captured directly from my runs):**
 
-- Cache hits are reference-based on the dependent layer: same-ref hit / deep-equal-diff-ref miss (§B).
-- Invocation counts 1 / 1(×1000) / 2 / 2 (§C), identical across both in-process runs.
-- Multi-entry coexistence: 3 calls → 2 computations, first entry survives; default-key collisions (comma-join, numeric/string, nullish/empty) each collapse to 1 computation (§D).
-- `clearCache()` forces a new result reference (§E).
-- `null`/`undefined` dependents memoized; `[true,1,'a',false,'',0]` dependents throw the exact `TypeError`; primitive **arguments** do not throw (§F).
-- Object argument without `getCacheKey` throws the exact `Error`; with `getCacheKey`, same-`siteId` objects dedupe (§G).
+- Cache hits are reference-based on the dependent layer: same-ref hit / deep-equal-diff-ref miss; multi-dependent `[a,b]` returned-value sequence `[1,1,2,1,3,4]` → 4 computations (§B).
+- Invocation counts: same-state×2 → 1; same-state×1000 → 1; changed-dependent → 2; distinct-args → 2; alternating two keys ×1000 → 2; fresh dependent each of 1000 calls → 1000 (§C), identical across both in-process runs.
+- Multi-entry coexistence A/B/A/B: 4 calls → 2 computations, both the `id1` and `id2` entries survive (`a===c`, `b===d`, `a≠b`); default-key collisions (comma-join, numeric/string, nullish/empty) each collapse to 1 computation (§D).
+- `clearCache()` forces a new result reference; a two-entry cache has **both** entries recompute after a single `clearCache()` (§E).
+- `null`/`undefined` dependents memoized (null-only=1, undefined-only=1, null→undefined transition=1 identity=true); `[true,1,'a',false,'',0]` dependents throw the exact `TypeError`; common primitive **arguments** do not throw, but a **Symbol** argument throws `Cannot convert a Symbol value to a string` and identical-stringifying primitives (`1n`/`1`/`'1'`) collide to one entry (§F).
+- Object argument without `getCacheKey` throws the exact `Error` in dev; in production the guard is skipped so two distinct objects collide to one entry (calls=1, second returns the first's result); with `getCacheKey`, same-`siteId` objects dedupe in both environments (§G).
 - In-place mutation → stale cached array (calls stays 1); immutable update → fresh (calls 2) (§H).
-- `createSelector` wholesale-clear sequence 1,2,2 → 3,4; complex-arg warns (does not throw) (§I).
+- `createSelector` (canonical public entry, resolves to `dist/cjs/index.js`) wholesale-clear returned-value sequence `[1,2,1,3,4]` → 4 computations; complex-arg warns (does not throw), warnCount=1 (§I).
 - Dev-only arg guards vs unconditional primitive-dependent throw (§K).
 - Both committed suites pass (17 and 13 tests) (§L.2, §L.3).
 
@@ -751,7 +808,7 @@ lodash 4.17.21
 **Complete, unedited Node warning** emitted when the real `.ts` source is imported directly (captured WITHOUT the `--disable-warning` flag; the PID varies per run). This is a runtime type-stripping artifact, not a code defect; `packages/tree-select/package.json` was **not** modified to silence it:
 
 ```sh
-REPO=$PWD node --experimental-strip-types /tmp/obs/q1_comparison.mjs
+env -u NODE_ENV REPO="$PWD" node --experimental-strip-types /tmp/obs/q1_comparison.mjs
 ```
 
 ```text
@@ -759,48 +816,44 @@ REPO=$PWD node --experimental-strip-types /tmp/obs/q1_comparison.mjs
 same-ref: calls = 1 | r1===r2 (identity) = true
 deep-equal-diff-ref: calls = 2 | r1===r3 = false
 JSON r1 == JSON r3 (values equal) = true
+multi-dependent [a,b] returned-value sequence = [1,1,2,1,3,4] | total computations = 4
 ===== RUN 2 =====
 same-ref: calls = 1 | r1===r2 (identity) = true
 deep-equal-diff-ref: calls = 2 | r1===r3 = false
 JSON r1 == JSON r3 (values equal) = true
-(node:51867) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///tmp/blitzy/wp-calypso/blitzy-5e68b844-58da-44ac-a571-c83312f22855_d114d9/packages/tree-select/src/index.ts is not specified and it doesn't parse as CommonJS.
+multi-dependent [a,b] returned-value sequence = [1,1,2,1,3,4] | total computations = 4
+(node:175661) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///tmp/blitzy/wp-calypso/blitzy-5e68b844-58da-44ac-a571-c83312f22855_d114d9/packages/tree-select/src/index.ts is not specified and it doesn't parse as CommonJS.
 Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
 To eliminate this warning, add "type": "module" to /tmp/blitzy/wp-calypso/blitzy-5e68b844-58da-44ac-a571-c83312f22855_d114d9/packages/tree-select/package.json.
 (Use `node --trace-warnings ...` to show where the warning was created)
 ```
 
-### L.6 createSelector provenance & both process invocations (NON-CANONICAL bundled path)
+### L.6 createSelector provenance & both process invocations (canonical public entry)
 
-Complete, reproducible provenance for the `createSelector` contrast (§I). The bundle input is the **real in-repo source**; `esbuild` reads it (and the repo's installed dependencies) read-only and writes output to `/tmp/obs/cs`. The source hash is unchanged before/after and `git status` stays clean:
+Complete, reproducible provenance for the `createSelector` contrast (§I). The values come from the package's **published CommonJS entry** (`"main": "dist/cjs/index.js"`), resolved and loaded via `createRequire` exactly as Calypso app code imports `@automattic/state-utils`. The `dist/cjs` build is git-ignored and pre-built by the repository's own install/postinstall (`tsc`), so it is read-only reference material that reflects the committed TypeScript source; `git status` stays clean:
 
 ```sh
-# 1) byte-identical copy + hashes of source and copy
-cp packages/state-utils/src/create-selector/index.ts /tmp/obs/cs/create-selector.source.ts
-sha256sum packages/state-utils/src/create-selector/index.ts /tmp/obs/cs/create-selector.source.ts
-# 2) esbuild bundle of the REAL in-repo source (read-only), output to /tmp
-node_modules/.bin/esbuild --version
-node_modules/.bin/esbuild packages/state-utils/src/create-selector/index.ts \
-  --bundle --platform=node --format=esm \
-  --outfile=/tmp/obs/cs/create-selector.bundle.mjs
-# 3) bundle hash
-sha256sum /tmp/obs/cs/create-selector.bundle.mjs
+# 1) canonical entry resolution (the module app code imports) + export shape
+node -e "const {createRequire}=require('module'); const r=createRequire(process.cwd()+'/package.json'); const p=r.resolve('@automattic/state-utils'); console.log('resolved '+p); const m=r('@automattic/state-utils'); console.log('createSelector '+typeof m.createSelector);"
+# 2) manifest "main" + confirmation that dist is git-ignored (read-only, pre-built)
+node -e "console.log('main '+require(process.cwd()+'/packages/state-utils/package.json').main)"
+grep -n "packages/\*/dist" .gitignore
+# 3) source hash corroboration (committed TS the dist/cjs build was produced from)
+sha256sum packages/state-utils/src/create-selector/index.ts
 # 4) installed dependency versions (resolved tree)
 node -e "for (const p of ['lodash','@wordpress/is-shallow-equal','@wordpress/warning']) console.log(p+' '+require(p+'/package.json').version)"
 # 5) locked versions (yarn.lock)
 sed -n '24074,24076p;10683,10686p;11095,11097p' yarn.lock
-# 6) confirm source unchanged after bundling
-git status --porcelain packages/state-utils/src/create-selector/index.ts; echo "(porcelain end)"
+# 6) confirm no source (or any tracked file) modified
+git status --porcelain packages/state-utils/; echo "(porcelain end)"
 ```
 
 ```text
+resolved /tmp/blitzy/wp-calypso/blitzy-5e68b844-58da-44ac-a571-c83312f22855_d114d9/packages/state-utils/dist/cjs/index.js
+createSelector function
+main dist/cjs/index.js
+69:/packages/*/dist/
 2c351c697acb433e47c01799710c0c48018cd158c7c34ac6cd154597d5ae3c02  packages/state-utils/src/create-selector/index.ts
-2c351c697acb433e47c01799710c0c48018cd158c7c34ac6cd154597d5ae3c02  /tmp/obs/cs/create-selector.source.ts
-0.25.1
-
-  ../../../obs/cs/create-selector.bundle.mjs  226.5kb
-
-⚡ Done in 22ms
-e228332500b29580272e454804801512da5858ec00d0b1c4b1f2e1ed6d317305  /tmp/obs/cs/create-selector.bundle.mjs
 lodash 4.17.21
 @wordpress/is-shallow-equal 5.21.0
 @wordpress/warning 3.21.0
@@ -817,29 +870,23 @@ lodash 4.17.21
 (porcelain end)
 ```
 
-> **Reproducibility caveat (incidental, non-asserted field).** Every value asserted from the provenance block above is stable across runs: the two source `sha256` hashes, the `esbuild` version (`0.25.1`), the bundle size (`226.5kb`), the bundle `sha256` (`e228332500b29580…`, verified byte-identical across repeated rebuilds), the resolved and locked dependency versions, and the empty `git status --porcelain`. A literal byte-for-byte re-run will differ only in esbuild's incidental `⚡ Done in Nms` timing (observed `21ms` / `22ms`), which is **not** part of any reported claim. This mirrors the PID caveat in §L.5.
+> **Environment-specific field (incidental, non-asserted).** Every asserted value in the provenance block above is stable across runs and processes: the resolved entry basename (`packages/state-utils/dist/cjs/index.js`), the `createSelector` export type (`function`), the `main` field, the `.gitignore` line, the source `sha256`, the resolved and locked dependency versions, and the empty `git status --porcelain`. The only environment-specific portion is the absolute checkout-path **prefix** (`/tmp/blitzy/…`) on the resolved path, which is fixed for a given checkout and is **not** a run-to-run nondeterministic field. This mirrors the PID caveat in §L.5.
 
 **Both process invocations of the contrast (same command, fresh process each) — complete unedited output, identical:**
 
 Invocation 1:
 
 ```sh
-CS_BUNDLE=/tmp/obs/cs/create-selector.bundle.mjs node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/cs/createselector_contrast.mjs
+env -u NODE_ENV REPO="$PWD" node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/cs/createselector_canonical.mjs
 ```
 
 ```text
+canonical entry resolved = /tmp/blitzy/wp-calypso/blitzy-5e68b844-58da-44ac-a571-c83312f22855_d114d9/packages/state-utils/dist/cjs/index.js
+createSelector typeof = function
 ===== RUN 1 =====
-argA (state1):          calls = 1
-argB (state1):          calls = 2
-argA again (state1):    calls = 2 (coexist -> stays 2)
-argA (state2, new ref): calls = 3 (wholesale clear -> recompute)
-argB (state2):          calls = 4 (B entry was wiped too)
+returned-value sequence = [1,2,1,3,4] | total computations = 4
 ===== RUN 2 =====
-argA (state1):          calls = 1
-argB (state1):          calls = 2
-argA again (state1):    calls = 2 (coexist -> stays 2)
-argA (state2, new ref): calls = 3 (wholesale clear -> recompute)
-argB (state2):          calls = 4 (B entry was wiped too)
+returned-value sequence = [1,2,1,3,4] | total computations = 4
 ===== WARN (complex object argument) =====
 complex-arg: threw = false | warnCount = 1 | message = "Do not pass complex objects as arguments for a memoized selector"
 ```
@@ -847,22 +894,16 @@ complex-arg: threw = false | warnCount = 1 | message = "Do not pass complex obje
 Invocation 2:
 
 ```sh
-CS_BUNDLE=/tmp/obs/cs/create-selector.bundle.mjs node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/cs/createselector_contrast.mjs
+env -u NODE_ENV REPO="$PWD" node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/obs/cs/createselector_canonical.mjs
 ```
 
 ```text
+canonical entry resolved = /tmp/blitzy/wp-calypso/blitzy-5e68b844-58da-44ac-a571-c83312f22855_d114d9/packages/state-utils/dist/cjs/index.js
+createSelector typeof = function
 ===== RUN 1 =====
-argA (state1):          calls = 1
-argB (state1):          calls = 2
-argA again (state1):    calls = 2 (coexist -> stays 2)
-argA (state2, new ref): calls = 3 (wholesale clear -> recompute)
-argB (state2):          calls = 4 (B entry was wiped too)
+returned-value sequence = [1,2,1,3,4] | total computations = 4
 ===== RUN 2 =====
-argA (state1):          calls = 1
-argB (state1):          calls = 2
-argA again (state1):    calls = 2 (coexist -> stays 2)
-argA (state2, new ref): calls = 3 (wholesale clear -> recompute)
-argB (state2):          calls = 4 (B entry was wiped too)
+returned-value sequence = [1,2,1,3,4] | total computations = 4
 ===== WARN (complex object argument) =====
 complex-arg: threw = false | warnCount = 1 | message = "Do not pass complex objects as arguments for a memoized selector"
 ```
@@ -883,9 +924,11 @@ test -e .cache && echo PRESENT || echo ABSENT
 ABSENT
 ```
 
-2. **Harness lives outside the repo.** All observation scripts, the `createSelector` copy, the esbuild bundle, and the Jest cache reside under `/tmp/obs` (outside the working tree); nothing was written into the repository during evidence capture.
+2. **Harness lives outside the repo.** All observation scripts and the Jest cache reside under `/tmp/obs` (outside the working tree). The `createSelector` contrast loads the package's **pre-built, git-ignored** `dist/cjs` entry **in place** via `require.resolve( '@automattic/state-utils' )` (matched by `.gitignore:L69` `/packages/*/dist/`); it is read read-only and not modified. Nothing was written into the repository during evidence capture.
 
 > **N3 note — ignored/generated build artifacts.** The duplicate-mock stderr notice in §L.2 references `dist/cjs` and `dist/esm` copies of `wpcom-proxy-request.js`. Those `dist/` copies are **generated build output** matched by `.gitignore:L69` (`/packages/*/dist/`) and are **not** tracked; only the `src/__mocks__/` mock is a committed file. They are therefore repo state produced by the workspace `postinstall` build, not files introduced by this investigation.
+
+> **N4 note — baseline dependency advisories are pre-existing and out of scope.** A dependency audit of the **unchanged** monorepo baseline (`corepack yarn npm audit --all --recursive --json`) reports active advisories against locked packages — e.g., `lodash@4.17.21` (`[yarn.lock:L24074-L24078]`) carries GHSA-r5fr-rjxr-66jc, GHSA-f23m-r3pf-42rh, and GHSA-xxjr-mmjv-4gpg. These advisories exist in the repository **before** this work and are **not introduced or altered** by it: this investigation adds **no dependency**, changes **no version**, and touches neither `yarn.lock` nor any `package.json`. Moreover, the `createSelector` path exercised here uses lodash's `memoize` `[packages/state-utils/src/create-selector/index.ts:L3,L90]`, **not** the advisory-affected `template`/`unset`/`omit` functions, so the exercised evidence path is unaffected. Per the AAP's read-only, no-dependency-change constraint, baseline dependency remediation is handled separately and is outside this documentation-only change.
 
 **Finalization evidence (filled in during the commit phase).** The following two commands — removal of the out-of-repo harness and the final repository status — are recorded with their real, unedited output in the commit phase of this work:
 
@@ -941,12 +984,37 @@ function scenario() {
 	const state2 = { posts: { id1: { id: 'id1', siteId: 'site1' } } };
 	const r3 = getSitePosts( state2, 'site1' );
 
+	// Multiple dependents: getDependents returns [state.a, state.b]. Selector returns
+	// the computation index (calls). Changing EITHER dependent reference is a miss;
+	// returning to a prior (a,b) reference pair is a HIT (branch retained).
+	let mcalls = 0;
+	const multiSel = treeSelect(
+		( state ) => [ state.a, state.b ],
+		() => {
+			mcalls++;
+			return mcalls;
+		}
+	);
+	const a1 = { v: 'a1' },
+		a2 = { v: 'a2' };
+	const b1 = { v: 'b1' },
+		b2 = { v: 'b2' };
+	const seq = [];
+	seq.push( multiSel( { a: a1, b: b1 } ) ); // compute #1 -> 1
+	seq.push( multiSel( { a: a1, b: b1 } ) ); // hit -> 1
+	seq.push( multiSel( { a: a2, b: b1 } ) ); // a changed -> compute #2 -> 2
+	seq.push( multiSel( { a: a1, b: b1 } ) ); // back to (a1,b1) -> hit (retained) -> 1
+	seq.push( multiSel( { a: a1, b: b2 } ) ); // b changed -> compute #3 -> 3
+	seq.push( multiSel( { a: a2, b: b2 } ) ); // both changed -> compute #4 -> 4
+
 	return {
 		sameRefCalls,
 		identity_r1_eq_r2: r1 === r2,
 		totalCalls: calls,
 		diffRef_r1_eq_r3: r1 === r3,
 		valuesEqual: JSON.stringify( r1 ) === JSON.stringify( r3 ),
+		multiSeq: seq.join( ',' ),
+		multiCalls: mcalls,
 	};
 }
 
@@ -960,13 +1028,20 @@ for ( const run of [ 'RUN 1', 'RUN 2' ] ) {
 		'deep-equal-diff-ref: calls = ' + o.totalCalls + ' | r1===r3 = ' + o.diffRef_r1_eq_r3
 	);
 	console.log( 'JSON r1 == JSON r3 (values equal) = ' + o.valuesEqual );
+	console.log(
+		'multi-dependent [a,b] returned-value sequence = [' +
+			o.multiSeq +
+			'] | total computations = ' +
+			o.multiCalls
+	);
 }
 ```
 
 #### `/tmp/obs/q2_counts.mjs`
 
 ```js
-// Q2: invocation counts — same-state x2, same-state x1000, changed dependent, distinct args.
+// Q2: invocation counts — same-state x2, same-state x1000, changed dependent, distinct args,
+// alternating two keys x1000, and a fresh dependent reference on each of 1000 calls.
 // Self-contained; runs the whole set TWICE and labels each run.
 const treeSelect = ( await import( process.env.REPO + '/packages/tree-select/src/index.ts' ) )
 	.default;
@@ -1011,7 +1086,21 @@ function scenario() {
 	d.sel( stateD, 'site2' );
 	const D = d.calls();
 
-	return { A, B, C, D };
+	// E: alternating TWO keys, SAME dependent reference, x1000 -> two coexisting leaf entries
+	const e = makeSel();
+	const stateE = {
+		posts: { id1: { id: 'id1', siteId: 'site1' }, id3: { id: 'id3', siteId: 'site2' } },
+	};
+	for ( let i = 0; i < 1000; i++ ) e.sel( stateE, i % 2 === 0 ? 'site1' : 'site2' );
+	const E = e.calls();
+
+	// F: a FRESH dependent reference on each of 1000 calls -> every call is a miss
+	const f = makeSel();
+	for ( let i = 0; i < 1000; i++ )
+		f.sel( { posts: { id1: { id: 'id1', siteId: 'site1' } } }, 'site1' );
+	const F = f.calls();
+
+	return { A, B, C, D, E, F };
 }
 
 for ( const run of [ 'RUN 1', 'RUN 2' ] ) {
@@ -1021,6 +1110,8 @@ for ( const run of [ 'RUN 1', 'RUN 2' ] ) {
 	console.log( 'B same-state x1000 -> calls = ' + o.B );
 	console.log( 'C changed-dependent (spread) -> calls = ' + o.C );
 	console.log( 'D distinct-args -> calls = ' + o.D );
+	console.log( 'E alternating two keys, same dependent, x1000 -> calls = ' + o.E );
+	console.log( 'F fresh dependent reference each of 1000 calls -> calls = ' + o.F );
 }
 ```
 
@@ -1033,7 +1124,7 @@ const treeSelect = ( await import( process.env.REPO + '/packages/tree-select/src
 	.default;
 
 function scenario() {
-	// (1) Coexistence: id1, id2, id1 -> 2 computations, first id1 survives.
+	// (1) Coexistence, full A/B/A/B: id1, id2, id1, id2 -> 2 computations; BOTH id1 and id2 reused.
 	let calls1 = 0;
 	const getPostByIdWithData = treeSelect(
 		( state, postId ) => [ state.posts[ postId ] ],
@@ -1043,9 +1134,10 @@ function scenario() {
 		}
 	);
 	const state = { posts: { id1: { id: 'id1' }, id2: { id: 'id2' } } };
-	const a = getPostByIdWithData( state, 'id1' );
-	const b = getPostByIdWithData( state, 'id2' );
-	const c = getPostByIdWithData( state, 'id1' );
+	const a = getPostByIdWithData( state, 'id1' ); // compute #1 (A)
+	const b = getPostByIdWithData( state, 'id2' ); // compute #2 (B)
+	const c = getPostByIdWithData( state, 'id1' ); // hit  (A again)
+	const d = getPostByIdWithData( state, 'id2' ); // hit  (B again)
 
 	// (2) Default-key collision: single arg "a,b" vs two args "a","b" -> same generated key "a,b".
 	let calls2 = 0;
@@ -1090,6 +1182,7 @@ function scenario() {
 	return {
 		coexistCalls: calls1,
 		firstSurvives: a === c,
+		secondSurvives: b === d,
 		distinctEntries: a === b,
 		collideCalls: calls2,
 		collideSame: x === y,
@@ -1103,9 +1196,12 @@ function scenario() {
 for ( const run of [ 'RUN 1', 'RUN 2' ] ) {
 	const o = scenario();
 	console.log( '===== ' + run + ' =====' );
-	console.log( 'coexistence: calls = ' + o.coexistCalls + ' (3 calls issued: id1,id2,id1)' );
+	console.log(
+		'coexistence A/B/A/B: calls = ' + o.coexistCalls + ' (4 calls issued: id1,id2,id1,id2)'
+	);
 	console.log( 'first id1 result survived: a === c = ' + o.firstSurvives );
-	console.log( 'id2 entry distinct: a === b = ' + o.distinctEntries );
+	console.log( 'first id2 result survived: b === d = ' + o.secondSurvives );
+	console.log( 'id1 vs id2 entries distinct: a === b = ' + o.distinctEntries );
 	console.log(
 		'COLLISION join: "a,b" vs "a","b" -> calls = ' +
 			o.collideCalls +
@@ -1155,7 +1251,43 @@ function scenario() {
 		valueEqual: JSON.stringify( afterClearResult ) === JSON.stringify( firstResult ),
 	};
 
-	return { before, after };
+	// Multi-entry: populate TWO coexisting leaf entries, prove BOTH are hits, then a single
+	// clearCache() forces BOTH to recompute (whole-cache invalidation, not just last entry).
+	let mcalls = 0;
+	const multi = treeSelect(
+		( s ) => [ s.posts ],
+		( [ posts ], siteId ) => {
+			mcalls++;
+			return Object.values( posts ).filter( ( p ) => p.siteId === siteId );
+		}
+	);
+	const mstate = {
+		posts: { id1: { id: 'id1', siteId: 'site1' }, id3: { id: 'id3', siteId: 'site2' } },
+	};
+	const rA1 = multi( mstate, 'site1' ); // compute #1
+	const rB1 = multi( mstate, 'site2' ); // compute #2
+	const populateCalls = mcalls; // 2
+	const preHitA = multi( mstate, 'site1' ) === rA1; // hit
+	const preHitB = multi( mstate, 'site2' ) === rB1; // hit
+	const preHitCalls = mcalls; // still 2
+	multi.clearCache();
+	const rA2 = multi( mstate, 'site1' ); // recompute #3
+	const rB2 = multi( mstate, 'site2' ); // recompute #4
+	const postClearCalls = mcalls; // 4
+	const aRecomputed = rA2 !== rA1;
+	const bRecomputed = rB2 !== rB1;
+
+	return {
+		before,
+		after,
+		populateCalls,
+		preHitA,
+		preHitB,
+		preHitCalls,
+		postClearCalls,
+		aRecomputed,
+		bRecomputed,
+	};
 }
 
 for ( const run of [ 'RUN 1', 'RUN 2' ] ) {
@@ -1174,6 +1306,24 @@ for ( const run of [ 'RUN 1', 'RUN 2' ] ) {
 			o.after.same
 	);
 	console.log( 'value still equal after clear: JSON equal = ' + o.after.valueEqual );
+	console.log(
+		'multi-entry populate (2 keys): calls = ' +
+			o.populateCalls +
+			' | preHitA = ' +
+			o.preHitA +
+			' | preHitB = ' +
+			o.preHitB +
+			' | calls after hits = ' +
+			o.preHitCalls
+	);
+	console.log(
+		'multi-entry after clearCache: calls = ' +
+			o.postClearCalls +
+			' | A recomputed = ' +
+			o.aRecomputed +
+			' | B recomputed = ' +
+			o.bRecomputed
+	);
 }
 ```
 
@@ -1226,7 +1376,87 @@ function scenario() {
 		}
 	} );
 
-	return { nullishMemoized, depResults, argResults };
+	// null-ONLY and undefined-ONLY dependents, each by name, with call counters.
+	let ncalls = 0;
+	const nullOnlySel = treeSelect(
+		() => [ null ],
+		() => {
+			ncalls++;
+			return [];
+		}
+	);
+	nullOnlySel( {} );
+	nullOnlySel( {} );
+	const nullOnlyCalls = ncalls; // 1
+
+	let ucalls = 0;
+	const undefOnlySel = treeSelect(
+		() => [ undefined ],
+		() => {
+			ucalls++;
+			return [];
+		}
+	);
+	undefOnlySel( {} );
+	undefOnlySel( {} );
+	const undefinedOnlyCalls = ucalls; // 1
+
+	// null -> undefined TRANSITION: both are falsy, so both fold to the shared NULLISH_KEY
+	// sentinel -> same tree slot -> the second call is a cache HIT (identity preserved).
+	let tcalls = 0;
+	let depValue = null;
+	const transSel = treeSelect(
+		() => [ depValue ],
+		() => {
+			tcalls++;
+			return [];
+		}
+	);
+	const tr1 = transSel( {} ); // depValue === null  -> compute #1
+	depValue = undefined;
+	const tr2 = transSel( {} ); // depValue === undefined -> same NULLISH_KEY -> HIT
+	const transitionCalls = tcalls; // 1
+	const transitionIdentity = tr1 === tr2; // true
+
+	// Symbol ARGUMENT: the default key function args.join() cannot stringify a Symbol,
+	// so a Symbol *argument* throws a DIFFERENT TypeError than the dependent guard.
+	let symThrew = false;
+	let symMsg = null;
+	try {
+		argSel( { posts: [] }, Symbol( 'x' ) );
+	} catch ( e ) {
+		symThrew = true;
+		symMsg = e.constructor.name + ': ' + e.message;
+	}
+
+	// BigInt / number / string ARGUMENT collision: 1n, 1, and '1' all join() to "1",
+	// so they share ONE leaf entry (calls stays 1).
+	let bcalls = 0;
+	const biSel = treeSelect(
+		( state ) => [ state.posts ],
+		( [ posts ] ) => {
+			bcalls++;
+			return Object.values( posts );
+		}
+	);
+	const bst = { posts: [] };
+	biSel( bst, 1n );
+	biSel( bst, 1 );
+	biSel( bst, '1' );
+	const bigintCollisionCalls = bcalls; // 1
+
+	return {
+		nullishMemoized,
+		depResults,
+		argResults,
+		nullOnlyCalls,
+		undefinedOnlyCalls,
+		transitionCalls,
+		transitionIdentity,
+		symThrew,
+		symMsg,
+		bigintCollisionCalls,
+	};
 }
 
 const show = ( v ) => ( typeof v === 'string' ? JSON.stringify( v ) : String( v ) );
@@ -1243,6 +1473,19 @@ for ( const run of [ 'RUN 1', 'RUN 2' ] ) {
 		);
 	console.log( '--- primitive ARGUMENTS to selector (distinct from dependents) ---' );
 	for ( const a of o.argResults ) console.log( 'arg = ' + show( a.arg ) + ' | threw = ' + a.threw );
+	console.log( '--- nullish dependents by name (call counts) ---' );
+	console.log( 'null-only dependent [null] x2 -> calls = ' + o.nullOnlyCalls );
+	console.log( 'undefined-only dependent [undefined] x2 -> calls = ' + o.undefinedOnlyCalls );
+	console.log(
+		'null -> undefined transition: calls = ' +
+			o.transitionCalls +
+			' | firstResult === secondResult (identity) = ' +
+			o.transitionIdentity
+	);
+	console.log( '--- Symbol ARGUMENT (args.join stringification path) ---' );
+	console.log( 'arg = Symbol(x) | threw = ' + o.symThrew + ' | ' + o.symMsg );
+	console.log( '--- BigInt/number/string ARGUMENT collision via args.join() ---' );
+	console.log( 'args 1n, 1, "1" -> calls = ' + o.bigintCollisionCalls + ' (all collide to key "1")' );
 }
 ```
 
@@ -1320,6 +1563,103 @@ for ( const run of [ 'RUN 1', 'RUN 2' ] ) {
 	);
 }
 ```
+
+#### `/tmp/obs/q6_prod.mjs`
+
+```js
+// Q6 (PRODUCTION): with NODE_ENV=production the dev-only object-arg guard (L75-79) is SKIPPED.
+// (1) Default key + TWO DISTINCT object arguments -> no throw; both stringify to "[object Object]"
+//     via args.join() and COLLIDE into ONE leaf entry (an INCORRECT cache hit).
+// (2) A custom getCacheKey still dedupes correctly in production (env-independent path).
+// Self-contained; runs the whole set TWICE and labels each run.
+const treeSelect = ( await import( process.env.REPO + '/packages/tree-select/src/index.ts' ) )
+	.default;
+
+function scenario() {
+	// (1) Default key, NO custom getCacheKey, two DISTINCT object arguments.
+	let dcalls = 0;
+	const defSel = treeSelect(
+		( state ) => [ state.posts ],
+		( [ posts ], query ) => {
+			dcalls++;
+			// Tag the result with which query object produced it, to see which "wins".
+			return { observedId: query.id, siteId: query.siteId };
+		}
+	);
+	const state = { posts: { a: { id: 'a' } } };
+	let defThrew = false;
+	let defMsg = null;
+	let first = null;
+	let second = null;
+	try {
+		first = defSel( state, { id: 'A', siteId: 'site1' } ); // compute #1 -> observedId 'A'
+		second = defSel( state, { id: 'B', siteId: 'site2' } ); // DISTINCT object, same "[object Object]" key -> HIT
+	} catch ( e ) {
+		defThrew = true;
+		defMsg = e.constructor.name + ': ' + e.message;
+	}
+	const defCalls = dcalls; // 1 (collision) in production
+	const secondObservedId = second ? second.observedId : null; // 'A' => the FIRST result was returned for the SECOND object
+	const defSame = first === second; // true
+
+	// (2) Custom getCacheKey in production: dedupe by key still works; distinct keys recompute.
+	let ccalls = 0;
+	const keyedSel = treeSelect(
+		( s ) => [ s.posts ],
+		( [ posts ], query ) => {
+			ccalls++;
+			return Object.values( posts )
+				.filter( ( p ) => p.siteId === query.siteId )
+				.map( ( p ) => p.id );
+		},
+		{ getCacheKey: ( query ) => `key:${ query.siteId }` }
+	);
+	const st2 = {
+		posts: { id1: { id: 'id1', siteId: 'site1' }, id2: { id: 'id2', siteId: 'site1' } },
+	};
+	const r1 = keyedSel( st2, { siteId: 'site1', foo: 'bar' } ); // compute #1
+	const r2 = keyedSel( st2, { siteId: 'site1', foo: 'baz' } ); // same key -> dedupe (HIT)
+	const r3 = keyedSel( st2, { siteId: 'site2' } ); // distinct key -> compute #2
+	const customCalls = ccalls; // 2
+	const sameLogicalIdentity = r1 === r2; // true
+	const differentIdentity = r3 !== r1; // true
+
+	return {
+		defThrew,
+		defMsg,
+		defCalls,
+		secondObservedId,
+		defSame,
+		customCalls,
+		sameLogicalIdentity,
+		differentIdentity,
+	};
+}
+
+for ( const run of [ 'RUN 1', 'RUN 2' ] ) {
+	const o = scenario();
+	console.log( '===== ' + run + ' =====' );
+	console.log(
+		'PROD default-key, two DISTINCT object args: threw = ' +
+			o.defThrew +
+			' | calls = ' +
+			o.defCalls +
+			' | secondObservedId = ' +
+			o.secondObservedId +
+			' | first === second = ' +
+			o.defSame
+	);
+	console.log(
+		'PROD custom getCacheKey: calls = ' +
+			o.customCalls +
+			' | sameLogicalIdentity (r1===r2) = ' +
+			o.sameLogicalIdentity +
+			' | differentIdentity (r3!==r1) = ' +
+			o.differentIdentity
+	);
+}
+```
+
 
 #### `/tmp/obs/rootcause.mjs`
 
@@ -1480,55 +1820,59 @@ for ( const run of [ 'RUN 1', 'RUN 2' ] ) {
 }
 ```
 
-#### `/tmp/obs/cs/createselector_contrast.mjs`
+#### `/tmp/obs/cs/createselector_canonical.mjs`
 
 ```js
-// createSelector contrast: coexistence under stable snapshot + WHOLESALE clear on snapshot change,
-// plus complex-arg WARN (not throw). Loads the esbuild-bundled REAL source (non-canonical path).
-// Runs the coexistence/clear contrast TWICE in-process; the whole command is also invoked twice.
-globalThis.SCRIPT_DEBUG = true; // enable @wordpress/warning dev warnings (gates on globalThis.SCRIPT_DEBUG === true)
-const createSelector = ( await import( process.env.CS_BUNDLE ) ).default;
+// createSelector CANONICAL contrast: loaded through the package's PUBLIC entry point
+// (@automattic/state-utils -> packages/state-utils/dist/cjs/index.js) via createRequire,
+// exactly as Calypso app code imports it. NO bundler, NO debug bypass for loading.
+// Demonstrates WHOLESALE cache clear on any dependants change (contrast to treeSelect's
+// per-branch retention) + complex-arg WARN (not throw). Runs the contrast TWICE in-process;
+// the whole command is also invoked as two separate processes (see below).
+import { createRequire } from 'node:module';
+const require = createRequire( process.env.REPO + '/package.json' );
+const resolvedPath = require.resolve( '@automattic/state-utils' );
+const { createSelector } = require( '@automattic/state-utils' );
+
+globalThis.SCRIPT_DEBUG = true; // @wordpress/warning emits only when globalThis.SCRIPT_DEBUG === true
+
+console.log( 'canonical entry resolved = ' + resolvedPath );
+console.log( 'createSelector typeof = ' + typeof createSelector );
 
 function contrast() {
 	let calls = 0;
 	// createSelector signature: (selector, getDependants, getCacheKey?). selector is FIRST.
+	// The selector returns its computation index, so the RETURNED-VALUE sequence reveals
+	// exactly which calls recomputed vs returned a cached value.
 	const sel = createSelector(
 		( state, siteId ) => {
 			calls++;
-			return Object.values( state.posts ).filter( ( p ) => p.siteId === siteId );
+			return calls;
 		},
 		( state ) => [ state.posts ]
 	);
 	const posts = { id1: { id: 'id1', siteId: 'a' }, id2: { id: 'id2', siteId: 'b' } };
 	const state1 = { posts };
-	sel( state1, 'a' );
-	const c1 = calls; // argA
-	sel( state1, 'b' );
-	const c2 = calls; // argB (distinct arg, SAME snapshot) -> coexist
-	sel( state1, 'a' );
-	const c3 = calls; // argA again -> cached
-	const state2 = { posts: { ...posts } }; // NEW reference -> snapshot shallow-unequal
-	sel( state2, 'a' );
-	const c4 = calls; // wholesale clear -> recompute
-	sel( state2, 'b' );
-	const c5 = calls; // B entry was wiped too -> recompute
-	return { c1, c2, c3, c4, c5 };
+	const seq = [];
+	seq.push( sel( state1, 'a' ) ); // compute #1 -> 1
+	seq.push( sel( state1, 'b' ) ); // compute #2 -> 2 (distinct arg key, same snapshot -> coexists)
+	seq.push( sel( state1, 'a' ) ); // HIT -> 1 (cached; snapshot unchanged)
+	const state2 = { posts: { ...posts } }; // NEW posts reference -> dependants shallow-unequal
+	seq.push( sel( state2, 'a' ) ); // wholesale clear, then compute #3 -> 3
+	seq.push( sel( state2, 'b' ) ); // argB entry was wiped by the clear too -> compute #4 -> 4
+	return { seq, calls };
 }
 
 for ( const run of [ 'RUN 1', 'RUN 2' ] ) {
 	const o = contrast();
 	console.log( '===== ' + run + ' =====' );
-	console.log( 'argA (state1):          calls = ' + o.c1 );
-	console.log( 'argB (state1):          calls = ' + o.c2 );
-	console.log( 'argA again (state1):    calls = ' + o.c3 + ' (coexist -> stays ' + o.c3 + ')' );
-	console.log( 'argA (state2, new ref): calls = ' + o.c4 + ' (wholesale clear -> recompute)' );
-	console.log( 'argB (state2):          calls = ' + o.c5 + ' (B entry was wiped too)' );
+	console.log( 'returned-value sequence = [' + o.seq.join( ',' ) + '] | total computations = ' + o.calls );
 }
 
 // Complex-arg WARN (observed once; @wordpress/warning dedupes by message process-globally).
-let warnCount = 0,
-	warnMsg = null,
-	threw = false;
+let warnCount = 0;
+let warnMsg = null;
+let threw = false;
 const origWarn = console.warn;
 console.warn = ( ...a ) => {
 	warnCount++;
@@ -1547,12 +1891,7 @@ try {
 console.warn = origWarn;
 console.log( '===== WARN (complex object argument) =====' );
 console.log(
-	'complex-arg: threw = ' +
-		threw +
-		' | warnCount = ' +
-		warnCount +
-		' | message = ' +
-		JSON.stringify( warnMsg )
+	'complex-arg: threw = ' + threw + ' | warnCount = ' + warnCount + ' | message = ' + JSON.stringify( warnMsg )
 );
 ```
 
@@ -1561,17 +1900,17 @@ console.log(
 | Prompt item (verbatim intent)                                                                                 | Answered in | Named sub-items covered                                                                                                      |
 | ------------------------------------------------------------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | Stale results "even after the underlying data has changed"                                                    | §1, §H      | in-place mutation vs immutable update; reference-identity root cause                                                         |
-| Q1 — "the precise comparison mechanism that determines cache hits and misses"                                 | §B          | reference identity (WeakMap layer) **and** generated-string value equality (terminal Map layer)                              |
-| Q2 — "how many times the underlying selector function actually gets called … concrete numbers from test runs" | §C          | same-state (1), same-state ×1000 (1), changed dependent (2), multi-argument (2); cross-referenced to committed suite         |
-| Q3 — "separate entries for each unique filter argument … or … invalidates the previous cached result"         | §D          | multi-entry per distinct **generated key**; `args.join()` comma collision; numeric/string collision; nullish/empty collision |
-| Q4 — "any way to programmatically clear the entire cache for a selector"                                      | §E          | `clearCache()` (tree-select); `memoizedSelector.cache` (createSelector, §I)                                                  |
-| Q5 — "nullish values versus primitive values like numbers or booleans"                                        | §F          | `null`; `undefined`; number (incl. `0`); boolean (incl. `false`); string (incl. `''`); primitive **arguments** contrasted    |
-| Q6 — "customize how cache keys are generated … complex query objects as arguments"                            | §G          | default `args.join()`; object-arg guard `Error`; `options.getCacheKey`; dedupe by returned key                               |
-| Comparison to `createSelector` / ecosystem norms                                                              | §I          | shallow-equality; wholesale clear; complex-arg warn-not-throw; reselect framing grounded in sibling `README.md:L46`          |
+| Q1 — "the precise comparison mechanism that determines cache hits and misses"                                 | §B          | reference identity (WeakMap layer) **and** generated-string value equality (terminal Map layer); same-ref hit vs deep-equal-diff-ref miss; **multi-dependent `[a,b]` sequence `[1,1,2,1,3,4]` → 4 computations** (each dependent position keyed by identity, earlier branch retained) |
+| Q2 — "how many times the underlying selector function actually gets called … concrete numbers from test runs" | §C          | same-state (1), same-state ×1000 (1), changed dependent (2), multi-argument (2), **alternating two keys ×1000 (2)**, **fresh dependent each of 1000 calls (1000)**; cross-referenced to committed suite         |
+| Q3 — "separate entries for each unique filter argument … or … invalidates the previous cached result"         | §D          | multi-entry per distinct **generated key**; **full A/B/A/B interleave → 2 computations, both `id1` (`a===c`) and `id2` (`b===d`) entries survive, `a≠b`**; `args.join()` comma collision; numeric/string collision; nullish/empty collision |
+| Q4 — "any way to programmatically clear the entire cache for a selector"                                      | §E          | `clearCache()` (tree-select) forces a new result reference; **two-entry cache → both entries recompute after a single `clearCache()` (calls 4)**; `memoizedSelector.cache` (createSelector, §I)                                                  |
+| Q5 — "nullish values versus primitive values like numbers or booleans"                                        | §F          | `null`; `undefined`; **null-only (1)**; **undefined-only (1)**; **null→undefined transition (1, identity=true)**; number (incl. `0`); boolean (incl. `false`); string (incl. `''`) dependents throw the exact `TypeError`; primitive **arguments** contrasted — **Symbol arg throws `Cannot convert a Symbol value to a string`**; **`1n`/`1`/`'1'` collide to one entry**    |
+| Q6 — "customize how cache keys are generated … complex query objects as arguments"                            | §G          | default `args.join()`; object-arg guard `Error` (dev); **production object-arg default-key collision (threw=false, calls=1, second returns first's result)**; `options.getCacheKey`; dedupe by returned key in **both dev and production**                               |
+| Comparison to `createSelector` / ecosystem norms                                                              | §I          | **canonical public entry (`dist/cjs/index.js`)**; shallow-equality; wholesale-clear sequence `[1,2,1,3,4]` → 4 computations; complex-arg warn-not-throw (warnCount 1); reselect framing grounded in sibling `README.md:L46`          |
 | README argument-order discrepancy                                                                             | §J          | flagged (not corrected) per read-only constraint                                                                             |
 | Dev vs production behavior                                                                                    | §K          | dev-only arg guards; unconditional primitive-dependent throw                                                                 |
 
-All six questions and every enumerated example (`null`, `undefined`, number, boolean, string, complex query objects) are addressed explicitly and by name above.
+All six questions and every enumerated example (`null`, `undefined`, number, boolean, string, complex query objects) are addressed explicitly and by name above — including the `null`-only, `undefined`-only, and `null → undefined` transition cases, the `Symbol` and `BigInt`/number/string **argument** cases, and the development-vs-production matrix for the object-argument guard.
 
 ---
 
