@@ -2,7 +2,7 @@
 
 > **Repository:** `Automattic/wp-calypso`
 > **Answer-file name** is derived from the **source branch** `wp-calypso_be7e5cc64162`, which points at commit `be7e5cc641622d153040491fd5625c6cb83e12eb`. All investigated source files are byte-identical to that commit, so the code observed here **is** the source at `be7e5cc641`.
-> **Execution** was performed on the assigned Blitzy platform branch `blitzy-7ddb2e12-bf8a-4204-9404-c1b0f7958385`, whose working `HEAD` is `61555b16f0332ebd2454e157c11937f525b5c1a1` (the `be7e5cc641` base **plus** this one added document). The filename therefore encodes the source branch, while the run happened on the platform branch — the difference is intentional and expected. (See §11.5.)
+> **Execution** was performed on the assigned Blitzy platform branch `blitzy-7ddb2e12-bf8a-4204-9404-c1b0f7958385`, which is the `be7e5cc641` base **plus** documentation-only commits that add this one document (no product-source file changes versus `be7e5cc641`; verified in §11.4). The filename therefore encodes the source branch, while the run happened on the platform branch — the difference is intentional and expected. (See §11.5.)
 > **Scope:** Read-only investigation. The only file added to the repository is this document. A temporary jest observation harness was created under the repository's test glob (so the repo's real transform/module resolution applied) and **deleted** afterward; §11.4 shows the final clean `git status`.
 
 ## 1. Summary (direct answer)
@@ -60,7 +60,7 @@ The **canonical** evidence in this document comes from exercising the **real rep
 
 - The pre-existing co-located unit test `client/signup/navigation-link/test/index.jsx` is also run (§11.2). **It is useful but limited**: it `jest.mock`s `calypso/signup/utils` (`client/signup/navigation-link/test/index.jsx:7-12`) and renders the **unconnected** `NavigationLink`, so it proves the *call arguments* passed to `getStepUrl` and the literal `href` for the `backUrl`-override case — but it does **not** compute real `/start/…` URLs, resolve `StepWrapper` query state, or exercise routing. The concrete URLs in this document therefore come from the real-module harness above, not from that mocked test.
 
-**One disclosed deviation from the full production path.** In part (2), rendering the *unconnected* `NavigationLink` supplies `userLoggedIn` and `signupProgress` as explicit props rather than through the Redux `connect()` wrapper (`client/signup/navigation-link/index.jsx:204-215`), which merely injects `isUserLoggedIn(state)` and `getSignupProgress(state)`. The decision logic and URL construction that produce the `href` are the **real** functions; only those two selector pass-throughs are supplied directly. Part (3) uses the real connected component and store, with no such deviation. Nothing about the decider (`getBackUrl`/`getPreviousStep`) or the URL builder (`getStepUrl`) is re-implemented or mocked. (The earlier revision of this document relied on a standalone `/tmp` re-implementation of the helpers; that approach has been **removed** in favor of executing the real modules.)
+**One disclosed, NON-CANONICAL deviation from the full production path.** In part (2), rendering the *unconnected* `NavigationLink` supplies `userLoggedIn` and `signupProgress` as explicit props rather than through the Redux `connect()` wrapper (`client/signup/navigation-link/index.jsx:204-215`), which merely injects `isUserLoggedIn(state)` and `getSignupProgress(state)`. Because it bypasses that `connect()` wrapper, this unconnected render is a **NON-CANONICAL entry point**; the decision logic and URL construction that produce the `href` are nonetheless the **real** functions, and only those two selector pass-throughs are supplied directly. Part (3) uses the real connected component and store, with no such deviation. Nothing about the decider (`getBackUrl`/`getPreviousStep`) or the URL builder (`getStepUrl`) is re-implemented or mocked. (The earlier revision of this document relied on a standalone `/tmp` re-implementation of the helpers; that approach has been **removed** in favor of executing the real modules.)
 
 **Runtime click dispatch is not executed here.** The harness reads the computed `href`; it does not simulate a page.js click. The claim that clicking a same-origin, non-external Back link is intercepted and dispatched client-side is therefore **[inferred]** from the router source (§4.2), not executed in jsdom.
 
@@ -80,11 +80,11 @@ Two facts about the **active** configuration materially change any per-step anal
 - **`signup/social-first` is enabled**, so the first "token" step of the onboarding-shaped flows is **`user-social`**, not `user` (`client/signup/config/flows-pure.js:13-14` `getUserSocialStepOrFallback`; the flag is `true` in `config/test.json`, `config/production.json`, and every other environment config).
 - For a **logged-in** user, `flows.getFlow()` **removes** the token-providing step via `removeUserStepFromFlow` (`client/signup/config/flows.js:216-225,262-280`, filtering steps where `stepConfig[stepName].providesToken` is `true`; `user`/`user-social` both set `providesToken: true` at `client/signup/config/steps-pure.js:112-136,138-162`). So the logged-in `onboarding` flow resolves to `['domains','plans']`, **not** `['user','domains','plans']`.
 
-More decisively, the **`onboarding` flow itself no longer runs on `/start`**: the `/start` middleware chain (`client/signup/index.web.js:16-22`) runs `controller.redirectToFlow` (`:18`) **before** `controller.start` (`:20`), and `redirectToFlow` **redirects the `onboarding` flow to `/setup`** (`client/signup/controller.js:179-197`, guarded by `isOnboardingFlow(flowName)` and calling `getStepUrl(…, '/setup')` then `window.location.replace(url)`). Therefore this document models per-step legacy behavior on a **real, non-redirected legacy `/start` flow — `onboarding-pm`** (`client/signup/config/flows-pure.js:154-155`, steps `[ userSocialStep, 'domains', 'plans' ]`, no `forceLogin`, not matched by `isOnboardingFlow`) — and treats the `onboarding → /setup` redirect as an explicitly demonstrated fact rather than a legacy entry point (§8.5).
+More decisively, the **`onboarding` flow itself no longer runs on `/start`**: the `/start` middleware chain (`client/signup/index.web.js:16-22`) runs `controller.redirectToFlow` (`:18`) **before** `controller.start` (`:20`), and `redirectToFlow` **redirects the `onboarding` flow to `/setup`** (`client/signup/controller.js:179-202`, guarded by `isOnboardingFlow(flowName)` and calling `getStepUrl(…, '/setup')` then `window.location.replace(url)`). Therefore this document models per-step legacy behavior on a **real, non-redirected legacy `/start` flow — `onboarding-pm`** (`client/signup/config/flows-pure.js:154-155`, steps `[ userSocialStep, 'domains', 'plans' ]`, no `forceLogin`, not matched by `isOnboardingFlow`) — and treats the `onboarding → /setup` redirect as an explicitly demonstrated fact rather than a legacy entry point (§8.5).
 
 ### 3.5 Read-only guarantee & cleanup
 
-No existing source file was modified; no permanent tests were added; no dependencies were changed. The temporary harness (`client/signup/navigation-link/test/blitzy_adhoc_test_canonical.jsx`) and the `/tmp/blitzy_obs/` logs it wrote are removed during cleanup (§11.4 shows the exact `rm` command and the resulting `git status --porcelain`, which lists **only** this one new document).
+No existing source file was modified; no permanent tests were added; no dependencies were changed. The temporary harness (`client/signup/navigation-link/test/blitzy_adhoc_test_canonical.jsx`) and the `/tmp/blitzy_obs/` logs it wrote are removed during cleanup (§11.4 shows the exact `rm` command, the resulting clean `git status --porcelain`, and the `git diff` against the source-branch base `be7e5cc641` confirming the net change is **only** this one document).
 
 ---
 
@@ -486,7 +486,7 @@ This confirms §3.4 at runtime: the token step is **`user-social`** (not `user`)
 
 ### 8.2 Observed per-step and per-scenario destinations (canonical)
 
-The table separates **whether the Back control renders** (from `NavigationLink.render`, §6.1) from **the computed `href`** (from `getBackUrl`). Scenario **A** is the primary step-by-step path; **B–G** are the secondary/edge conditions. Scenarios **A, B, D, E, F** were captured via the unconnected `NavigationLink` with **real utils**; **C, G** via the **connected `StepWrapper`** + real `setRoute` (the real `back_to` → `backUrl` path).
+The table separates **whether the Back control renders** (from `NavigationLink.render`, §6.1) from **the computed `href`** (from `getBackUrl`). Scenario **A** is the primary step-by-step path; **B–G** are the secondary/edge conditions. Scenarios **A, B, D, E, F** were captured via the unconnected `NavigationLink` with **real utils** — a **NON-CANONICAL** entry point that bypasses the Redux `connect()` wrapper (the disclosed deviation of §3.3), though the decision/URL logic that runs is the real, unmodified code; **C, G** were captured through the **canonical connected `StepWrapper`** + real `setRoute` (the real `back_to` → `backUrl` path).
 
 | Scenario | Condition | Step (position) | Back rendered? | Computed `href` |
 |----------|-----------|-----------------|----------------|-----------------|
@@ -501,6 +501,8 @@ The table separates **whether the Back control renders** (from `NavigationLink.r
 | E (logged-in) | previous step carries a different `lastKnownFlow` | `plans` (prev `domains`, `lastKnownFlow='onboarding-with-email'`) | Yes | `/start/onboarding-with-email/domains` (slips into another flow) |
 | F (logged-in) | ordinary query arg carried into the built URL | `plans` | Yes | `/start/onboarding-pm/domains?ref=logged-out-homepage` |
 | G (connected `StepWrapper`) | invalid `?back_to=home` (no leading `/`) → guard discards it | `domains` | Yes | `/start/onboarding-pm/en` (override ignored; **falls through** to flow-position logic) |
+
+**Canonicality of these rows.** Rows **A, B, D, E, F** were captured through the **NON-CANONICAL** entry point — the *unconnected* `NavigationLink`, which bypasses the Redux `connect()` wrapper (see §3.3). The real `getBackUrl → getPreviousStep → getStepUrl / isFirstStepInFlow / getFilteredSteps` decision and URL logic still executes unmodified, so the destinations are real, but the render entry point is not the production one. Rows **C** and **G** were captured through the **canonical** connected `StepWrapper` over a real Redux store with a real `setRoute`, exercising the production `back_to → backUrl` path end-to-end.
 
 Key reads from this table:
 
@@ -543,7 +545,7 @@ controller.setSelectedSiteForSignup,
 controller.start,
 ```
 
-and `redirectToFlow` performs the redirect for the onboarding flow (`client/signup/controller.js:179-197`, quoted without elision):
+and `redirectToFlow` performs the redirect for the onboarding flow (`client/signup/controller.js:179-202`, quoted verbatim without elision):
 
 ```js
 if ( isOnboardingFlow( flowName ) ) {
@@ -566,6 +568,8 @@ if ( isOnboardingFlow( flowName ) ) {
 
     window.location.replace( url );
     // skip the rest to avoid the `page.redirect` call below.
+    // Don't call next() here, we don't need the subsequent middlewares to run.
+    // next();
     return;
 }
 ```
@@ -641,8 +645,9 @@ $ node --version
 v22.23.1
 $ yarn --version
 4.0.2
-$ git rev-parse HEAD
-61555b16f0332ebd2454e157c11937f525b5c1a1
+# Immutable source-branch base under investigation (stable anchor; the platform HEAD advances as documentation-only commits land)
+$ git rev-parse be7e5cc641
+be7e5cc641622d153040491fd5625c6cb83e12eb
 $ git branch --show-current
 blitzy-7ddb2e12-bf8a-4204-9404-c1b0f7958385
 
@@ -1017,25 +1022,28 @@ describe( 'BLITZY canonical Back-button observation', () => {
 } );
 ```
 
-### 11.4 Read-only verification & cleanup (`git status --porcelain`)
+### 11.4 Read-only verification & cleanup (`git status` + diff vs the immutable base)
 
-This answer document already existed at HEAD (the review targeted it), so after the rewrite it shows as **modified** (` M`), not untracked. The temporary harness is untracked (`??`) and is deleted during cleanup, after which the working tree's only change is this document:
+The temporary harness is untracked and is deleted during cleanup; this answer document is committed. The read-only guarantee is anchored on the **immutable source-branch base** `be7e5cc641`: after cleanup and commit the working tree is clean, and the only difference between `be7e5cc641` and the platform branch is the addition of this one document.
 
 ```text
 $ rm -f client/signup/navigation-link/test/blitzy_adhoc_test_canonical.jsx
 $ rm -rf /tmp/blitzy_obs
 $ git status --porcelain --untracked-files=all
- M blitzy/documentation/wp-calypso_be7e5cc64162.md
+$ echo "STATUS_EXIT=$?"
+STATUS_EXIT=0
 $ git diff --stat be7e5cc641622d153040491fd5625c6cb83e12eb -- client/ packages/ config/
 $ echo "DIFF_EXIT=$?"
 DIFF_EXIT=0
+$ git diff --name-only be7e5cc641622d153040491fd5625c6cb83e12eb
+blitzy/documentation/wp-calypso_be7e5cc64162.md
 ```
 
-After cleanup, `git status` lists **only** this one modified document; the `git diff --stat` against the source-branch base `be7e5cc641` for `client/`, `packages/`, and `config/` produces **no output** (all 14 AAP reference files and supporting config/manifests are byte-identical to `be7e5cc641` — the only commit between `be7e5cc641` and the execution `HEAD` added this documentation file and nothing else). No existing product-source file was modified, no permanent tests were added, and no dependencies were changed.
+After cleanup and commit, `git status --porcelain` produces **no output** (a clean working tree); the `git diff --stat` against the source-branch base `be7e5cc641` for `client/`, `packages/`, and `config/` also produces **no output** (all 14 AAP reference files and supporting config/manifests are byte-identical to `be7e5cc641`). The `git diff --name-only` against that base lists exactly **one path** — this documentation file — so, however many documentation-only commits the platform branch accumulates, the net change versus `be7e5cc641` is only this document. No existing product-source file was modified, no permanent tests were added, and no dependencies were changed.
 
 ### 11.5 Source-branch filename vs execution branch/HEAD
 
-The answer file is named `wp-calypso_be7e5cc64162.md` after the **source branch** `wp-calypso_be7e5cc64162` (commit `be7e5cc641622d153040491fd5625c6cb83e12eb`), per the SWE-AtlasQnA-Repo naming rule. The investigation actually executed on the **assigned Blitzy platform branch** `blitzy-7ddb2e12-bf8a-4204-9404-c1b0f7958385`, whose `HEAD` (`61555b16f0…`) is the `be7e5cc641` base plus this single added document. Because every investigated source file is unchanged from `be7e5cc641` (§11.4), the runtime observations reflect the source at `be7e5cc641` exactly.
+The answer file is named `wp-calypso_be7e5cc64162.md` after the **source branch** `wp-calypso_be7e5cc64162` (commit `be7e5cc641622d153040491fd5625c6cb83e12eb`), per the SWE-AtlasQnA-Repo naming rule. The investigation actually executed on the **assigned Blitzy platform branch** `blitzy-7ddb2e12-bf8a-4204-9404-c1b0f7958385`, which is the `be7e5cc641` base plus documentation-only commits that add this single document. Because every investigated source file is unchanged from `be7e5cc641` (§11.4), the runtime observations reflect the source at `be7e5cc641` exactly.
 
 ---
 
@@ -1052,7 +1060,7 @@ Final pass confirming every question and every named mechanism is addressed with
 | **REQ-5** bypassed step-by-step path | §7 — `getPreviousStep` (`navigation-link/index.jsx:47-76`) + helpers + duality + partial-progress correction | ✓ |
 | **REQ-6** per-step observation | §8 — canonical per-step + visibility + `onboarding → /setup` redirect + determinism | ✓ |
 | Active config: `social-first`, logged-in step removal | §3.4, §8.1 (`flows.getFlow` observed) | ✓ |
-| `onboarding → /setup` redirect | §8.5 (`controller.js:179-197`, `index.web.js:16-22`) | ✓ |
+| `onboarding → /setup` redirect | §8.5 (`controller.js:179-202`, `index.web.js:16-22`) | ✓ |
 | Ordinary query vs special `back_to` | §1, §5 | ✓ |
 | Router interception scoped (same-origin/non-external); slash check ≠ validation | §4.2 (`calypso-router/src/index.js:776,800,892-900`) | ✓ |
 | Determinism over full state/env tuple | §1, §3.3, §8.4 | ✓ |
