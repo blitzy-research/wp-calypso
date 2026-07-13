@@ -45,7 +45,7 @@ A benign `MODULE_TYPELESS_PACKAGE_JSON` warning is emitted by Node when a `.ts` 
 
 ## 1. Executive summary (utility identification + root cause first)
 
-**The utility.** The user's "central store" is Calypso's Redux global application state. For this legacy `client/state` selector path, Redux is the store described in the data-architecture doc — the "Third Era: Redux Global State Tree" and the "Current Recommendations" that all `client/state` selectors follow `[docs/our-approach-to-data.md:L43-L50,L85-L96]`. (That same document opens with an out-of-date notice recommending `@tanstack/react-query` for _new_ data needs `[docs/our-approach-to-data.md:L3]`; the utility under investigation is part of the pre-existing `client/state` Redux selector layer, not the newer React Query path.) The helper that memoizes "filtered data" derived from that store is **`treeSelect`** from `@automattic/tree-select` `[packages/tree-select/src/index.ts:L42-L102]`. Ten modules under `client/state/**` consume it (comments, invites, and stats selector trees); the representative consumer `getSiteStatsNormalizedData` is a textbook example `[client/state/stats/lists/selectors.js:L139-L159]`.
+**The utility.** The user's "central store" is Calypso's Redux global application state. For this legacy `client/state` selector path, Redux is the store described in the data-architecture doc — the "Third Era: Redux Global State Tree" and the "Current Recommendations" that all `client/state` selectors follow `[docs/our-approach-to-data.md:L43-L50,L85-L96]`. (That same document opens with an out-of-date notice recommending `@tanstack/react-query` for _new_ data needs `[docs/our-approach-to-data.md:L3]`; the utility under investigation is part of the pre-existing `client/state` Redux selector layer, not the newer React Query path.) The helper that memoizes "filtered data" derived from that store is **`treeSelect`** from `@automattic/tree-select` `[packages/tree-select/src/index.ts:L42-L102]`. Ten modules under `client/state/**` consume it — six in the comments selector tree, plus the invites, stats, and reader selector trees `[client/state/comments/selectors/get-hidden-comments-for-post.js]`, `[client/state/invites/selectors.js]`, `[client/state/stats/lists/selectors.js]`, `[client/state/reader/posts/selectors.js]`, `[client/state/reader/streams/selectors/get-reader-stream-transformed-items.ts]`; the representative consumer `getSiteStatsNormalizedData` is a textbook example `[client/state/stats/lists/selectors.js:L139-L159]`.
 
 **The root cause of "stale results even after the underlying data has changed" (details in §H).** `treeSelect` decides cache hits by the **referential identity (`===`)** of the values your `getDependents` returns — _not_ by deep equality `[packages/tree-select/src/index.ts:L84-L89]`, `[packages/tree-select/README.md:L40]`. If your component **mutates data in place** (e.g., `state.posts.id1.status = 'draft'`) without producing a **new reference** for the depended-upon slice, the dependent reference is unchanged, so the selector reports a **cache hit and returns the previously cached (stale) value**. I reproduced this exactly: the underlying selector was **not** re-invoked and the stale array was returned (`before === after`). The fix pattern (immutable update → new reference) busts the cache and returns fresh data.
 
@@ -657,6 +657,8 @@ Time:        0.871 s
 Ran all test suites matching /packages\/tree-select/i.
 ```
 
+> **Reproducibility caveat (incidental, non-asserted fields).** Every value asserted from the block above is stable across runs: `Test Suites: 1 passed, 1 total`, `Tests: 17 passed, 17 total`, all 17 test names, the `PASS packages/tree-select/test/index.js` line, and the wording of the `jest-haste-map` and `Browserslist` notices. A literal byte-for-byte re-run will differ only in incidental fields that are **not** part of any reported claim: the `Time:` value (observed `0.834 s` / `0.871 s`), the per-test `(N ms)` timings (which change value and appear or disappear between runs), the ordering — and occasional presence — of the two `jest-haste-map` duplicate-mock notices (a fresh run here showed the `dist/esm` pair before the `dist/cjs` pair; the block above shows the reverse), and the `Browserslist … N months old` age (time-sensitive; it increments as the pinned `caniuse-lite` ages). This mirrors the PID caveat in §L.5.
+
 > **Note on the stderr notices (N3 provenance).** The `jest-haste-map: duplicate manual mock found: wpcom-proxy-request` notice arises because a **tracked** source mock `[packages/plans-grid-next/src/__mocks__/wpcom-proxy-request.js:L1-L13]` coexists with **ignored, generated** build copies under `dist/cjs` and `dist/esm` (matched by `.gitignore:L69` `/packages/*/dist/`, produced by the workspace `postinstall` build). The `dist/` copies are **not** committed files — only the `src/` mock is tracked. The `Browserslist: … caniuse-lite is 17 months old` notice is likewise pre-existing repo state. Neither affects the tree-select assertions.
 
 ### L.3 Committed create-selector suite — complete unedited output
@@ -701,6 +703,8 @@ Snapshots:   0 total
 Time:        0.884 s
 Ran all test suites matching /packages\/state-utils\/src\/create-selector/i.
 ```
+
+> **Reproducibility caveat (incidental, non-asserted fields).** Every value asserted from the block above is stable across runs: `Test Suites: 1 passed, 1 total`, `Tests: 13 passed, 13 total`, all 13 test names, the `PASS packages/state-utils/src/create-selector/test/index.js` line, and the wording of the `jest-haste-map` and `Browserslist` notices. A literal byte-for-byte re-run will differ only in incidental fields that are **not** part of any reported claim: the `Time:` value (observed `0.838 s` / `0.843 s`), the per-test `(N ms)` timings (which change value and appear or disappear between runs), the ordering — and occasional presence — of the two `jest-haste-map` duplicate-mock notices, and the `Browserslist … N months old` age (time-sensitive). This mirrors the PID caveat in §L.5.
 
 ### L.4 Observed vs Inferred
 
@@ -812,6 +816,8 @@ lodash 4.17.21
   resolution: "lodash@npm:4.17.21"
 (porcelain end)
 ```
+
+> **Reproducibility caveat (incidental, non-asserted field).** Every value asserted from the provenance block above is stable across runs: the two source `sha256` hashes, the `esbuild` version (`0.25.1`), the bundle size (`226.5kb`), the bundle `sha256` (`e228332500b29580…`, verified byte-identical across repeated rebuilds), the resolved and locked dependency versions, and the empty `git status --porcelain`. A literal byte-for-byte re-run will differ only in esbuild's incidental `⚡ Done in Nms` timing (observed `21ms` / `22ms`), which is **not** part of any reported claim. This mirrors the PID caveat in §L.5.
 
 **Both process invocations of the contrast (same command, fresh process each) — complete unedited output, identical:**
 
