@@ -36,10 +36,12 @@ Navigation intents survive only because **3 of the 11 capture sites** (all `type
 To keep every claim honest and reproducible, the evidence is separated into three kinds and labelled throughout:
 
 - **Runtime-observed (unit):** values produced by running the real `reader-ui` reducer, real action creators, and Calypso's real `serialize()` helper directly (script 1 below). This isolates the source-of-truth question with no UI in the way.
-- **Runtime-observed (integration / real DOM):** values produced by mounting the **connected** `LikeButtonContainer`, the real `ReaderJoinConversationDialog` + `useLoginWindow`, and the real `LayoutLoggedOut` in jsdom, clicking real buttons, and dispatching a real `postMessage` login signal (script 2 below). This exercises the actual capture -> prompt -> login -> reload/redirect -> cleanup path.
+- **Runtime-observed (integration / simulated DOM):** values produced by mounting the **connected** `LikeButtonContainer`, the real `ReaderJoinConversationDialog` + `useLoginWindow`, and the real `LayoutLoggedOut` in Jest's **jsdom**, clicking real buttons, and dispatching a `postMessage` login-success signal that stands in for the real login window (script 2 below). This exercises the actual app-side capture -> prompt -> login-decision -> reload/redirect -> cleanup path; the browser transport and navigation on the far side of the auth boundary are simulated (see the **simulated browser boundary** note below).
 - **(source-read):** facts read directly from source at the cited `file:line` and not executed at runtime (for example the boot-time persistence-key derivation). These are marked `(source-read)` inline.
 
-Two further honesty notes that apply to every captured block:
+Three further honesty notes that apply to every captured block:
+
+- **(simulated browser boundary — non-canonical):** The Calypso code under test is **real and unmodified** — the connected `LikeButtonContainer`, the `reader-ui` reducer and action creators, the `ReaderJoinConversationDialog`, the `useLoginWindow` hook, and the `LayoutLoggedOut` consumer all execute as shipped. What is **simulated** is the browser/identity boundary _around_ them: the login popup (`window.open`), the cross-window success signal (`postMessage`), the navigation (`window.location`), and the post-login `window.location.reload()` are jsdom stand-ins driven by the test — Jest's jsdom performs **no real WordPress.com login, and no real credentials, session, cookie, or top-level page reload is executed.** This is why the integration evidence observes the app-side capture -> prompt -> handler -> clear/redirect/reload _decision_ faithfully, while the transport and navigation on the other side of that boundary are mocked. Wherever this document says a value was "observed live" or "exercised live", it means this **app-side** execution under jsdom, not a real browser session. This is a deliberate, and standard, limitation of a Jest/jsdom harness; the source-of-truth verdict (Q4) does not depend on it, because it is proven separately by the real `serialize()` call in the unit script.
 
 - **(illustrative fixture):** the `siteId`/`postId` values (`123`/`456` in the unit script, `111`/`222` in the integration script) are arbitrary stand-ins, not real WordPress.com IDs. They exercise the real code path; only the specific numbers are synthetic.
 - **Test environment id:** under Jest, `config( 'env_id' )` resolves to `test` (from `config/test.json`), not `development`. Consequently `useLoginWindow` omits the `origin` argument, so the observed login URL carries no `origin` query parameter. This is reported exactly as observed rather than "corrected".
@@ -48,16 +50,19 @@ Two further honesty notes that apply to every captured block:
 
 All observations were produced in the repository's canonical, default configuration. The runtime and package manager are those pinned by the repository (`engines.node` `^v22.9.0`, `packageManager` `yarn@4.0.2`).
 
+**On the Node 20 / `yarn@stable` setup note.** The environment's setup instructions mention installing Node 20.x and running `corepack prepare yarn@stable`. That note is deliberately **superseded** here by the repository's own pinned authority — which is exactly what "canonical, default configuration" means: `.nvmrc` pins `22.9.0`, `package.json` `engines.node` requires `^v22.9.0`, and `package.json` `packageManager` pins `yarn@4.0.2` (with the exact release bundled at `.yarn/releases/yarn-4.0.2.cjs`). Node 20 is not merely non-preferred — it would **fail** the `engines.node` gate, and `yarn start` runs a `check-node-version` step that rejects a Node major below the pin, so a Node 20 runtime cannot exercise the canonical path at all. The container in fact ships `node v22.23.1`, which satisfies `^v22.9.0`, and Corepack resolves `yarn` to `4.0.2` from the pinned `packageManager` field (verified below: `yarn --version` -> `4.0.2`). Finally, no full dev-server boot or webpack build is required for this investigation: the `reader-ui` slice and the login-prompt layout are exercised directly through the repository's own client Jest configuration (`test/client/jest.config.js`), which is the canonical unit/integration entry point for this code — so the Node-20-only build/serve concerns in the setup note never come into play.
+
 The following commands report the runtime versions and the baseline commit that every `file:line` citation in this document is anchored to. Anchoring citations to the fixed commit `be7e5cc641` (rather than to a moving `HEAD`) keeps them stable regardless of later commits on the working branch.
 
 ```bash
-node --version
-yarn --version
-git log -1 --oneline be7e5cc641
+echo "### node"; node --version
+echo "### yarn"; yarn --version
+echo "### baseline commit (source-of-truth for all citations)"; git log -1 --oneline be7e5cc641
+echo "### source-tree diff vs baseline (empty = no client/config/packages changes)"
 git diff --name-status be7e5cc641..HEAD -- client/ config/ packages/
 ```
 
-Captured output of the version/baseline commands (the `git diff --name-status` line intentionally scopes to source trees to show that no `client/`, `config/`, or `packages/` file was modified by this investigation — it prints nothing):
+Captured output of the exact commands above. Each `echo` prints the label that precedes its value, so every `###` label shown below is emitted by the command block itself (not added by hand). The final `git diff --name-status` is intentionally scoped to the source trees and prints nothing, proving no `client/`, `config/`, or `packages/` file was modified by this investigation (the block therefore ends on its label line with no diff rows beneath it):
 
 ```text
 ### node
@@ -66,21 +71,23 @@ v22.23.1
 4.0.2
 ### baseline commit (source-of-truth for all citations)
 be7e5cc641 Reader: Show login prompts on all logged out reader streams
+### source-tree diff vs baseline (empty = no client/config/packages changes)
 ```
 
-The canonical command used to run every observation script below is Calypso's own client Jest configuration:
+The canonical command used to run every observation script below is Calypso's own client Jest configuration. Here `<pathPattern>` is a **template placeholder shown for syntax only** — it is not a literal argument. Each script section below substitutes a concrete pattern (for example `blitzy_obs/test/like-intent-lifecycle`). Run verbatim with the literal placeholder, Jest matches nothing and exits `1` (`No tests found, exiting with code 1` … `Pattern: <pathPattern> - 0 matches`), which is expected of a template:
 
 ```bash
+# Template (syntax only) — substitute a concrete <pathPattern> per script section below:
 TZ=UTC CI=true node_modules/.bin/jest -c=test/client/jest.config.js "<pathPattern>" --ci
 ```
 
-Temporary observation scripts were created under `client/blitzy_obs/test/` (so they are picked up by the client Jest `roots`), run, captured, and then removed in full with `rm -rf client/blitzy_obs`. The final "Repository left unchanged" section shows the clean `git status` after cleanup. Each script was first linted with the repository's own ESLint to prove it is well-formed, not ad-hoc throwaway code:
+Temporary observation scripts were created under `client/blitzy_obs/test/` (so they are picked up by the client Jest `roots`), run, captured, and then removed by a `trap`-guarded, path-scoped cleanup that fires on success, failure, or interruption (the exact pattern, and a sandbox proof that it leaves no residue, are in the "Repository left unchanged" section). Each script was first linted with the repository's own ESLint to prove it is well-formed, not ad-hoc throwaway code. The status capture (`; echo "ESLINT_EXIT=$?"`) is appended so the exit status is emitted by the shown command itself:
 
 ```bash
-CI=true node_modules/.bin/eslint client/blitzy_obs/test/*.js
+CI=true node_modules/.bin/eslint client/blitzy_obs/test/*.js; echo "ESLINT_EXIT=$?"
 ```
 
-Result — all three scripts pass the repository lint rules (exit status `0`):
+Result — every observation script this investigation places under `client/blitzy_obs/test/` passes the repository lint rules. That is all five scripts: the three below (`like-intent-lifecycle`, `like-intent-integration`, `login-window-flag`) plus the `like-intent-cleanup` (cleanup taxonomy) and `like-intent-negative` (negative control) scripts introduced further down. The `eslint` invocation prints nothing and the appended capture reports exit status `0`:
 
 ```text
 ESLINT_EXIT=0
@@ -221,13 +228,13 @@ Ran all test suites matching /blitzy_obs\/test\/like-intent-lifecycle/i.
 
 What this proves for **Q4**: the intent transitions `null -> { type: 'like', siteId: 123, postId: 456 } -> null`, and — decisively — `serialize( lastActionRequiresLogin, … )` returns `undefined` while `serialize( lastPath, … )` returns the value. `serialize()` returns `undefined` precisely when the reducer has no `.serialize` method `[client/state/utils/serialize.ts:10-16]`; `withPersistence` is what attaches that method (defaulting to an identity function) `[client/state/utils/with-persistence.ts:16-24]`. Because `lastActionRequiresLogin` is a plain reducer `[client/state/reader-ui/reducer.js:45]` and `lastPath` is wrapped `[client/state/reader-ui/reducer.js:19]`, the like intent is **in-memory only** and is dropped from the persisted snapshot. The final `AFTER (reload/@@INIT): null` line simulates what a fresh store shows after a reload re-initialises the reducer to its default; the _actual_ `window.location.reload()` call is observed at runtime in script 2, test F.
 
-## Script 2 — end-to-end capture / prompt / login / reload / cleanup (integration; real DOM)
+## Script 2 — end-to-end capture / prompt / login / reload / cleanup (integration; jsdom)
 
 This script answers **Q1, Q2, Q3, Q5, Q6** by exercising the real components in jsdom. It contains ten labelled tests (A–J); each prints observations via a raw `process.stdout.write` helper (`out()`) and asserts on the result. The `111`/`222` IDs are an **(illustrative fixture)**.
 
 | Test  | Real path exercised                                                              | Key assertion                                                                                                                     |
 | ----- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| **A** | Connected `LikeButtonContainer`, logged-out, real DOM click                      | intent becomes `{type:'like',siteId:111,postId:222}`; `READER_REGISTER_LAST_ACTION_REQUIRES_LOGIN` dispatched; **no** `POST_LIKE` |
+| **A** | Connected `LikeButtonContainer`, logged-out, jsdom click                         | intent becomes `{type:'like',siteId:111,postId:222}`; `READER_REGISTER_LAST_ACTION_REQUIRES_LOGIN` dispatched; **no** `POST_LIKE` |
 | **B** | Reader wrapper `ReaderLikeButton` click                                          | intent registered; `navigate()` called **0** times (block-level handler wins; wrapper fallback bypassed)                          |
 | **C** | Real `ReaderJoinConversationDialog` "Log in" button                              | opens `https://wordpress.com/log-in?…`                                                                                            |
 | **D** | Real dialog "Create a new account" button (canonical signup)                     | opens `https://wordpress.com/start/account?…&ref=reader-lp`                                                                       |
@@ -668,26 +675,39 @@ J POST_LIKE after auth? false | intent still = {"type":"like","siteId":111,"post
 
 ### Reproducibility across runs
 
-The user hedged with "seems to disappear", so the same unchanged input was run three times. The 16 observation lines (A–J) were extracted and sorted from each run and hashed. All three runs are byte-identical, so the behaviour is **deterministic, not intermittent** — the like is lost on every run.
+The user hedged with "seems to disappear", so the same unchanged input was run **five** times (exceeding the two-run stability bar). The 16 observation lines (A–J) were extracted and sorted from each run and hashed. All five runs are byte-identical, so the behaviour is **deterministic, not intermittent** — the like is lost on every run.
+
+The loop is deliberately self-contained and safe: every `run$i.txt`/`obs$i.txt` artifact is written **only** inside a unique `mktemp -d` directory (never the repository tree, so no root-level file can be overwritten and no symlink can be followed into an external target); a **guard** refuses to run if `client/blitzy_obs` already exists (so it cannot clobber a pre-existing directory); and a `trap` removes both the temp directory and the scripts directory on success, failure, or interruption (`EXIT INT TERM HUP`). The `grep -E '^[A-J] '` pattern requires a space after the letter, so it captures exactly the 16 A–J observation lines and never the `Browserslist:`/`PASS`/`Tests:` lines.
 
 ```bash
-for i in 1 2 3; do
-  TZ=UTC CI=true node_modules/.bin/jest -c=test/client/jest.config.js "blitzy_obs/test/like-intent-integration" --ci > run$i.txt 2>&1
+# Safe, self-cleaning reproducibility loop (writes nothing into the repo tree):
+[ -e client/blitzy_obs ] && { echo "GUARD: client/blitzy_obs exists; aborting to avoid clobber"; exit 90; }
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/reader-obs.XXXXXX")"
+trap 'rm -rf "$WORK" client/blitzy_obs' EXIT INT TERM HUP
+mkdir -p client/blitzy_obs/test
+# (recreate like-intent-integration.js from the Script 2 listing above under client/blitzy_obs/test/)
+for i in 1 2 3 4 5; do
+  TZ=UTC CI=true node_modules/.bin/jest -c=test/client/jest.config.js \
+    "blitzy_obs/test/like-intent-integration" --ci > "$WORK/run$i.txt" 2>&1
   echo "run$i EXIT=$?"
-  grep -E '^[A-J] ' run$i.txt | sort > obs$i.txt
+  grep -E '^[A-J] ' "$WORK/run$i.txt" | sort > "$WORK/obs$i.txt"
 done
-sha256sum obs1.txt obs2.txt obs3.txt
+sha256sum "$WORK"/obs*.txt | sed "s#$WORK/##"
 ```
 
-Captured result — identical exit status and one identical digest across all three runs:
+Captured result — identical exit status and one identical digest across all five runs (observed distribution: 5/5 exit `0`, a single digest, i.e. 100% identical):
 
 ```text
 run1 EXIT=0
 run2 EXIT=0
 run3 EXIT=0
+run4 EXIT=0
+run5 EXIT=0
 77315b3eb14de3fe32fc943534062e51f1c958f47c7d7616512d602147e1496d  obs1.txt
 77315b3eb14de3fe32fc943534062e51f1c958f47c7d7616512d602147e1496d  obs2.txt
 77315b3eb14de3fe32fc943534062e51f1c958f47c7d7616512d602147e1496d  obs3.txt
+77315b3eb14de3fe32fc943534062e51f1c958f47c7d7616512d602147e1496d  obs4.txt
+77315b3eb14de3fe32fc943534062e51f1c958f47c7d7616512d602147e1496d  obs5.txt
 ```
 
 ## Script 3 — the `reader/login-window` feature flag default (canonical, both states)
@@ -770,6 +790,277 @@ Ran all test suites matching /blitzy_obs\/test\/login-window-flag/i.
 
 Why this matters for the like: integration test **B** shows `navigate()` is called **0** times when the logged-out wrapper is clicked. That is because the connected `LikeButtonContainer.handleLikeToggle` handler wins over the Reader wrapper's `onLikeToggle` (the container spreads incoming props and then re-binds `onLikeToggle={ this.handleLikeToggle }` _after_ the spread `[client/blocks/like-button/index.jsx]`). So the flag-gated `createAccountUrl` navigation fallback in `client/reader/like-button/index.jsx:47-49` is dead code for the canonical like path **regardless of the flag value** — the dialog path in `LayoutLoggedOut` is what actually runs, and it is gated on `! isLoggedIn && ! isReaderTagEmbed && !! loggedInAction`, independent of `reader/login-window`.
 
+## Script 4 — cleanup taxonomy: Cancel vs. natural self-close vs. whole-dialog Close
+
+This script sharpens **Q5/Q6** by separating the **three** distinct ways the login prompt can go away, because only one of them clears the captured intent. It mounts the **real** `LayoutLoggedOut` — whose `onClose` is wired to `clearLastActionRequiresLogin()` `[client/layout/logged-out.jsx:304]` — with a pending like intent and drives each path through the real dialog and the real `useLoginWindow` hook. The `111`/`222` IDs are an **(illustrative fixture)**.
+
+| Test  | Dismissal path (real component)                       | Handler chain                                                                                                                         |    Intent after    |
+| ----- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | :----------------: |
+| **K** | Popup **Cancel** link (shown while the popup is open) | `onCancelClick` -> `close()` (popup only); **no** `onClose()` `[dialog.jsx:61-65]`                                                    |   **preserved**    |
+| **L** | **Natural popup self-close** (user closes the popup)  | 100 ms poll -> `onWindowClose` -> `setIsLoginPopupOpen( false )`; **no** `onClose()` `[use-login-window.ts:69-75]`, `[dialog.jsx:46]` |   **preserved**    |
+| **M** | Whole-dialog **Close** (the `X` icon / Esc)           | `onCloseClick` -> `close()` **and** `onClose()` -> `clearLastActionRequiresLogin()` `[dialog.jsx:67-72]`, `[logged-out.jsx:304]`      | **null (cleared)** |
+
+Script — `client/blitzy_obs/test/like-intent-cleanup.js`:
+
+```js
+/**
+ * @jest-environment jsdom
+ */
+import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
+import Modal from 'react-modal';
+import { Provider } from 'react-redux';
+import LayoutLoggedOut from 'calypso/layout/logged-out';
+import { createReduxStore } from 'calypso/state';
+import noticesReducer from 'calypso/state/notices/reducer';
+import postsReducer from 'calypso/state/posts/reducer';
+import readerPostsReducer from 'calypso/state/reader/posts/reducer';
+import { registerLastActionRequiresLogin } from 'calypso/state/reader-ui/actions';
+import readerUiReducer from 'calypso/state/reader-ui/reducer';
+import { getLastActionRequiresLogin } from 'calypso/state/reader-ui/selectors';
+
+// Raw, undecorated stdout so captured evidence is not interleaved with jest console stack frames.
+function out( line ) {
+	process.stdout.write( line + '\n' );
+}
+
+// siteId/postId below are arbitrary illustrative fixtures, not real WordPress.com IDs.
+function makeStore( intent ) {
+	const store = createReduxStore( {} );
+	store.addReducer( [ 'readerUi' ], readerUiReducer );
+	store.addReducer( [ 'posts' ], postsReducer );
+	store.addReducer( [ 'reader', 'posts' ], readerPostsReducer );
+	// LayoutLoggedOut lazy-loads GlobalNotices, which reads state.notices.items.
+	store.addReducer( [ 'notices' ], noticesReducer );
+	if ( intent ) {
+		store.dispatch( registerLastActionRequiresLogin( intent ) );
+	}
+	return store;
+}
+
+let currentPopup;
+let messageHandlers = [];
+
+beforeEach( () => {
+	Modal.setAppElement( document.body );
+	messageHandlers = [];
+	// A mutable popup handle so a test can simulate the user closing the popup.
+	currentPopup = { closed: false, close: jest.fn() };
+	const realAdd = EventTarget.prototype.addEventListener;
+	jest.spyOn( window, 'addEventListener' ).mockImplementation( function ( type, fn, opts ) {
+		if ( type === 'message' ) {
+			messageHandlers.push( fn );
+		}
+		return realAdd.call( window, type, fn, opts );
+	} );
+	jest.spyOn( window, 'open' ).mockImplementation( () => currentPopup );
+} );
+
+afterEach( () => {
+	messageHandlers.forEach( ( fn ) =>
+		EventTarget.prototype.removeEventListener.call( window, 'message', fn )
+	);
+	jest.useRealTimers();
+	jest.restoreAllMocks();
+	jest.clearAllMocks();
+	cleanup();
+} );
+
+describe( 'OBS logged-out like intent — cleanup taxonomy (Cancel vs self-close vs Close)', () => {
+	test( 'K. popup Cancel closes only the popup and PRESERVES the intent (no clear)', async () => {
+		const store = makeStore( { type: 'like', siteId: 111, postId: 222 } );
+		render(
+			<Provider store={ store }>
+				<LayoutLoggedOut sectionName="reader" />
+			</Provider>
+		);
+		await act( async () => {} );
+		out(
+			[ 'K BEFORE:', JSON.stringify( getLastActionRequiresLogin( store.getState() ) ) ].join( ' ' )
+		);
+		act( () => {
+			fireEvent.click( screen.getByText( 'Log in' ) );
+		} );
+		// The popup is open, so the dialog now shows the Cancel affordance.
+		act( () => {
+			fireEvent.click( screen.getByText( 'Cancel' ) );
+		} );
+		out(
+			[ 'K AFTER_CANCEL:', JSON.stringify( getLastActionRequiresLogin( store.getState() ) ) ].join(
+				' '
+			)
+		);
+		out( [ 'K popup close called =', currentPopup.close.mock.calls.length ].join( ' ' ) );
+		// Cancel must NOT clear the captured intent.
+		expect( getLastActionRequiresLogin( store.getState() ) ).toEqual( {
+			type: 'like',
+			siteId: 111,
+			postId: 222,
+		} );
+		expect( currentPopup.close ).toHaveBeenCalledTimes( 1 );
+	} );
+
+	test( 'L. natural popup self-close (100ms poll) PRESERVES the intent and restores the Log in button', async () => {
+		const store = makeStore( { type: 'like', siteId: 111, postId: 222 } );
+		render(
+			<Provider store={ store }>
+				<LayoutLoggedOut sectionName="reader" />
+			</Provider>
+		);
+		await act( async () => {} );
+		jest.useFakeTimers();
+		act( () => {
+			fireEvent.click( screen.getByText( 'Log in' ) );
+		} );
+		// The user closes the popup themselves; the hook's 100ms poll detects popupWindow.closed.
+		currentPopup.closed = true;
+		act( () => {
+			jest.advanceTimersByTime( 150 );
+		} );
+		const loginRestored = !! screen.queryByText( 'Log in' );
+		out(
+			[
+				'L AFTER_SELFCLOSE:',
+				JSON.stringify( getLastActionRequiresLogin( store.getState() ) ),
+				'| Log in button restored =',
+				loginRestored,
+			].join( ' ' )
+		);
+		// Natural self-close must NOT clear the captured intent.
+		expect( getLastActionRequiresLogin( store.getState() ) ).toEqual( {
+			type: 'like',
+			siteId: 111,
+			postId: 222,
+		} );
+		expect( loginRestored ).toBe( true );
+	} );
+
+	test( 'M. whole-dialog Close (X icon) dispatches clear -> intent becomes null', async () => {
+		const store = makeStore( { type: 'like', siteId: 111, postId: 222 } );
+		render(
+			<Provider store={ store }>
+				<LayoutLoggedOut sectionName="reader" />
+			</Provider>
+		);
+		await act( async () => {} );
+		out(
+			[ 'M BEFORE:', JSON.stringify( getLastActionRequiresLogin( store.getState() ) ) ].join( ' ' )
+		);
+		act( () => {
+			fireEvent.click( screen.getByLabelText( 'Close' ) );
+		} );
+		out(
+			[
+				'M AFTER_DIALOG_CLOSE:',
+				JSON.stringify( getLastActionRequiresLogin( store.getState() ) ),
+			].join( ' ' )
+		);
+		// Only the whole-dialog Close clears the captured intent.
+		expect( getLastActionRequiresLogin( store.getState() ) ).toBeNull();
+	} );
+} );
+```
+
+Command:
+
+```bash
+TZ=UTC CI=true node_modules/.bin/jest -c=test/client/jest.config.js "blitzy_obs/test/like-intent-cleanup" --ci
+```
+
+Complete unedited output (process exit status `0`; `Tests: 3 passed, 3 total`):
+
+```text
+Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+PASS client/blitzy_obs/test/like-intent-cleanup.js (5.518 s)
+K BEFORE: {"type":"like","siteId":111,"postId":222}
+K AFTER_CANCEL: {"type":"like","siteId":111,"postId":222}
+K popup close called = 1
+L AFTER_SELFCLOSE: {"type":"like","siteId":111,"postId":222} | Log in button restored = true
+M BEFORE: {"type":"like","siteId":111,"postId":222}
+M AFTER_DIALOG_CLOSE: null
+
+Test Suites: 1 passed, 1 total
+Tests:       3 passed, 3 total
+Snapshots:   0 total
+Time:        5.801 s, estimated 6 s
+Ran all test suites matching /blitzy_obs\/test\/like-intent-cleanup/i.
+```
+
+What this proves for **Q5/Q6**: dismissing the prompt is **not** a single "cleanup" event. Only the **whole-dialog Close** path dispatches `clearLastActionRequiresLogin()` (test M: `M AFTER_DIALOG_CLOSE: null`); the popup **Cancel** link (test K: `K AFTER_CANCEL: {"type":"like",…}`) and a **natural popup self-close** (test L: `L AFTER_SELFCLOSE: {…} | Log in button restored = true`) both leave the intent in place and merely restore the "Log in" button. This refines Q6 factor (d): the explicit clear fires on exactly **one** of three dismissal paths. Crucially, on the two paths that _preserve_ the intent the like is **still** lost — because if the user then logs in, the reload (factor c) tears down the in-memory store and there is no replay path (factor b). Which dismissal path the user takes changes only _when_ the intent disappears, never _whether_ it does.
+
+## Harness self-validation — a deliberately failing negative control
+
+A passing harness proves the assertions held; it does not by itself prove the harness could have _caught_ the opposite. To close that gap, a deliberately wrong assertion was run against the **real** reducer and action creator: it claims the registered like payload is `null`, which the real code makes false. The harness must therefore FAIL with a non-zero exit — proving it detects incorrect behaviour rather than passing vacuously. The `111`/`222` IDs are an **(illustrative fixture)**.
+
+Script — `client/blitzy_obs/test/like-intent-negative.js`:
+
+```js
+import { registerLastActionRequiresLogin } from 'calypso/state/reader-ui/actions';
+import { lastActionRequiresLogin } from 'calypso/state/reader-ui/reducer';
+
+// NEGATIVE CONTROL — this test is DESIGNED TO FAIL. It asserts something the real
+// code makes false, proving the harness actually detects incorrect behaviour (rather
+// than passing vacuously). siteId/postId are arbitrary illustrative fixtures.
+describe( 'OBS NEGATIVE CONTROL — the harness must FAIL on a wrong assertion', () => {
+	test( 'deliberately wrong: the registered like payload is null (it is NOT)', () => {
+		const registered = lastActionRequiresLogin(
+			null,
+			registerLastActionRequiresLogin( { type: 'like', siteId: 111, postId: 222 } )
+		);
+		console.log( 'NEGATIVE registered =', JSON.stringify( registered ) );
+		// Intentionally FALSE: the reducer stores the like intent, so this must fail.
+		expect( registered ).toBeNull();
+	} );
+} );
+```
+
+Command (the appended `; echo` makes the non-zero exit status visible in the captured output):
+
+```bash
+TZ=UTC CI=true node_modules/.bin/jest -c=test/client/jest.config.js "blitzy_obs/test/like-intent-negative" --ci; echo "NEGATIVE_EXIT=$?"
+```
+
+Complete unedited output (terminal colour codes stripped; process exit status `1`, shown as `NEGATIVE_EXIT=1`). The `console.log` prints the real payload the reducer produced, and Jest's own `Received:` line then reports that exact value where the wrong assertion expected `null` (the only non-deterministic line is `Time:`):
+
+```text
+Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+FAIL client/blitzy_obs/test/like-intent-negative.js
+  ● Console
+
+    console.log
+      NEGATIVE registered = {"type":"like","siteId":111,"postId":222}
+
+      at Object.log (blitzy_obs/test/like-intent-negative.js:13:11)
+
+  ● OBS NEGATIVE CONTROL — the harness must FAIL on a wrong assertion › deliberately wrong: the registered like payload is null (it is NOT)
+
+    expect(received).toBeNull()
+
+    Received: {"postId": 222, "siteId": 111, "type": "like"}
+
+      13 | 		console.log( 'NEGATIVE registered =', JSON.stringify( registered ) );
+      14 | 		// Intentionally FALSE: the reducer stores the like intent, so this must fail.
+    > 15 | 		expect( registered ).toBeNull();
+         | 		                     ^
+      16 | 	} );
+      17 | } );
+      18 |
+
+      at Object.toBeNull (blitzy_obs/test/like-intent-negative.js:15:24)
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 1 total
+Snapshots:   0 total
+Time:        0.78 s, estimated 1 s
+Ran all test suites matching /blitzy_obs\/test\/like-intent-negative/i.
+NEGATIVE_EXIT=1
+```
+
+What this proves: the harness is **not** vacuous. A false assertion yields `Tests: 1 failed, 1 total` and a non-zero exit, and Jest's `Received: {"postId": 222, "siteId": 111, "type": "like"}` is the identical like payload that every _passing_ observation in this document asserts. The passing results elsewhere are therefore genuine, not artifacts of assertions that could never fail. (This script is temporary and is removed with the others — see "Repository left unchanged".)
+
 ## Corroboration — the repository's own `reader-ui` tests pass
 
 Running the shipped `reader-ui` suites confirms the slice behaves as the investigation describes, independent of the temporary scripts (exit status `0`).
@@ -798,7 +1089,7 @@ Ran all test suites matching /state\/reader-ui/i.
 
 **Answer:** The Reader has exactly one capture mechanism — `registerLastActionRequiresLogin` — and exactly one designed "survival" mechanism — a `redirectTo` that is honoured after login by navigating the browser. A logged-out like uses the capture mechanism but **omits `redirectTo`**, so it has **no designed survival path** at all; it is captured only to drive the login prompt.
 
-**Observed:** In integration test **A** (real connected button, real DOM click), the store transitions from `null` to the captured intent and the dispatched action is `READER_REGISTER_LAST_ACTION_REQUIRES_LOGIN`, with **no** `POST_LIKE`:
+**Observed:** In integration test **A** (real connected button, jsdom click), the store transitions from `null` to the captured intent and the dispatched action is `READER_REGISTER_LAST_ACTION_REQUIRES_LOGIN`, with **no** `POST_LIKE`:
 
 ```text
 A BEFORE: null
@@ -821,7 +1112,7 @@ A POST_LIKE dispatched? false
 
 **Answer:** The only consumer that could "bring it back" is `LayoutLoggedOut`. On login success it runs a callback that **navigates** (if `redirectTo` is present) or **reloads** (otherwise). It never translates a captured like intent into a `like()` API call — there is no action-replay bridge.
 
-**Observed:** the login transport and both success outcomes are exercised live:
+**Observed** (app-side, under jsdom — the browser transport and navigation are simulated per the **simulated browser boundary** note in "Evidence methodology and labelling"; the login-URL construction, the success-signal validation, and the redirect/reload decision all run through the real `useLoginWindow` hook and the real `onLoginSuccess` callback):
 
 ```text
 C LOGIN_URL: https://wordpress.com/log-in?redirect_to=https%3A%2F%2Fwordpress.com%2Fpublic.api%2Fconnect%2F%3Faction%3Dverify%26service%3Dwordpress
@@ -863,12 +1154,14 @@ typeof lastActionRequiresLogin.serialize = undefined | typeof lastPath.serialize
 **Answer:** There are two independent, jointly sufficient conditions, and there is **no** authenticated-side reader to save the intent from either:
 
 1. **No `redirectTo` on the like intent -> reload branch.** Login success runs `window.location.reload()` (integration test **F**: `reload calls = 1`), which re-initialises the in-memory store; the reborn `lastActionRequiresLogin` is `null` (script 1: `AFTER (reload/@@INIT): null`).
-2. **Explicit clear on dialog close.** The dialog's `onClose` calls `clearLastActionRequiresLogin()` (integration test **H**):
+2. **Explicit clear on _whole-dialog_ close.** The dialog's `onClose` calls `clearLastActionRequiresLogin()` (integration test **H**):
 
 ```text
 H BEFORE_CLOSE: {"type":"like","siteId":111,"postId":222}
 H AFTER_CLOSE: null
 ```
+
+This clear fires on exactly **one** of the **three** ways the prompt can be dismissed — a distinction the cleanup-taxonomy tests **K/L/M** in "Script 4" isolate. Only the whole-dialog **Close** (`X` / Esc) dispatches the clear (`M AFTER_DIALOG_CLOSE: null`); the popup **Cancel** link (`K AFTER_CANCEL: {…}`) and a **natural popup self-close** (`L AFTER_SELFCLOSE: {…}`) both _preserve_ the intent and merely restore the "Log in" button. So condition 2 is path-dependent — but note the like is still lost on the two preserving paths, because the moment the user logs in, condition 1 (reload) discards the store regardless.
 
 3. **No authenticated-side reader.** Even if the intent somehow survived, nothing reads it after auth. Integration test **J** mounts an authenticated tree with a pre-existing intent and observes that **no** `POST_LIKE` is dispatched and the intent is simply left untouched:
 
@@ -889,11 +1182,11 @@ The four structural factors, each grounded in observed output or source:
 | (a) Non-persistent storage                | Design           | `serialize()` -> `undefined` (script 1); plain reducer `[reader-ui/reducer.js:45]`          |
 | (b) No action-replay path                 | Design (absence) | No `POST_LIKE`/`POST_UNLIKE` in slice or consumer (search S4); test J: no replay after auth |
 | (c) Full-page reload tears down the store | Runtime          | test F: `reload calls = 1`; reborn store `null` (script 1 `@@INIT`)                         |
-| (d) Explicit clear on dialog close        | Runtime          | test H: `AFTER_CLOSE: null`; `onClose` clear `[logged-out.jsx:304]`                         |
+| (d) Explicit clear on dialog close        | Runtime          | tests H/M: only whole-dialog Close clears; K/L preserve intent (Script 4)                   |
 
-- **Not timing:** the outcome is byte-identical across three runs (single sha256 digest), so there is no race window that sometimes wins.
+- **Not timing:** the outcome is byte-identical across five runs (single sha256 digest), so there is no race window that sometimes wins.
 - **Not init order:** the reducer initialises deterministically to `null`; the loss does not depend on the order in which reducers register. The intent is lost because it is _designed_ to live only in memory and there is nothing to replay it — regardless of ordering.
-- **Cleanup contributes** (factor d), but even without it the reload (factor c) plus the missing replay path (factor b) would still lose the like.
+- **Cleanup contributes** (factor d), but it is **path-dependent** and not the sole cause: the cleanup-taxonomy tests **K/L/M** (Script 4) show the explicit clear fires only on the whole-dialog **Close** path (`M AFTER_DIALOG_CLOSE: null`), while the popup **Cancel** (`K AFTER_CANCEL`) and a **natural popup self-close** (`L AFTER_SELFCLOSE`) both preserve the intent. Even on those two preserving paths the like is still lost, because the reload (factor c) plus the missing replay path (factor b) discard it on login success regardless. Cleanup therefore changes only _which_ of the four factors delivers the loss, never _whether_ the loss occurs.
 
 ## Producer / consumer matrix and exhaustive no-replay proof
 
@@ -1017,7 +1310,7 @@ client/state/posts/likes/reducer.js:91:			case POST_LIKES_ADD_LIKER: {
 client/state/posts/likes/reducer.js:110:			case POST_LIKES_REMOVE_LIKER: {
 ```
 
-Interpretation: the like/unlike action types are produced and reduced **only** inside `client/state/posts/likes/*` and are dispatched by `handleLikeToggle` **only on the logged-in branch** `[client/blocks/like-button/index.jsx:40-42]`. The logged-out branch, the `reader-ui` slice, and the sole consumer `logged-out.jsx` contain **no** reference to them — so there is no code that could turn the stored `{ type: 'like', … }` back into a `POST_LIKE`. The absence is the proof.
+Interpretation: the like/unlike action types are produced and reduced **only** inside `client/state/posts/likes/*` and are dispatched by `handleLikeToggle` **only on the logged-in branch** `[client/blocks/like-button/index.jsx:40-42]`. The logged-out branch, the `reader-ui` slice, and the sole consumer `logged-out.jsx` contain **no** reference to them — so there is no code that could turn the stored `{ type: 'like', … }` back into a `POST_LIKE`. The absence is the proof. The HTTP effect layer that actually turns these actions into REST calls is likewise **decoupled** from `reader-ui`: `client/state/data-layer/wpcom/sites/posts/likes/new/index.js` handles `POST_LIKE` `[:42]`, `.../mine/delete/index.js` handles `POST_UNLIKE` `[:42]`, and `.../index.js` handles the read requests — yet a `grep` of that entire directory for `reader-ui` / `lastActionRequiresLogin` / `getLastActionRequiresLogin` returns nothing. So even the layer that issues the like API call has no awareness of the captured intent, confirming from a second angle that no replay bridge exists.
 
 ## The mechanism as cause -> effect
 
@@ -1044,7 +1337,7 @@ The system treats **in-memory Redux state** (`state.readerUi.lastActionRequiresL
 ## Exact skip condition and cause taxonomy (summary)
 
 - **Exact skip condition (Q5):** the like intent carries no `redirectTo`, so login success executes `window.location.reload()` `[client/layout/logged-out.jsx:311]`, re-initialising the store to `lastActionRequiresLogin = null`; the dialog's `onClose` also calls `clearLastActionRequiresLogin()` `[client/layout/logged-out.jsx:304]`; and no authenticated-side code reads `getLastActionRequiresLogin` (search S1) or dispatches `POST_LIKE` from it (search S4).
-- **Cause taxonomy (Q6):** structural — (a) non-persistent storage, (b) absent action-replay path, (c) reload-teardown of the in-memory store, (d) explicit clear on close. Deterministic across 3/3 runs, so **not** a timing race; reducer init is deterministic, so **not** an init-order bug.
+- **Cause taxonomy (Q6):** structural — (a) non-persistent storage, (b) absent action-replay path, (c) reload-teardown of the in-memory store, (d) explicit clear on close. Deterministic across 5/5 runs, so **not** a timing race; reducer init is deterministic, so **not** an init-order bug.
 
 ## Why some intents survive but the like does not
 
@@ -1061,7 +1354,7 @@ This section separates **source-proven behaviour** (what the code does, backed b
 
 **Source-proven:** Calypso captures the intent in a non-persisted in-memory slice and, after auth, either navigates (`redirectTo`) or reloads; it never replays a like. A `window.location.reload()` after login discards all in-memory Redux state, which is the well-documented failure mode for any state that is not persisted-and-rehydrated.
 
-**Primary-source best practice:** the canonical pattern for surviving a client-side identity transition is to persist the pending intent and **replay it after rehydration**, rendering the post-auth UI only once rehydration has completed. The `redux-persist` project documents its React `PersistGate` for exactly this: per its official documentation, wrapping the root component with `PersistGate` _"delays the rendering of your app's UI until your persisted state has been retrieved and saved to redux"_ (redux-persist, `github.com/rt2zz/redux-persist`; npm: `npmjs.com/package/redux-persist`). Calypso does not use `redux-persist`; it has its own `withPersistence`/`serialize` subsystem `[client/state/utils/with-persistence.ts:16-24]`, `[client/state/utils/serialize.ts:10-16]`, and it deliberately renders immediately rather than gating on rehydration.
+**Primary-source best practice:** the canonical pattern for surviving a client-side identity transition is to persist the pending intent and **replay it after rehydration**, rendering the post-auth UI only once rehydration has completed. The `redux-persist` project documents its React `PersistGate` for exactly this: per its official documentation, wrapping the root component with `PersistGate` _"delays the rendering of your app's UI until your persisted state has been retrieved and saved to redux"_ (redux-persist, `github.com/rt2zz/redux-persist`; npm: `npmjs.com/package/redux-persist`). Calypso does not use `redux-persist`; it has its own `withPersistence`/`serialize` subsystem `[client/state/utils/with-persistence.ts:16-24]`, `[client/state/utils/serialize.ts:10-16]`. Calypso's boot path _does_ gate on rehydration in one important sense — it `await`s `loadPersistedState()` before it creates the Redux store or starts routing: `createQueryClient()` calls `await loadPersistedState()` `[client/state/query-client.ts:33]`, and `boot()` `await`s `createQueryClient()` `[client/boot/common.js:319]` before it calls `createReduxStore()` `[client/boot/common.js:324]` and `page.start()` `[client/boot/common.js:337]` (the comment on `getInitialState` states that `loadPersistedState` "must have completed first" `[client/state/initial-state.js:139]`). What Calypso does **not** do is wrap its component tree in a `redux-persist`-style React `PersistGate` render-gate. That distinction is immaterial to the like, however, because the decisive gap is upstream of rehydration entirely: `lastActionRequiresLogin` is never written to the persisted snapshot in the first place (`serialize()` -> `undefined`, script 1), so there is nothing for `loadPersistedState()` to restore, and the post-login reload reinitializes the slice to `null` regardless of how faithfully the _persisted_ reducers rehydrate.
 
 **A subtlety the naive "just persist the slice" fix misses (user-scoped persistence keys) — (source-read):** even if `lastActionRequiresLogin` _were_ `withPersistence`-wrapped, slice persistence alone would **not** carry the intent across the auth boundary, because Calypso's persistence key is **scoped to the user id**. The key is derived as `'redux-state-' + ( userId ?? 'logged-out' )` `[client/state/initial-state.js:75-77]`, and the boot sequence threads the current user id into both the initial-state read and the persist subscription: `getInitialState( initialReducer, currentUser?.ID )` and `persistOnChange( reduxStore, currentUser?.ID )` `[client/boot/common.js:323,326]`. So a logged-out session persists under `redux-state-logged-out`, whereas the authenticated boot reads from `redux-state-<userId>`. The authenticated store would therefore never see a value written under the logged-out key. (These lines are read from source, not executed at runtime, and are labelled accordingly.)
 
@@ -1078,36 +1371,61 @@ Every sub-question and every named candidate from the question is addressed, wit
 | **Q3** replay trigger                             | Answered                       | integration (C,D,E,F,G) + source           | Q3; `logged-out.jsx:307-313`            |
 | **Q4** source of truth                            | Answered                       | unit `serialize()` (decisive) + source     | Q4; `serialize.ts:10-16`                |
 | **Q5** exact skip condition                       | Answered                       | integration (F,H,J) + searches S1/S4       | Q5                                      |
-| **Q6** cause taxonomy                             | Answered                       | 3x determinism + F/H + searches            | Q6                                      |
+| **Q6** cause taxonomy                             | Answered                       | 5x determinism + F/H + searches            | Q6                                      |
 | Candidate: in-memory                              | Confirmed (this is the answer) | unit + integration                         | Q4                                      |
 | Candidate: persisted                              | Ruled out                      | `serialize()` -> `undefined`               | Q4                                      |
 | Candidate: handoff token                          | Ruled out                      | only `redirect_to` = navigation            | Q4                                      |
-| Cause: timing                                     | Ruled out                      | byte-identical 3/3 runs                    | Determinism; Q6                         |
+| Cause: timing                                     | Ruled out                      | byte-identical 5/5 runs                    | Determinism; Q6                         |
 | Cause: init order                                 | Ruled out                      | deterministic reducer init                 | Q6                                      |
-| Cause: cleanup                                    | Contributing (1 of 4)          | test H clear                               | Q5/Q6                                   |
+| Cause: cleanup                                    | Contributing (1 of 4)          | tests H/M clear; K/L preserve (Script 4)   | Q5/Q6                                   |
 | Feature flag default OFF / ON                     | Observed both                  | script 3                                   | Script 3                                |
 | Wrapper fallback bypassed                         | Observed                       | integration (B)                            | Script 3 note                           |
 | Tag-embed branch                                  | Observed                       | integration (I) + source                   | Consumers; `logged-out.jsx:168-171`     |
 | Foreign-origin / wrong-service negative controls  | Observed                       | integration (E)                            | Q3                                      |
 | Canonical signup (create-account) shares callback | Observed                       | integration (D) + source                   | Q3                                      |
 | Authenticated no-replay                           | Observed                       | integration (J)                            | Q5                                      |
+| Cleanup taxonomy (Cancel/self-close/Close)        | Observed (3 paths)             | integration (K,L,M)                        | Script 4                                |
 | Producer matrix (11 sites, 3 with `redirectTo`)   | Enumerated                     | identifier grep + source                   | Matrix                                  |
 | No `POST_LIKE` replay bridge                      | Proven by absence              | search S4                                  | Matrix                                  |
 | Dialog Tracks telemetry (not replay)              | Noted                          | source                                     | Consumers; `dialog.jsx:17-28`           |
 | User-scoped persistence keys                      | Noted                          | (source-read)                              | Best-practice; `initial-state.js:75-77` |
-| Intermittent vs deterministic                     | Deterministic                  | 3x sha256 identical                        | Determinism                             |
+| Intermittent vs deterministic                     | Deterministic                  | 5x sha256 identical                        | Determinism                             |
 
 ## Repository left unchanged (proof)
 
-The investigation is read-only. The only tracked change on this branch is this document under `blitzy/documentation/`. The temporary observation scripts lived under `client/blitzy_obs/` and were removed in full after the outputs above were captured:
+The investigation is read-only. The only tracked change on this branch is this document under `blitzy/documentation/`. Every temporary observation script lived under `client/blitzy_obs/test/` and every `run$i.txt`/`obs$i.txt` artifact lived only inside a `mktemp -d` directory; nothing was ever written to the repository root. Cleanup is therefore exact and scoped — it targets only the temporary scripts directory, guards against clobbering a pre-existing one, and (in the reproducibility loop) is additionally guaranteed by a `trap`:
 
 ```bash
-rm -rf client/blitzy_obs
-git status --porcelain
+# Exact, scoped cleanup — targets ONLY the temp scripts directory (no wildcards over the repo):
+[ -e client/blitzy_obs ] || echo "client/blitzy_obs already absent"
+rm -rf -- client/blitzy_obs
+# Prove no source/config/package file changed (scoped diff prints nothing):
+git status --porcelain -- client/ config/ packages/
 git diff --name-status be7e5cc641..HEAD -- client/ config/ packages/
 ```
 
-After cleanup, `git status --porcelain` shows no untracked `client/blitzy_obs/` entries, and the scoped `git diff` against the baseline prints nothing for `client/`, `config/`, and `packages/` — confirming no source, config, or package file was modified. The sole addition is `blitzy/documentation/wp-calypso_be7e5cc64162.md`.
+Captured output (both `git` commands print nothing, so no `client/`, `config/`, or `packages/` file was modified):
+
+```text
+### guard + scoped cleanup (client/blitzy_obs already absent here, so guard passes and rm is a no-op)
+client/blitzy_obs already absent
+### git status --porcelain (empty = no untracked residue)
+### scoped diff vs baseline (empty = no source/config/package change)
+### end (both sections above printed nothing)
+```
+
+The sole addition is `blitzy/documentation/wp-calypso_be7e5cc64162.md`.
+
+**Cleanup safety proved in an isolated sandbox.** The `trap`-plus-guard pattern used by the reproducibility loop was exercised against the four failure modes it must survive, entirely inside a throwaway `mktemp -d` sandbox (it never touched this repository):
+
+| Scenario                    | Command exit | Scripts dir after | `reader-obs.*` temp dirs after |
+| --------------------------- | -----------: | ----------------- | ------------------------------ |
+| Normal success (`exit 0`)   |            0 | removed           | 0                              |
+| Mid-run failure (`exit 7`)  |            7 | removed           | 0                              |
+| Interrupt (`SIGTERM`)       |     via trap | removed           | 0                              |
+| Pre-existing target (guard) |           90 | **sentinel kept** | 0                              |
+
+On success, failure, and interruption the `trap` removed both the scripts directory and the temp directory, leaving zero residue; and when a pre-existing `client/blitzy_obs` was present, the guard aborted with exit `90` **without** deleting the pre-existing sentinel file. This is why the printed loop cannot overwrite a repository file, follow a symlink out of the tree, or leave `run*/obs*` artifacts behind.
 
 ## Appendix — file:line evidence index
 
