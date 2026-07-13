@@ -65,6 +65,33 @@ Because `jest` is not on `PATH`, the installed binary is invoked directly (equiv
 TZ=UTC node_modules/.bin/jest -c=test/client/jest.config.js client/state/data-layer/wpcom/jetpack-install/test/index.js
 ```
 
+**Two timing metrics — Jest `Time:` vs external process wall-clock (definitions).** Two distinct
+measurements are reported for every timed condition below, and the distinction matters because Q1 explicitly
+asks for **wall-clock time**:
+
+- **Jest `Time:`** is the runner's **internal** metric, printed on the `Time:` line of Jest's own summary
+  (which Jest writes to stderr). It measures the work Jest itself times and **excludes** the Node process
+  startup and teardown that occur outside Jest's own timer (spawning `node`, loading the `jest-cli`
+  bootstrap before the timer starts, and process exit afterward).
+- **External process wall-clock** is the **end-to-end** elapsed time of the entire `node` process — the
+  `real` line reported by the POSIX `time -p` builtin. This is the "wall-clock time for each run" the user's
+  Q1 asks for. (`/usr/bin/time` is not installed in this environment, so the Bash `time -p` builtin is used;
+  it emits `real`/`user`/`sys` in seconds.)
+
+Both numbers are captured from the **same** invocation using group redirection, so the two output streams
+never mix:
+
+```
+{ time -p env TZ=UTC node_modules/.bin/jest -c=test/client/jest.config.js <file> [--no-cache] >/dev/null 2>jest.log ; } 2>time.log
+```
+
+`jest.log` then holds Jest's summary (including its `Time:` line) and `time.log` holds only
+`real`/`user`/`sys`. The external `real` is always slightly larger than Jest's `Time:` by the out-of-timer
+process overhead (OBSERVED below: ≈0.6 s warm, ≈1.0–1.2 s uncached). **Every ratio and cache-savings figure
+in this document is reported for _both_ metrics**, and where a single headline ratio is quoted the metric is
+named explicitly. Unless stated otherwise, the primary headline ratio for Q1 and Q4 is quoted on the
+**external wall-clock** metric (the one the user asked for), with the Jest `Time:` ratio given alongside.
+
 **Runtime and dependency versions (OBSERVED).** The repository pins Node `22.9.0` ([`.nvmrc:L1`]) and requires
 Node `^v22.9.0` ([`package.json:L56–L57`], `engines.node`) with Yarn `4.0.2` ([`package.json:L422`],
 `packageManager`; the bundled release is pinned at [`.yarnrc.yml:L3–L5`], `nodeLinker: node-modules` /
@@ -262,6 +289,103 @@ Time:        5.067 s, estimated 16 s
 Ran all test suites matching /client\/state\/data-layer\/wpcom\/jetpack-install\/test\/index.js/i.
 ```
 
+### External wall-clock timing (paired capture: Jest `Time:` + process `real`, OBSERVED)
+
+The runs above report Jest's **internal** `Time:`. To answer Q1's request for **wall-clock time** directly,
+the same file was re-measured in this environment with the **external process wall-clock captured alongside**
+Jest's `Time:` from the **same** invocation (group redirection; see Methodology → "Two timing metrics"). One
+cold run (cache cleared) and three warm runs were captured. For each run the raw, unedited output is the
+`time -p` block (`real`/`user`/`sys`, in seconds) followed by Jest's own summary:
+
+**Cold (paired)** — `rm -rf .cache/jest` first:
+
+```
+real 17.48
+user 23.65
+sys 2.22
+PASS client/state/data-layer/wpcom/jetpack-install/test/index.js (16.227 s)
+
+Test Suites: 1 passed, 1 total
+Tests:       5 passed, 5 total
+Snapshots:   1 passed, 1 total
+Time:        16.287 s
+```
+
+**Warm #1 (paired)** — immediately after the cold run, cache populated:
+
+```
+real 5.55
+user 7.02
+sys 0.88
+PASS client/state/data-layer/wpcom/jetpack-install/test/index.js
+
+Test Suites: 1 passed, 1 total
+Tests:       5 passed, 5 total
+Snapshots:   1 passed, 1 total
+Time:        4.924 s, estimated 17 s
+```
+
+**Warm #2 (paired):**
+
+```
+real 5.98
+user 7.41
+sys 1.00
+PASS client/state/data-layer/wpcom/jetpack-install/test/index.js (5.214 s)
+
+Test Suites: 1 passed, 1 total
+Tests:       5 passed, 5 total
+Snapshots:   1 passed, 1 total
+Time:        5.27 s
+```
+
+**Warm #3 (paired):**
+
+```
+real 5.63
+user 6.72
+sys 0.85
+PASS client/state/data-layer/wpcom/jetpack-install/test/index.js
+
+Test Suites: 1 passed, 1 total
+Tests:       5 passed, 5 total
+Snapshots:   1 passed, 1 total
+Time:        5.009 s, estimated 6 s
+```
+
+(The `estimated N s` suffix on warm runs is Jest's own projection derived from the `perf-cache`; the
+**actual** reported time is the first value, e.g. `4.924 s`.) Paired timings and the first ÷ second ratio on
+**both** metrics:
+
+| Run            | Jest `Time:` (s) | External `real` (s) | External − Jest (s) |
+| -------------- | ---------------- | ------------------- | ------------------- |
+| Cold (1st run) | 16.287           | 17.48               | 1.19                |
+| Warm #1 (2nd)  | 4.924            | 5.55                | 0.63                |
+| Warm #2        | 5.27             | 5.98                | 0.71                |
+| Warm #3        | 5.009            | 5.63                | 0.62                |
+
+- **First ÷ second on external wall-clock (headline metric Q1 asks for, OBSERVED):**
+  17.48 / 5.55 = **3.15×**.
+- **First ÷ second on Jest `Time:` (OBSERVED):** 16.287 / 4.924 = **3.31×**.
+- Against the **mean** of the three warm runs the ratio is **3.06×** external (17.48 / 5.720) and **3.21×**
+  Jest (16.287 / 5.068).
+- The external `real` exceeds Jest's `Time:` by **≈0.6 s** on warm runs and **≈1.2 s** cold — this is the
+  Node process startup/teardown that Jest's internal timer excludes but the end-to-end wall-clock includes
+  (OBSERVED; it is why the two metrics differ). Both metrics agree the first run is **~3× slower** than the
+  second.
+
+Arithmetic:
+
+```
+external first/second : 17.48  / 5.55   = 3.15x
+Jest     first/second : 16.287 / 4.924  = 3.31x
+external cold/mean(warm 5.720 = mean(5.55,5.98,5.63)) = 17.48  / 5.720 = 3.06x
+Jest     cold/mean(warm 5.068 = mean(4.924,5.27,5.009)) = 16.287 / 5.068 = 3.21x
+```
+
+These paired numbers are the current-environment re-measurement; the multi-cycle Jest-`Time:` study that
+follows characterizes run-to-run spread in more detail. Both are consistent (~3×).
+
 ### Observed timings and the ratio
 
 | Run     | Cold `Time:` (s) | Warm `Time:` (s) | first ÷ second |
@@ -271,14 +395,20 @@ Ran all test suites matching /client\/state\/data-layer\/wpcom\/jetpack-install\
 | Cycle C | 15.095           | 5.067            | **2.98×**      |
 
 - **Cold runs (OBSERVED):** 18.421 s, 15.706 s, 15.095 s. The two clean consecutive cycles (B, C) cluster
-  tightly at ~15.1–15.7 s; cycle A's 18.421 s is a mild first-of-session outlier (filesystem / JIT warmup).
+  tightly at ~15.1–15.7 s; cycle A's 18.421 s is a mild first-of-session outlier. **(INFERRED)** The extra
+  ~3 s of cycle A most plausibly reflects one-time filesystem/JIT warmup on the first process of the session
+  — this specific *cause* was not itself instrumented, so it is labeled inferred; only the timing values
+  themselves are OBSERVED.
 - **Warm runs (OBSERVED):** 5.058, 5.542, 5.047, 5.060, 5.067 s across **five** runs — a range of only
   ~0.5 s, i.e. **very stable**.
 
-**Answer (OBSERVED).** The ratio of first-run time to second-run time is **≈ 3.0×**. The clean
-back-to-back cold→warm pairs (B and C) give **3.10×** and **2.98×** (mean **3.04×**); including the
-first-of-session cold run, the full observed range is **2.98×–3.64×**. In plain terms, the first execution
-takes roughly **three times as long** as the second.
+**Answer (OBSERVED).** The ratio of first-run time to second-run time is **≈ 3.0×** on **both** timing
+metrics. On Jest's internal `Time:`, the clean back-to-back cold→warm pairs (B and C) give **3.10×** and
+**2.98×** (mean **3.04×**); including the first-of-session cold run, the full observed Jest-`Time:` range is
+**2.98×–3.64×**. On the **external process wall-clock** — the metric Q1 explicitly asks for — the paired
+capture above gives **3.15×** (first ÷ second) and **3.06×** against the warm mean. In plain terms, the first
+execution takes roughly **three times as long** as the second, whether measured by Jest's internal timer or
+by the end-to-end process wall-clock.
 
 Arithmetic (clean pairs):
 
@@ -704,12 +834,102 @@ Time:        25.228 s
 Ran all test suites matching /client\/state\/data-layer\/wpcom\/jetpack-install\/test\/index.js/i.
 ```
 
+### External wall-clock timing (paired capture: `--no-cache` vs warm, both metrics, OBSERVED)
+
+The five runs above report Jest's internal `Time:`. To record the **external process wall-clock** for the
+uncached case — and to compare it like-for-like against the warm baseline on the metric Q1/Q4 care about —
+the same file was re-measured in this environment with `--no-cache`, capturing `time -p` `real` alongside
+Jest's `Time:` from the same invocation (three runs). Raw, unedited output — the `time -p` block then Jest's
+summary:
+
+**`--no-cache` #1 (paired):**
+
+```
+real 15.68
+user 21.56
+sys 1.92
+PASS client/state/data-layer/wpcom/jetpack-install/test/index.js (14.564 s)
+
+Test Suites: 1 passed, 1 total
+Tests:       5 passed, 5 total
+Snapshots:   1 passed, 1 total
+Time:        14.612 s
+```
+
+**`--no-cache` #2 (paired):**
+
+```
+real 15.90
+user 21.47
+sys 2.11
+PASS client/state/data-layer/wpcom/jetpack-install/test/index.js (14.8 s)
+
+Test Suites: 1 passed, 1 total
+Tests:       5 passed, 5 total
+Snapshots:   1 passed, 1 total
+Time:        14.846 s
+```
+
+**`--no-cache` #3 (paired):**
+
+```
+real 16.01
+user 22.35
+sys 2.11
+PASS client/state/data-layer/wpcom/jetpack-install/test/index.js (14.917 s)
+
+Test Suites: 1 passed, 1 total
+Tests:       5 passed, 5 total
+Snapshots:   1 passed, 1 total
+Time:        14.961 s
+```
+
+Paired `--no-cache` timings against the paired warm baseline from Q1 (warm Jest mean 5.068 s, external mean
+5.720 s):
+
+| Condition       | Jest `Time:` (s) | External `real` (s) |
+| --------------- | ---------------- | ------------------- |
+| `--no-cache` #1 | 14.612           | 15.68               |
+| `--no-cache` #2 | 14.846           | 15.90               |
+| `--no-cache` #3 | 14.961           | 16.01               |
+| **mean**        | **14.806**       | **15.863**          |
+| warm mean (Q1)  | 5.068            | 5.720               |
+
+- **`--no-cache` ÷ warm on external wall-clock (headline metric, OBSERVED):** 15.863 / 5.720 = **2.77×**
+  (median 15.90 / 5.63 = **2.82×**).
+- **`--no-cache` ÷ warm on Jest `Time:` (OBSERVED):** 14.806 / 5.068 = **2.92×** (median 14.846 / 5.009 =
+  **2.96×**).
+- **Cache savings** `(no-cache − warm) / no-cache`: **63.9%** external, **65.8%** Jest.
+- In this environment the three `--no-cache` runs were **tightly clustered** (Jest 14.612–14.961 s; external
+  15.68–16.01 s), so this paired ratio (~2.8–2.9×) is lower and steadier than the wider five-run
+  Jest-`Time:` study below. **(INFERRED)** The larger spread of that study (reaching ~4×) is most plausibly
+  transient machine contention during those runs, not a different underlying cost — both are honest
+  observations of the same unchanged input, and the paired capture is the contention-free baseline that
+  matches Jest's documented "at least two times slower" guidance.
+
+Arithmetic:
+
+```
+external nocache/warm : 15.863 / 5.720 = 2.77x   (median 15.90 / 5.63   = 2.82x)
+Jest     nocache/warm : 14.806 / 5.068 = 2.92x   (median 14.846 / 5.009 = 2.96x)
+cache savings external: (15.863 - 5.720) / 15.863 = 63.9%
+cache savings Jest    : (14.806 - 5.068) / 14.806 = 65.8%
+```
+
+Cross-check (OBSERVED): the paired cold run (Q1: Jest 16.287 s / external 17.48 s) and the paired
+`--no-cache` mean (Jest 14.806 s / external 15.863 s) are in the **same regime** — ratio ≈ 1.10× on both
+metrics — because both must transform the full graph without reading the cache.
+
 ### Performance impact of disabling the cache
 
 - **`--no-cache` timings (OBSERVED, five runs):** 16.829, 18.166, 20.639, 25.228, 29.213 s — mean **≈ 22.0 s**,
-  median **≈ 20.6 s**. Unlike the warm runs, these are **not tightly stable**: because every run re-transpiles
-  the entire graph, the timing is dominated by a heavy, CPU-bound transformation workload that is sensitive to
-  machine contention. The honest distribution is reported here rather than a single controlled figure.
+  median **≈ 20.6 s**. Unlike the warm runs, these are **not tightly stable**. **(INFERRED)** Because every
+  run re-transpiles the entire graph, the timing is most plausibly dominated by a heavy, CPU-bound
+  transformation workload that is sensitive to machine contention — the "CPU-bound" characterization and the
+  contention explanation are reasoned from the observed spread together with the source-level transform
+  configuration (Q4, "Which transformation step dominates?"), not independently instrumented here. The honest
+  distribution is reported rather than a single controlled figure. (The tighter paired three-run capture
+  above, ~14.6–15.0 s, shows the contention-free lower end of this same distribution.)
 - **Warm baseline (OBSERVED):** ~5.06 s (from Q1, stable across five runs).
 
 Ratio and savings (arithmetic):
@@ -723,17 +943,24 @@ cache savings (median) = (20.639 - 5.06) / 20.639 = 75.5%
 cache savings (range)  = 69.9% .. 82.7%
 ```
 
-**Answer (OBSERVED).** Disabling the cache makes the run roughly **4× slower** than the warm run
-(median 4.08×; observed range 3.33×–5.77×), i.e. the transform cache **saves on the order of ~75%** of the
-run time. This is consistent with Jest's documented behavior for the `--cache`/`--no-cache` option, which
-states that "the cache should only be disabled if you are experiencing caching related problems. On average,
-disabling the cache makes Jest at least two times slower" (official Jest CLI Options documentation,
-`--cache` / `--no-cache`, `https://jestjs.io/docs/cli#--cache`; the installed runner is Jest 29.7.0 per
-`TZ=UTC node_modules/.bin/jest --version` above, and this guidance is unchanged in the v29.7 line —
-this is EXTERNAL documentation, not a runtime observation). Note that the `--no-cache` times (~17–29 s) are in the **same regime as the cold-run times**
-(~15–18 s from Q1) and far above the warm times (~5 s): both the cold run and every `--no-cache` run must
-transform the full transform-eligible source graph, whereas warm runs read it from disk. This directly
-confirms the Q1 rationale — the first-run overhead is the transformation step, not the mock setup (Q3).
+**Answer (OBSERVED, both metrics).** Disabling the cache makes the run **at least ~2.8× slower** than the
+warm run, rising to ~4× under transient machine contention. On the **external process wall-clock** (the
+paired, contention-free capture above) the uncached run is **2.77×** the warm run (median **2.82×**), i.e.
+the transform cache **saves ~64%** of end-to-end time; on Jest's internal `Time:` it is **2.92×** paired
+(median 2.96×, ~66% savings) and **4.08×** by the wider five-run study (median; observed range 3.33×–5.77×;
+~75% savings). Taking the paired, contention-free capture as the headline, disabling the cache roughly
+**triples** the run time on both metrics. This is consistent with Jest's documented behavior for the
+`--cache`/`--no-cache` option, which states that "the cache should only be disabled if you are experiencing
+caching related problems. On average, disabling the cache makes Jest at least two times slower" (official
+Jest CLI Options documentation, `--cache` / `--no-cache`, `https://jestjs.io/docs/cli#--cache`; the installed
+runner is Jest 29.7.0 per `TZ=UTC node_modules/.bin/jest --version` above, and this guidance is unchanged in
+the v29.7 line — this is EXTERNAL documentation, not a runtime observation). Note that the `--no-cache` times
+are in the **same regime as the cold-run times** (paired cold ~16.3 s Jest / ~17.5 s external; five-run study
+~15–18 s) and far above the warm times (~5 s): both the cold run and every `--no-cache` run must transform
+the full transform-eligible source graph, whereas warm runs read it from disk. **(INFERRED)** This regime
+match strongly supports — rather than directly instruments — the Q1 rationale that the first-run overhead is
+the transformation step, not the mock setup (Q3): the one factor shared by the cold and `--no-cache`
+conditions is full re-transformation of the graph.
 
 ### Which transformation step dominates?
 
@@ -796,8 +1023,11 @@ saved by the cache), and the transformation step consuming the most time during 
 Every named sub-part of the four questions is addressed above:
 
 - **Q1 — data-layer test file used:** `client/state/data-layer/wpcom/jetpack-install/test/index.js` (5 tests /
-  3 `describe` blocks). **First ÷ second ratio ≈ 3.0×** (OBSERVED; clean pairs 3.10× and 2.98×, full range
-  2.98×–3.64×); warm runs stable across five repeats.
+  3 `describe` blocks). **First ÷ second ratio ≈ 3.0× on both timing metrics** (OBSERVED): external process
+  **wall-clock 3.15×** (paired `time -p` capture; 3.06× vs the warm mean) and Jest internal `Time:` **3.31×**
+  paired / clean pairs 3.10× and 2.98× (full range 2.98×–3.64×); warm runs stable across repeats. Both Jest
+  `Time:` and the external `real` wall-clock are defined in Methodology ("Two timing metrics") and reported
+  for every timed condition.
 - **Q2 — cache configuration option, directory, and cached file types:** option **`cacheDirectory`**
   [`test/client/jest.config.js:L7`]; directory **`.cache/jest`** at the repo root (gitignored,
   [`.gitignore:L15`]); **three cached file types** — `haste-map-<hash>` (binary module-resolution map),
@@ -811,8 +1041,10 @@ Every named sub-part of the four questions is addressed above:
   first-run overhead — `nock` is excluded from transformation by `transformIgnorePatterns`
   [`test/client/jest.config.js:L14–L16`], so it is loaded from `node_modules` via `require` on every run rather
   than served from the transform cache, and that per-run cost is identical cold and warm.
-- **Q4 — `--no-cache` impact and slowest transformation step:** `--no-cache` is **≈ 4× slower** than warm
-  (OBSERVED median 4.08×; cache saves ~75%), matching the cold-run regime; the dominant transformation step is
+- **Q4 — `--no-cache` impact and slowest transformation step:** `--no-cache` is **at least ~2.8× slower** than
+  warm on both metrics (OBSERVED: external **2.77×** / Jest **2.92×** from the paired, contention-free capture,
+  cache saves ~64%), rising to **~4×** (median 4.08×, ~75% savings) in the wider five-run Jest-`Time:` study
+  under machine contention; both match the cold-run regime. The dominant transformation step is
   **`babel-jest`** [`packages/calypso-jest/jest-preset.js:L14`], grounded in the trivial asset transform
   [`packages/calypso-jest/src/asset-transform.js:L3–L6`], the `calypso:src` resolver
   [`packages/calypso-jest/src/module-resolver.js:L18–L19`], and the observed cache composition.
