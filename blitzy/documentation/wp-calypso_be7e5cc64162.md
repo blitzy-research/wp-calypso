@@ -608,10 +608,10 @@ so it selects `main` → **`client/lib/wp/node.js`**. Observed by resolving the 
 resolver:
 
 ```text
-$ node -e "resolver test using the preset conditionNames [calypso:src,node,require]"
-calypso/lib/wp  ->  client/lib/wp/node.js
-wpcom           ->  packages/wpcom.js/src/index.js
-wpcom-xhr-request-> packages/wpcom-xhr-request/src/index.js
+$ node -e "const resolve=require('./packages/calypso-jest/src/module-resolver.js');const path=require('path');const o={basedir:process.cwd()};for(const r of ['calypso/lib/wp','wpcom','wpcom-xhr-request'])console.log(r.padEnd(17),'->',path.relative(process.cwd(),resolve(r,o)));" ; echo "exit=$?"
+calypso/lib/wp    -> client/lib/wp/node.js
+wpcom             -> packages/wpcom.js/src/index.js
+wpcom-xhr-request -> packages/wpcom-xhr-request/src/index.js
 exit=0
 ```
 
@@ -895,7 +895,7 @@ feature sets (run twice for stability; both runs agree on `differ 97`):
 
 ```text
 ### RUN #1
-$ node -e "<compute dev vs test feature divergence>"
+$ node -e "const d=require('./config/development.json').features,t=require('./config/test.json').features;const dk=Object.keys(d),tk=Object.keys(t),all=[...new Set([...dk,...tk])];let common=0,valDiff=0,devOnly=0,testOnly=0;const vd=[];for(const k of all){const id=k in d,it=k in t;if(id&&it){common++;if(d[k]!==t[k]){valDiff++;vd.push(k+' dev='+d[k]+' test='+t[k]);}}else if(id)devOnly++;else testOnly++;}console.log('devKeys',dk.length,'testKeys',tk.length,'differ',devOnly+testOnly+valDiff);console.log('common',common,'valDiff',valDiff,'devOnly',devOnly,'testOnly',testOnly);console.log('value-diff flags (same key, different value):');vd.forEach(l=>console.log('  '+l));" ; echo "exit=$?"
 devKeys 178 testKeys 101 differ 97
 common 96 valDiff 10 devOnly 82 testOnly 5
 value-diff flags (same key, different value):
@@ -916,7 +916,7 @@ devKeys 178 testKeys 101 differ 97
 exit=0
 
 ### env_id from each file
-$ node -e "console.log(dev,test env_id)"
+$ node -e "console.log('development.json env_id =',require('./config/development.json').env_id);console.log('test.json env_id =',require('./config/test.json').env_id);" ; echo "exit=$?"
 development.json env_id = development
 test.json env_id = test
 exit=0
