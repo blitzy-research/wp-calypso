@@ -1,434 +1,663 @@
 # Why the onboarding "Back" button jumps: root-cause diagnosis
 
 **Repository:** `Automattic/wp-calypso`
-**Branch:** `wp-calypso_be7e5cc64162`  **HEAD:** `be7e5cc641`
+**Branch:** `wp-calypso_be7e5cc64162` **HEAD:** `be7e5cc641`
 **Investigation type:** read-only diagnosis (run-first). No source file was modified.
-**Runtime used for observation:** Node.js **v22.22.2** (satisfies the repo's `engines.node = "^v22.9.0"`; `.nvmrc` pins `22.9.0`).
+**Runtime used for observation:** Node.js **v22.23.1** (satisfies the repo's `engines.node = "^v22.9.0"`; `.nvmrc` pins `22.9.0`), repo Jest 29.7.0, and headless Google Chrome (`HeadlessChrome/150`) for the History-API observation.
 
 ---
 
 ## 1. Direct answer
 
-The destination of the "Back" control is **not random**. It is a **deterministic, three-channel precedence decision** computed by a single function — `getBackUrl` in `client/signup/navigation-link/index.jsx` (lines 78–115). The first satisfied channel wins:
+The destination of the onboarding "Back" control is **not random** — it is a deterministic decision, but the deciding logic lives in the **Stepper framework** (`/setup/onboarding`), **not** in the legacy signup framework (`/start`). That distinction is the crux of the whole puzzle, so it comes first:
 
-| Precedence | Channel | Where |
-|:--:|---|---|
-| **1 (highest)** | Explicit `backUrl` **component prop** | `navigation-link/index.jsx:83-84` — `if ( this.props.backUrl ) { return this.props.backUrl; }` |
-| **2** | `back_to` **query-string argument** (only if it starts with `/`) | `step-wrapper/index.jsx:274-277` — read, leading-slash-guarded, merged into the `backUrl` prop |
-| **3 (lowest — the "normal" path)** | **Flow-position previous step** | `navigation-link/index.jsx:98,108-114` → `getPreviousStep` (`:47-76`) + `getStepUrl` (`utils.js:45-69`) |
+> **Canonical-route fact (the reason the legacy answer is wrong).** When anything visits `/start/onboarding` (or bare `/start`, which defaults to `onboarding`), the legacy controller middleware `redirectToFlow` runs `if ( isOnboardingFlow( flowName ) )` and immediately does `window.location.replace( '/setup/onboarding/…' )` — redirecting to Stepper **before** the legacy `NavigationLink`/`getBackUrl` is ever rendered. `isOnboardingFlow(flowName)` is simply `flowName === 'onboarding'`. Onboarding is registered as a Stepper flow. So the legacy `getBackUrl` precedence chain is **never reached for onboarding**. **[OBSERVED @ runtime — `isOnboardingFlow('onboarding') === true`, §5; OBSERVED in source — `client/signup/controller.js:179-200`]**
 
-The two reported symptoms are the two failure modes of **channel 3**:
+On the canonical Stepper route, the destination is decided by the flow's **navigation contract**, and the onboarding flow (`client/landing/stepper/declarative-flow/flows/onboarding/onboarding.ts`) **defines no custom `goBack`**. Therefore the Back control is the **framework default**: a **gated `history.back()`**. Concretely:
 
-- **"Snaps straight to the first step"** — when navigation history (`signupProgress`) has no usable previous step, `getPreviousStep` returns `{ stepName: null }`, and `getStepUrl(..., null, ...)` produces the **flow root** (`/start`), which the controller renders as the first step. **[OBSERVED @ runtime — Scenario B below]**
-- **"Slips out into an entirely different flow"** — the previous step object carries a per-step `lastKnownFlow`; `getStepUrl` uses `previousStep.lastKnownFlow || this.props.flowName` as its **flow name**, so a previous step recorded under another flow yields a URL **inside that other flow**. **[OBSERVED @ runtime — Scenario E below]**
+|       Precedence       | Channel                                                                                | Where                                                       | For onboarding?                                   |
+| :--------------------: | -------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------- |
+|    **1 (highest)**     | Flow-defined `goBack` — "Flow is the ultimate authority on navigation"                 | `use-step-navigation-with-tracking/index.ts:131-141`        | **Absent** (onboarding returns only `{ submit }`) |
+| **2 (default, gated)** | Framework default `goBack` → `history.back()`, shown only when `canUserGoBack` is true | `use-step-navigation-with-tracking/index.ts:54-58, 123-130` | **This is what onboarding uses**                  |
+|           —            | Step query params override current query params on forward navigation                  | `use-flow-navigation/index.tsx:111-115`                     | Applies to URL assembly, not the back target      |
 
-"Never feels truly random" is correct: the same inputs always produce the same destination (proven deterministic across repeated runs in §6).
+The two reported symptoms are the two ways this **default `history.back()`** misbehaves:
+
+- **"Snaps straight to the first step"** — Stepper's `FlowRenderer` renders a catch-all route that redirects any unrecognized step to the flow's **first step** (`firstStepSlug`, which for onboarding is `domains`). A deep link, a stale/removed step slug, or a refresh onto an unknown sub-route therefore lands on the first step. `history.back()` can also land on the first step when that is the previous session entry. **[OBSERVED @ runtime — first-step slug `domains`, §5; OBSERVED in source — `internals/index.tsx:242-251`]**
+- **"Slips out into an entirely different flow"** — the onboarding Back button is the raw browser `history.back()`. Whether the button is _shown_ is gated by `canUserGoBack`, which keys off the **persisted** `previousStep` — and the code comment is explicit that `previousStep` "can be a step from another flow or another run." So the button can appear based on a foreign proxy, and `history.back()` then navigates to the actual previous session URL, **which may belong to a different flow**. **[OBSERVED @ runtime — `canUserGoBack` gate + `history.back()` target, §5; OBSERVED @ runtime — real-Chrome `history.back()` crossing flows, §6]**
+
+"Never feels truly random" is correct: `canUserGoBack` is a pure boolean of its inputs, `history.back()` is deterministic given the session-history stack, and the `FlowRenderer` redirect is deterministic given the URL. Identical inputs always yield the identical result (proven deterministic across repeated runs in §6).
+
+> **Note on the AAP premise (transparency).** The originating investigation plan targeted the legacy signup `getBackUrl` as the canonical mechanism. Running the real entry point disproves that premise for onboarding (the `/start` → `/setup` redirect above). This document therefore diagnoses the **canonical Stepper path** as primary and retains the legacy mechanism only as **explicitly non-canonical background** in §8.
 
 ---
 
 ## 2. The six objectives, answered by name
 
 ### O1 — What computes the back destination?
-The instance method **`getBackUrl`** at **`client/signup/navigation-link/index.jsx:78-115`** returns the destination URL. Its flow-position helper is **`getPreviousStep`** at **`client/signup/navigation-link/index.jsx:47-76`**, which resolves the previous step from `signupProgress`. **[OBSERVED in source]** The computed destinations were reproduced at runtime (§5). **[OBSERVED @ runtime]**
 
-### O2 — Which input wins when the three sources disagree?
-Order is **prop > `back_to` query arg > flow position**. Two code facts establish it:
-- Inside `getBackUrl`, the explicit prop is checked **first** and short-circuits everything: `navigation-link/index.jsx:83-84`. **[OBSERVED in source]**
-- The `back_to` query arg is merged into that same prop, with the prop winning, in `step-wrapper`'s `connect()`: `const backUrl = ownProps.backUrl ?? backTo;` at **`client/signup/step-wrapper/index.jsx:277`**. **[OBSERVED in source]**
-Runtime confirmation: Scenario D (prop) beats all; Scenario C (`back_to`) beats flow position; Scenario A/C2 fall through to flow position. **[OBSERVED @ runtime — §5]**
+On the canonical route, the hook **`useStepNavigationWithTracking`** (`client/landing/stepper/declarative-flow/internals/hooks/use-step-navigation-with-tracking/index.ts`) assembles the navigation controls. For **onboarding**, which supplies no `goBack`, the returned `goBack` is the framework default whose body is **`history.back()`** (`:123-130`); the browser's session history therefore _computes_ the destination. Whether that `goBack` exists at all is decided by **`canUserGoBack`** (`:54-58`). **[OBSERVED @ runtime — §5: onboarding has no own `goBack`; the default `goBack` invokes `history.back()`]** The flow object itself is `client/landing/stepper/declarative-flow/flows/onboarding/onboarding.ts` whose `useStepNavigation` returns `{ submit }` only (`:290`). **[OBSERVED @ runtime — §5]**
+
+### O2 — Which input wins when the candidate sources disagree?
+
+Precedence is **flow-defined `goBack` > framework default `history.back()`**, and the default is only shown when `canUserGoBack` is true.
+
+- A flow-defined `goBack` overwrites the default: "Flow is the ultimate authority on navigation" — `use-step-navigation-with-tracking/index.ts:131-141`. **[OBSERVED in source]** Proven at runtime: with a flow that defines `goBack`, the returned `goBack` calls the **flow** handler and **not** `history.back()`, both when the gate is false (S7) and when it is true (S8). **[OBSERVED @ runtime — §5]**
+- With no flow `goBack` (onboarding), the default `history.back()` is used, gated by `canUserGoBack` (`:54-58`). **[OBSERVED @ runtime — §5 S1–S6]**
+- For query arguments, Stepper's `use-flow-navigation` merges current + step query params and gives **precedence to the step query params** "because they're new and more deliberate" — `use-flow-navigation/index.tsx:111-115`. **[OBSERVED in source]**
 
 ### O3 — Where does the external override originate?
-Two channels:
-1. The **`back_to` query-string argument**, read via `getCurrentQueryArguments( state )?.back_to?.toString()` at **`client/signup/step-wrapper/index.jsx:274`**. **[OBSERVED in source]**
-2. The explicit **`backUrl` component prop**, passed through at **`client/signup/step-wrapper/index.jsx:62`** (`backUrl={ this.props.backUrl }`). A real user of this prop is the email flow's `mailbox` step: `props: { backUrl: 'mailbox-domain/' }` at **`client/signup/config/steps-pure.js:399`**. **[OBSERVED in source]**
+
+Two channels exist in the framework, **neither of which onboarding uses** (which is exactly why onboarding falls through to raw `history.back()`):
+
+1. A **flow-defined `goBack`** on the flow's `useStepNavigation` return. A real user is the **site-setup** flow, whose per-step `goBack` consults the `backToStep` / `backToFlow` **query arguments** — `client/landing/stepper/declarative-flow/flows/site-setup-flow/site-setup-flow.ts` (`backToStep` read `:109`, `backToFlow` read `:110`, `goBack` defined `:499`, returned in the controls at `:612`). **[OBSERVED in source]**
+2. The **`back_to`/`backToStep`/`backToFlow` query arguments** consumed by such a flow-defined `goBack`. **[OBSERVED in source]**
+   Onboarding defines no `goBack` and consults no such query argument, so it has **no override channel** — the Back button is the unmodified default. **[OBSERVED @ runtime — §5: onboarding has no own `goBack`]**
 
 ### O4 — What rule lets the override take control even when the step should not be eligible for a back action?
-Two cooperating rules:
-- **Value override:** `if ( this.props.backUrl ) { return this.props.backUrl; }` at **`navigation-link/index.jsx:83-84`** returns before any flow-position logic runs. **[OBSERVED in source]**
-- **Visibility override:** normally the Back control is suppressed on the first step by the guard at **`navigation-link/index.jsx:154-161`** (`positionInFlow === 0 && direction === 'back' && !stepSectionName && !allowBackFirstStep → return null`). But `step-wrapper` sets `allowBackFirstStep={ this.props.allowBackFirstStep || !! this.props.backUrl }` at **`client/signup/step-wrapper/index.jsx:65`**, so **the moment any back target exists, the Back control is revealed even at step 0.** **[OBSERVED in source]** Runtime: Scenarios C and D show a destination at `pos0` (back shown), whereas A/B/C2/E show `[back hidden]` at `pos0`. **[OBSERVED @ runtime — §5]**
+
+The rule is: **"Flow is the ultimate authority on navigation"** (`use-step-navigation-with-tracking/index.ts:131-141`). A flow-defined `goBack` is spread **after** the default branch, so it wins unconditionally — including when `canUserGoBack` is **false** (i.e., when the step would otherwise show no Back button). **[OBSERVED @ runtime — §5 S7: flow `goBack` fires on the first step with empty history, where the default gate is false]** The eligibility of the _default_ button, by contrast, is governed by `canUserGoBack` (`:54-58`): a persisted `previousStep`, not on the first step, `history.length > 1`, and `previousStep !== currentStepRoute`. **[OBSERVED @ runtime — §5 S1–S6]**
 
 ### O5 — What is the bypassed "expected" path?
-The flow-position walk **`getPreviousStep` → `getStepUrl`** (call site `navigation-link/index.jsx:108-114`; assembly `client/signup/utils.js:45-69`). It is skipped entirely whenever channel 1 or 2 supplies a target. Its two anomalous sub-cases:
-- **null previous step** → `getStepUrl( flowName, null, ... )` → flow root `/start` (→ first step). **[OBSERVED @ runtime — Scenario B]**
-- **foreign `lastKnownFlow`** → `getStepUrl( previousStep.lastKnownFlow || flowName, ... )` → different-flow URL. **[OBSERVED @ runtime — Scenario E]**
+
+The **expected, in-flow, step-by-step back** is a **flow-defined `goBack`** that navigates to a specific previous step _within the flow_ — exactly what `site-setup-flow.ts` implements with its per-step `goBack` switch consulting `backToStep`/`backToFlow` (`:499-548`, returned `:612`). Onboarding **bypasses** this by defining no `goBack`, so control falls through to the framework default **`history.back()`** (`:123-130`), which is **not flow-aware** and can therefore leave the flow entirely. **[OBSERVED in source; OBSERVED @ runtime — §5: onboarding has no own `goBack` and the default goBack calls `history.back()`]**
 
 ### O6 — Per-step destination for each step position
-Reproduced at runtime against the **real** onboarding step list `['user','domains','plans']` across all disagreement scenarios; see the table and captured output in §5 and the determinism proof in §6. **[OBSERVED @ runtime]**
+
+Reproduced at runtime against the **real** onboarding step list `['domains','use-my-domain','plans','create-site','processing','post-checkout-onboarding']` (obtained by running the real `onboarding.initialize()`), across every disagreement/edge scenario; see the per-step table and captured output in §5 and the determinism proof in §6. **[OBSERVED @ runtime]**
 
 ---
 
 ## 3. Annotated code walk (verified `file:line`)
 
-### 3.1 `getBackUrl` — the precedence owner (`client/signup/navigation-link/index.jsx:78-115`)
+### 3.1 The canonical redirect: `/start/onboarding` → `/setup/onboarding` (`client/signup/controller.js:179-200`)
+
 ```js
- 78 	getBackUrl() {
- 79 		if ( this.props.direction !== 'back' ) {
- 80 			return;
- 81 		}
- 82
- 83 		if ( this.props.backUrl ) {
- 84 			return this.props.backUrl;          // PRECEDENCE 1: explicit prop / merged back_to
- 85 		}
- 86
+179 		if ( isOnboardingFlow( flowName ) ) {
+180 			setReferrerPolicy();
+181 			let url =
+182 				getStepUrl(
+183 					flowName,
+184 					getStepName( context.params ),
+185 					getStepSectionName( context.params ),
+186 					localeFromParams ?? localeFromStore,
+187 					null,
+188 					'/setup'
+189 				) +
+190 				( context.querystring ? '?' + context.querystring : '' ) +
+191 				( context.hashstring ? '#' + context.hashstring : '' );
+...
+197 			window.location.replace( url );
+198 			// skip the rest to avoid the `page.redirect` call below.
+199 			return;
+200 		}
+```
+
+`isOnboardingFlow( flowName )` is `flowName === 'onboarding'` (`packages/onboarding/src/utils/flows.ts:102-104`; `ONBOARDING_FLOW = 'onboarding'` at `:31`). The `/start` routes run this middleware (`client/signup/index.web.js:9-23`, chain includes `controller.redirectToFlow` at `:18`). The predicate is **[OBSERVED @ runtime]** (§5, PART 1); the redirect itself firing in the live SPA is **[OBSERVED in source]** (read here, not executed as a browser navigation). Onboarding's Stepper registration: `client/landing/stepper/declarative-flow/registered-flows.ts:82-83`. **[OBSERVED in source]**
+
+### 3.2 The onboarding flow defines no `goBack` (`client/landing/stepper/declarative-flow/flows/onboarding/onboarding.ts`)
+
+```js
+ 52 const onboarding: FlowV2 = {
+ 53 	name: ONBOARDING_FLOW,
+ 54 	isSignupFlow: true,
+ 55 	__experimentalUseBuiltinAuth: true,
+ 56 	async initialize() {
  ...
- 98 		const previousStep = this.getPreviousStep( flowName, signupProgress, stepName );
+ 66 		const steps = stepsWithRequiredLogin( [
+ 67 			STEPS.UNIFIED_DOMAINS,
+ 68 			STEPS.USE_MY_DOMAIN,
+ 69 			STEPS.UNIFIED_PLANS,
+ 70 			STEPS.SITE_CREATION_STEP,
+ 71 			STEPS.PROCESSING,
+ 72 			STEPS.POST_CHECKOUT_ONBOARDING,
+ 73 		] );
  ...
-106 		const locale = ! userLoggedIn ? getLocaleSlug() : '';
-107
-108 		return getStepUrl(
-109 			previousStep.lastKnownFlow || this.props.flowName,   // foreign flow => different-flow URL
-110 			previousStep.stepName,                                // null => flow root
-111 			stepSectionName,
-112 			locale,
-113 			queryParams
-114 		);
-115 	}
-```
-**[OBSERVED in source]**
-
-### 3.2 `getPreviousStep` — the flow-position resolver (`client/signup/navigation-link/index.jsx:47-76`)
-```js
-47 	getPreviousStep( flowName, signupProgress, currentStepName ) {
-48 		const previousStep = { stepName: null };
-49
-50 		if ( isFirstStepInFlow( flowName, currentStepName, this.props.userLoggedIn ) ) {
-51 			return previousStep;                                  // first step => null previous
-52 		}
-...
-60 		).filter( ( step ) => ! step.wasSkipped );
-61 		if ( filteredProgressedSteps.length === 0 ) {
-62 			return previousStep;                                  // empty progress => null previous
-63 		}
-...
-71 		if ( currentStepIndexInProgress === -1 ) {
-72 			return filteredProgressedSteps.pop();
-73 		}
-75 		return filteredProgressedSteps[ currentStepIndexInProgress - 1 ] || previousStep;
-76 	}
-```
-**[OBSERVED in source]**
-
-### 3.3 First-step suppression + override (`client/signup/navigation-link/index.jsx:154-161`)
-```js
-154 		if (
-155 			this.props.positionInFlow === 0 &&
-156 			this.props.direction === 'back' &&
-157 			! this.props.stepSectionName &&
-158 			! this.props.allowBackFirstStep
-159 		) {
-160 			return null;                                          // Back control hidden at step 0…
-161 		}
-```
-…unless `allowBackFirstStep` is forced true by `step-wrapper`. **[OBSERVED in source]** That React actually removes the button from the DOM on `return null` in a live browser is **[INFERRED]** (not exercised at runtime; the harness reproduces the boolean guard, not the DOM).
-
-### 3.4 `back_to` → `backUrl` mapping (`client/signup/step-wrapper/index.jsx`)
-```js
- 62 				backUrl={ this.props.backUrl }
-...
- 65 				allowBackFirstStep={ this.props.allowBackFirstStep || !! this.props.backUrl }
-...
-273 export default connect( ( state, ownProps ) => {
-274 	const backToParam = getCurrentQueryArguments( state )?.back_to?.toString();
-275 	const backTo = backToParam?.startsWith( '/' ) ? backToParam : undefined;   // leading-slash guard
-276
-277 	const backUrl = ownProps.backUrl ?? backTo;                                // prop wins over back_to
-278
-279 	return { backUrl, userLoggedIn: isUserLoggedIn( state ) };
-```
-**[OBSERVED in source]** That `getCurrentQueryArguments` reads the live browser URL and that `connect()` supplies these props in production is **[INFERRED]** (the harness passes the query args and props directly, reproducing the same merge logic).
-
-### 3.5 URL assembly (`client/signup/utils.js`)
-```js
- 28 export function isFirstStepInFlow( flowName, stepName, isUserLoggedIn ) {
- 29 	const { steps: stepsBelongingToFlow } = flows.getFlow( flowName, isUserLoggedIn );
- 30 	return stepsBelongingToFlow.indexOf( stepName ) === 0;
- 31 }
-...
- 45 export function getStepUrl( flowName, stepName, stepSectionName, localeSlug, params = {}, frameworkParam = null ) {
- 53 	const flow = flowName ? `/${ flowName }` : '';
- 54 	const step = stepName ? `/${ stepName }` : '';
+ 82 	useStepNavigation( currentStepSlug, navigate ) {
  ...
- 63 	const url =
- 64 		flowName === defaultFlowName && framework === '/start'
- 65 			? // we don't include the default flow name in the route in /start
- 66 			  framework + step + section + locale
- 67 			: framework + flow + step + section + locale;
- 68 	return addQueryArgs( params, url );
- 69 }
+290 		return { submit };
+291 	},
 ```
-Key consequences: a `null` `stepName` contributes no `/step` segment; for the default flow (`onboarding`) on `/start`, the flow name is omitted, so the flow root is exactly **`/start`**. **[OBSERVED in source; OBSERVED @ runtime — §5]**
 
-`getFilteredSteps` (`utils.js:137-150`) sorts the visited steps into flow order using `flow.steps.indexOf`. **[OBSERVED in source]**
+`useStepNavigation` returns **only `{ submit }`** — no `goBack`. **[OBSERVED @ runtime — §5: `flow has own goBack? false`; `initialize()` steps observed]**
 
-### 3.6 The real step list (`client/signup/config/flows-pure.js` / `flows.js`)
-- `flows-pure.js:132-133` → `steps: [ userSocialStep, 'domains', 'plans' ]`.
-- `userSocialStep = getUserSocialStepOrFallback()` (`flows-pure.js:30`) = `isEnabled( 'signup/social-first' ) ? 'user-social' : 'user'` (`flows-pure.js:13-14`). With the `signup/social-first` flag **OFF (canonical default)**, this resolves to `'user'`, so the real list is **`['user','domains','plans']`**.
-- `getDefaultFlowName()` returns `'onboarding'` (`flows.js:243-245`), assigned to `defaultFlowName` (`flows.js:250`); `ONBOARDING_FLOW = 'onboarding'` (`packages/onboarding/src/utils/flows.ts:31`).
-**[OBSERVED in source]**
+### 3.3 The default `goBack` and the flow-authority override (`use-step-navigation-with-tracking/index.ts`)
 
-### 3.7 `addQueryArgs` (`client/lib/url/add-query-args.ts:1-66`)
-For empty args it is an **identity pass-through** (returns the URL unchanged). Re-exported by `client/lib/url/index.ts:4`. **[OBSERVED in source]** None of the scenarios add query args to the back destination, so this is exercised only in its identity form. **[OBSERVED @ runtime]**
+```js
+47 	/**
+48 	 * ...
+49 	 * We need to make sure we're not at the first step because `previousStep` is persisted and can be a step from another flow or another run of the current flow.
+...
+53 	 */
+54 	const canUserGoBack =
+55 		stepData?.previousStep &&
+56 		currentStepRoute !== stepSlugs[ 0 ] &&
+57 		history.length > 1 &&
+58 		stepData.previousStep !== currentStepRoute;
+...
+123 			...( canUserGoBack && {
+124 				goBack: () => {
+125 					handleRecordStepNavigation( {
+126 						event: STEPPER_TRACKS_EVENT_STEP_NAV_GO_BACK,
+127 					} );
+128 					history.back();
+129 				},
+130 			} ),
+131 			/**
+132 			 * If the flow defines a `goBack` handler, this will overwrite the one above. Flow is the ultimate authority on navigation.
+133 			 */
+134 			...( stepNavigation.goBack && {
+135 				goBack: () => {
+136 					handleRecordStepNavigation( { event: STEPPER_TRACKS_EVENT_STEP_NAV_GO_BACK } );
+139 					stepNavigation.goBack?.();
+140 				},
+141 			} ),
+```
+
+For onboarding, `stepNavigation.goBack` is falsy, so only the `canUserGoBack` branch can add a `goBack`, and its body is **`history.back()`**. **[OBSERVED @ runtime — §5]** The `previousStep` is **persisted** (`packages/data-stores/src/stepper-internal/index.ts:21` → `persist: [ 'stepData' ]`; `previousStep` is a field of `stepData`, `reducer.ts:9`), and is written on every navigation as the step you were on (`use-flow-navigation/index.tsx:70, 102`). **[OBSERVED in source]**
+
+### 3.4 The "snap to first step" redirect (`client/landing/stepper/declarative-flow/internals/index.tsx:242-251`)
+
+```jsx
+242 						path="/:flow/:lang?"
+243 						element={
+244 							<>
+245 								{ fallback }
+246 								<RedirectToStep
+247 									slug={ flow.__experimentalUseBuiltinAuth ? firstStepSlug : stepPaths[ 0 ] }
+248 								/>
+249 							</>
+250 						}
+251 					/>
+```
+
+`stepPaths` is the flow's step slugs (`:67`); `firstStepSlug = useFirstStep( stepPaths )` (`:68`) returns `stepPaths[0]` unless the first slug is `user` and the user is logged in (`client/landing/stepper/hooks/use-first-step.ts:9-16`). For onboarding `stepPaths[0]` is `domains`, so unknown/stale routes redirect to `domains`. **[OBSERVED @ runtime — first-step slug `domains`, §5]** That React actually mounts `RedirectToStep` and navigates in a live browser is **[INFERRED]** (the slug value is observed; the DOM render is not executed here).
+
+### 3.5 Step-query-over-current-query precedence (`use-flow-navigation/index.tsx:108-115`)
+
+```js
+108 			const currentQueryParams = new URLSearchParams( window.location.search );
+109 			const stepQueryParams = nextStep.includes( '?' )
+110 				? new URLSearchParams( nextStep.split( '?' )[ 1 ] )
+111 				: [];
+112 			// Merge the current and step query params. Give precedence to the step query params because they're new and more deliberate.
+113 			const queryParams = new URLSearchParams( {
+114 				...Object.fromEntries( currentQueryParams ),
+115 				...Object.fromEntries( stepQueryParams ),
+116 			} );
+```
+
+**[OBSERVED in source]** This governs the URL built during forward navigation, not the back target directly, but it is the framework's query-precedence rule the objective asks about.
 
 ---
 
-
-## 4. The precedence chain
+## 4. The precedence chain (canonical onboarding)
 
 ```mermaid
 flowchart TD
-    A[Back pressed on step N] --> B{explicit backUrl prop?}
-    B -- yes --> R1[Return backUrl prop<br/>HIGHEST precedence]
-    B -- no --> C{back_to query arg starts with '/'?}
-    C -- yes --> R2[Return back_to target<br/>external override]
-    C -- no --> D[getPreviousStep from signupProgress]
-    D --> E{previous step found?}
-    E -- no / empty progress --> R3[getStepUrl null step -> flow root<br/>SNAPS TO FIRST STEP]
-    E -- yes --> F{previous.lastKnownFlow != current flow?}
-    F -- yes --> R4[getStepUrl other flow<br/>SLIPS INTO DIFFERENT FLOW]
-    F -- no --> R5[Return prior step URL<br/>normal one-step-back]
+    A[Back pressed on a Stepper onboarding step] --> B{flow defines its own goBack?}
+    B -- yes<br/>Flow is the ultimate authority --> R1[Run flow goBack<br/>in-flow, step-by-step]
+    B -- no  --> C{canUserGoBack?<br/>persisted previousStep AND not first step<br/>AND history.length>1 AND previousStep != current}
+    C -- no --> H[No Back button rendered]
+    C -- yes --> D[Default goBack = history.back]
+    D --> E{previous SESSION-history entry}
+    E -- first step / unknown step --> R2[FlowRenderer redirect to firstStepSlug<br/>SNAPS TO FIRST STEP]
+    E -- URL from another flow --> R3[history.back lands in that flow<br/>SLIPS INTO A DIFFERENT FLOW]
+    E -- prior step of this flow --> R4[normal one-step-back]
 ```
+
+Onboarding always takes the **"no"** branch at B (it defines no `goBack`), so its Back button is the gated `history.back()`, whose outcome depends entirely on the session-history stack and the persisted `previousStep` proxy.
 
 ---
 
 ## 5. Per-step observation (run-first)
 
 ### 5.1 Method
-The decision logic (`getStepUrl`, `isFirstStepInFlow`, `getFilteredSteps`, `flows.getFlow`, `getPreviousStep`, `getBackUrl`, the `step-wrapper` `backUrl` merge + `allowBackFirstStep`, the first-step render guard, and `addQueryArgs`) was **transcribed verbatim** (line-for-line, with `file:line` comments; verified against HEAD `be7e5cc641`) into a temporary Node harness and driven by the **real** onboarding step list `['user','domains','plans']`.
 
-> **Why transcription, and what that means for "observed":** the monorepo's `node_modules` is not installed, so the real ES modules cannot be `import`-ed without a full build. The decision logic is effectively **pure** (a function of the flow definition, `signupProgress`, and query args), so executing a faithful verbatim transcription is the canonical way to observe it. The **computed destinations and the back-hidden boolean are [OBSERVED @ runtime]**. That production wires these exact functions together via React/redux is **[INFERRED]** from reading the components (verified at the `file:line`s in §3).
+The observation exercises the **real** modules through the repository's own Jest harness (`node_modules` **is installed** — 51+ Stepper/signup tests import these same modules and pass; see §6). Nothing is transcribed or stubbed for the decision logic itself:
 
-**Canonical configuration** (default): `signup/social-first` OFF → first step `'user'`; logged-out (`userLoggedIn=false`, so the token-providing `user` step is retained — `flows.getFlow` strips it only for logged-in users via `removeUserStepFromFlow`, `flows.js:216-224`); default English locale, modeled as `getLocaleSlug() === ''` (English contributes no locale segment). A non-default locale would uniformly prepend itself to every destination (an orthogonal effect). **[OBSERVED in source; assumption stated]**
+- **`isOnboardingFlow`** is imported from the real `@automattic/onboarding` package and called directly (the `/start` → `/setup` redirect predicate).
+- The **real onboarding flow object** is imported and its real `async initialize()` is executed to obtain the real step list; the object is inspected to confirm it defines no `goBack`.
+- The **real `useStepNavigationWithTracking` hook** is rendered with `@testing-library/react`'s `renderHook`, driven by an onboarding-shaped flow (returns `{ submit }` only). The only things faked are the _inputs_ the hook reads from stores/history — `stepData.previousStep` (via `useSelect`), `history.length`, and a spy on `history.back` — so that each disagreement/edge case can be exercised. The **decision logic that maps those inputs to a `goBack` (or none)** is the real hook code.
 
-**Exact command:**
+**Canonical configuration** (repo defaults): `onboarding.initialize()` down its non-MVP, non-Playground branch (`isMvpOnboardingExperiment → false`, `isPlaygroundEligible → false`); logged-out user. Under these defaults the real step list is `['domains','use-my-domain','plans','create-site','processing','post-checkout-onboarding']` and the first step is `domains`.
+
+**Exact command** (run from the repository root):
+
 ```
-node /tmp/backnav_observe.mjs
+TZ=UTC CI=true BLITZY_OUT=/tmp/blitzy_run_a.txt node_modules/.bin/jest \
+  -c=test/client/jest.config.js \
+  "client/landing/stepper/declarative-flow/flows/onboarding/test/blitzy_adhoc_test_backnav" --silent
 ```
-(The harness lives outside the repository checkout, in `/tmp`, and was deleted after use — the repository is left byte-for-byte unchanged.)
 
-### 5.2 Per-step destination table (positions 0/1/2 of `['user','domains','plans']`)
+The harness (full source in the Appendix) was a **temporary** Jest file that lived under a scratch `test/` directory and **was deleted after use** — the repository is left byte-for-byte unchanged apart from this document. It writes its clean report to `BLITZY_OUT`.
 
-| Scenario | pos 0 `user` | pos 1 `domains` | pos 2 `plans` | Interpretation |
-|---|---|---|---|---|
-| **A.** No override, full progress | `/start` *(back hidden)* | `/start/user` | `/start/domains` | Normal one-step-back **[OBSERVED @ runtime]** |
-| **B.** No override, EMPTY progress (deep-link) | `/start` *(back hidden)* | `/start` | `/start` | **Snaps to first step** (null previous → flow root) **[OBSERVED @ runtime]** |
-| **C.** `back_to=/home` | `/home` | `/home` | `/home` | External override wins everywhere (back shown at pos 0) **[OBSERVED @ runtime]** |
-| **C2.** `back_to=not-a-path` | `/start` *(back hidden)* | `/start/user` | `/start/domains` | Rejected by `startsWith('/')` guard → normal path **[OBSERVED @ runtime]** |
-| **D.** Explicit `backUrl='mailbox-domain/'` prop | `mailbox-domain/` | `mailbox-domain/` | `mailbox-domain/` | Prop beats everything (back shown at pos 0) **[OBSERVED @ runtime]** |
-| **E.** Previous step `lastKnownFlow='newsletter'` | `/start` *(back hidden)* | `/start/user` | `/start/newsletter/domains` | **Slips into a different flow** **[OBSERVED @ runtime]** |
+### 5.2 Per-step / per-condition table
 
-Scenarios **B** and **E** reproduce the user's two symptoms; **C2** confirms the leading-slash guard; **D** confirms the top-precedence prop (as used by the `mailbox` step, `steps-pure.js:399`).
+`backShown` = the hook returned a `goBack` (a Back button would be rendered). `goBack →` = which function that `goBack` actually invokes.
 
-### 5.3 Actual captured output (unedited)
+| #      | current step      | persisted `previousStep`              | `history.length` | flow `goBack`? | `backShown` | `goBack →`        | Interpretation                                                                                                                                   |
+| ------ | ----------------- | ------------------------------------- | ---------------: | :------------: | :---------: | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **S1** | `domains` (first) | `plans`                               |                2 |       no       |  **false**  | —                 | First step: hidden (`current===stepSlugs[0]`) **[OBSERVED @ runtime]**                                                                           |
+| **S2** | `plans`           | `use-my-domain`                       |                2 |       no       |  **true**   | `history.back()`  | Normal one-step-back **[OBSERVED @ runtime]**                                                                                                    |
+| **S3** | `plans`           | _(none)_                              |                1 |       no       |  **false**  | —                 | Deep-link/refresh: hidden; an unknown step slug would be redirected to `domains` = **SNAP TO FIRST** **[OBSERVED @ runtime; redirect INFERRED]** |
+| **S4** | `plans`           | `migrationHandled` _(site-migration)_ |                5 |       no       |  **true**   | `history.back()`  | **SLIPS INTO A DIFFERENT FLOW**: shown on a persisted foreign proxy; `history.back()` exits the flow **[OBSERVED @ runtime]**                    |
+| **S5** | `plans`           | `domains`                             |                1 |       no       |  **false**  | —                 | Gate fails: `history.length` not `> 1` **[OBSERVED @ runtime]**                                                                                  |
+| **S6** | `plans`           | `plans`                               |                2 |       no       |  **false**  | —                 | Flash guard: `previousStep === current` **[OBSERVED @ runtime]**                                                                                 |
+| **S7** | `domains` (first) | _(none)_                              |                1 |    **yes**     |  **true**   | **flow `goBack`** | Flow authority overrides even when the default gate is false **[OBSERVED @ runtime]**                                                            |
+| **S8** | `plans`           | `domains`                             |                2 |    **yes**     |  **true**   | **flow `goBack`** | Flow `goBack` beats the default `history.back()` **[OBSERVED @ runtime]**                                                                        |
+
+- **S3/S4** reproduce the user's two symptoms on the canonical route.
+- **S1/S5/S6** exercise the three ways `canUserGoBack` suppresses the default button.
+- **S7/S8** prove the precedence rule (O2/O4) at runtime: a flow-defined `goBack` wins over the default in **both** gate states.
+
+### 5.3 Actual captured output (unedited, `/tmp/blitzy_run_a.txt`)
+
 ```
-========== RUN 1 (node v22.22.2) ==========
-flow='onboarding' defaultFlowName='onboarding' steps=["user","domains","plans"] framework='/start' userLoggedIn=false
+=== BLITZY RUN-FIRST OBSERVATION: wp-calypso onboarding Back navigation ===
+node v22.23.1
 
-Scenario A: No override, full progress
-   pos0 user -> "/start" [back hidden]
-   pos1 domains -> "/start/user"
-   pos2 plans -> "/start/domains"
+--- PART 1: canonical routing predicate isOnboardingFlow (REAL @automattic/onboarding) ---
+isOnboardingFlow("onboarding") = true
+isOnboardingFlow("newsletter") = false
+isOnboardingFlow("site-setup") = false
+isOnboardingFlow("with-plugin") = false
+isOnboardingFlow(null) = false
+ONBOARDING_FLOW constant = "onboarding"
+-> isOnboardingFlow(flowName) true triggers window.location.replace(/setup...) at controller.js:179-200
 
-Scenario B: No override, EMPTY progress (deep-link)
-   pos0 user -> "/start" [back hidden]
-   pos1 domains -> "/start"
-   pos2 plans -> "/start"
+--- PART 2: canonical onboarding flow object (REAL onboarding.ts) ---
+flow.name = onboarding
+flow has own goBack? false  -> uses framework DEFAULT goBack (history.back)
+flow.__experimentalUseBuiltinAuth = true
+flow.isSignupFlow = true
+initialize() steps = ["domains","use-my-domain","plans","create-site","processing","post-checkout-onboarding"]
+FlowRenderer redirect target (firstStepSlug) = domains  [stepPaths[0]; not 'user']
 
-Scenario C: back_to=/home (external override)
-   pos0 user -> "/home"
-   pos1 domains -> "/home"
-   pos2 plans -> "/home"
+--- PART 3: REAL useStepNavigationWithTracking - canUserGoBack gate + goBack target ---
+(onboarding-shaped flow: useStepNavigation returns { submit } only, no goBack)
+stepSlugs = ["domains","use-my-domain","plans","create-site","processing","post-checkout-onboarding"]  (stepSlugs[0]=domains)
 
-Scenario C2: back_to=not-a-path (guard rejects)
-   pos0 user -> "/start" [back hidden]
-   pos1 domains -> "/start/user"
-   pos2 plans -> "/start/domains"
+S1 first-step:      current=domains        previousStep=plans   histLen=2 -> backShown=false  (current===stepSlugs[0] => canUserGoBack false)
+S2 normal:          current=plans          previousStep=use-my-domain histLen=2 -> backShown=true historyBack=true  [normal one-step-back]
+S3 deep-link/refresh: current=plans        previousStep=<none>  histLen=1 -> backShown=false  (no previousStep & histLen<=1 => hidden; unknown step => FlowRenderer redirects to domains = SNAP TO FIRST)
+S4 foreign-flow:    current=plans          previousStep=migrationHandled(site-migration) histLen=5 -> backShown=true historyBack=true  [SLIPS INTO DIFFERENT FLOW: shown on persisted foreign proxy; history.back() exits flow]
+S5 history-gate:    current=plans          previousStep=domains histLen=1 -> backShown=false  (history.length not > 1 => canUserGoBack false)
+S6 flash-guard:     current=plans          previousStep=plans   histLen=2 -> backShown=false  (previousStep===current => canUserGoBack false)
+S7 flow-goBack (gate FALSE): flow defines goBack; current=domains(first) previousStep=<none> histLen=1 -> backShown=true flowGoBack=true historyBack=false  [Flow is the ultimate authority: overrides even when canUserGoBack false]
+S8 flow-goBack (gate TRUE):  flow defines goBack; current=plans previousStep=domains histLen=2 -> backShown=true flowGoBack=true historyBack=false  [flow goBack > default history.back]
 
-Scenario D: Explicit backUrl='mailbox-domain/' prop
-   pos0 user -> "mailbox-domain/"
-   pos1 domains -> "mailbox-domain/"
-   pos2 plans -> "mailbox-domain/"
-
-Scenario E: Prev step lastKnownFlow='newsletter'
-   pos0 user -> "/start" [back hidden]
-   pos1 domains -> "/start/user"
-   pos2 plans -> "/start/newsletter/domains"
+=== END OBSERVATION ===
 ```
 
 ---
-
 
 ## 6. Determinism demonstration ("never feels truly random")
 
-The harness prints two internal runs (`RUN 1`, `RUN 2`) per invocation; both are identical. To rule out any per-process variation, the harness was invoked **twice as separate processes** and the outputs compared:
+### 6.1 The module observation is byte-for-byte reproducible
+
+The harness was invoked **twice as separate Jest processes**; the two report files were compared with `diff` and `sha256sum` (actual, unedited stdout):
 
 ```
-$ node /tmp/backnav_observe.mjs > /tmp/run_a.txt
-$ node /tmp/backnav_observe.mjs > /tmp/run_b.txt
-$ diff /tmp/run_a.txt /tmp/run_b.txt
-IDENTICAL (exit 0) — deterministic across separate invocations
-$ sha256sum /tmp/run_a.txt /tmp/run_b.txt
-4a4be65a47724daff383fbb7c0c4d574301d7efd7d39bd9b022e0cd2aae796e6  /tmp/run_a.txt
-4a4be65a47724daff383fbb7c0c4d574301d7efd7d39bd9b022e0cd2aae796e6  /tmp/run_b.txt
+$ TZ=UTC CI=true BLITZY_OUT=/tmp/blitzy_run_a.txt node_modules/.bin/jest -c=test/client/jest.config.js "client/landing/stepper/declarative-flow/flows/onboarding/test/blitzy_adhoc_test_backnav" --silent
+$ TZ=UTC CI=true BLITZY_OUT=/tmp/blitzy_run_b.txt node_modules/.bin/jest -c=test/client/jest.config.js "client/landing/stepper/declarative-flow/flows/onboarding/test/blitzy_adhoc_test_backnav" --silent
+$ diff /tmp/blitzy_run_a.txt /tmp/blitzy_run_b.txt ; echo "diff exit=$?"
+diff exit=0
+$ sha256sum /tmp/blitzy_run_a.txt /tmp/blitzy_run_b.txt
+a1df3631f77474f32a38ac6c532748dedb8d2966136e0f6c7782ee6a0387e74b  /tmp/blitzy_run_a.txt
+a1df3631f77474f32a38ac6c532748dedb8d2966136e0f6c7782ee6a0387e74b  /tmp/blitzy_run_b.txt
 ```
 
-Identical SHA-256 hashes across two independent invocations confirm the destination is a pure function of its inputs — **deterministic, not random**. **[OBSERVED @ runtime]**
+`diff` produced no output and exited `0`; the two SHA-256 hashes are identical — the decision is a pure function of its inputs. **[OBSERVED @ runtime]**
+
+### 6.2 The underlying `history.back()` primitive is deterministic and can cross flows
+
+Onboarding's default `goBack` is `history.back()`. To observe what that primitive actually does across a flow boundary, a minimal same-origin page was driven in **real headless Chrome** (`HeadlessChrome/150`): push a session entry for a **different** flow, then the current onboarding step, then call `history.back()` and read `location.pathname`. Run twice:
+
+```
+run1 -> { before: "/setup/onboarding/plans",
+          landed: "/setup/hosted-site-migration/migrationHandled", crossedFlow: true }
+run2 -> { before: "/setup/onboarding/plans",
+          landed: "/setup/hosted-site-migration/migrationHandled", crossedFlow: true }
+identical: true
+```
+
+`history.back()` deterministically returned to the previous **session-history** URL — which belonged to a **different flow** (`hosted-site-migration`), not to onboarding. This is the runtime primitive behind "slips into a different flow." **[OBSERVED @ runtime — real Chrome]**
+
+### 6.3 Cleanup (leave-no-trace)
+
+The temporary harness and scratch files were removed and the repository restored to a clean state:
+
+```
+$ rm -f client/landing/stepper/declarative-flow/flows/onboarding/test/blitzy_adhoc_test_backnav.tsx
+$ rmdir client/landing/stepper/declarative-flow/flows/onboarding/test   # scratch dir, now empty
+$ rm -f /tmp/blitzy_run_a.txt /tmp/blitzy_run_b.txt /tmp/blitzy_backnav_report.txt /tmp/blitzy_hist_demo.html
+$ git status --porcelain    # the answer document is the only repository change
+ M blitzy/documentation/wp-calypso_be7e5cc64162.md
+```
+
+**[OBSERVED @ runtime]**
 
 ---
 
-## 7. The two anomalies, precisely
+## 7. The two anomalies, precisely (canonical route)
 
-1. **Computed vs. shown are different decisions.** At `pos0` with no override, `getBackUrl` still **computes** `/start` (channel 3, null previous), but the render guard (`navigation-link/index.jsx:154-161`) **hides** the button. The "snap to first step" is visible only once a back target forces `allowBackFirstStep` (Scenarios C/D) or once the user is past step 0 with empty progress (Scenario B, pos 1/2). **[OBSERVED @ runtime]**
-2. **Cross-flow leakage via `lastKnownFlow`.** `getStepUrl`'s first argument is `previousStep.lastKnownFlow || this.props.flowName` (`navigation-link/index.jsx:109`). When a previously-visited step was recorded under a different flow, the back URL is assembled **inside that other flow** — `/start/newsletter/domains` in Scenario E — even though the user is currently in `onboarding`. The `newsletter` flow definition is **not** needed to produce this URL; only the progress entry's `lastKnownFlow` string matters. **[OBSERVED @ runtime]**
+1. **"Snaps to the first step."** Two runtime causes, both deterministic:
+   - **Unknown/stale step slug.** `FlowRenderer`'s catch-all route redirects any unrecognized `:step` to `firstStepSlug` — `domains` for onboarding (`internals/index.tsx:242-251`; slug **[OBSERVED @ runtime]**, redirect render **[INFERRED]**). This fires on deep links, refreshes onto removed steps, or hand-edited URLs.
+   - **`history.back()` to the first step.** When the previous session entry _is_ the first step, the default `goBack` lands there.
+2. **"Slips out into an entirely different flow."** Onboarding's Back is the raw `history.back()` (`use-step-navigation-with-tracking/index.ts:123-130`). The button's visibility is gated by `canUserGoBack`, which keys off the **persisted** `previousStep` that "can be a step from another flow or another run" (`:47-53`; persistence at `packages/data-stores/src/stepper-internal/index.ts:21`). So the button can be shown based on a foreign proxy while `history.back()` navigates to the true previous URL — potentially a different flow. The `canUserGoBack` gate + `history.back()` target are **[OBSERVED @ runtime — §5 S4]**; the cross-flow landing of `history.back()` is **[OBSERVED @ runtime — real Chrome, §6.2]**.
+
+Because onboarding defines **no** flow-level `goBack` (unlike `site-setup`, which keeps the user in-flow via `backToStep`/`backToFlow`), there is no in-flow guard rail — the "expected" step-by-step path (O5) is bypassed.
 
 ---
 
-## 8. Parallel mechanism in the newer "Stepper" framework (for completeness)
+## 8. Legacy signup framework — **explicitly non-canonical background**
 
-The onboarding experience has **two** frameworks. The symptoms above were reproduced in the **legacy signup framework** (`client/signup/`, route family `/start`). The newer **Stepper framework** (`client/landing/stepper/`, route family `/setup`) exhibits the **same class** of override-vs-position tension through a different mechanism. The following are **[OBSERVED in source]** (read, not executed — the Stepper path was **[INFERRED]** at runtime):
+The legacy signup framework (`client/signup/`, route family `/start`) contains its own back-navigation precedence in `getBackUrl`. **This path is NOT reached for onboarding** because `/start/onboarding` is redirected to `/setup/onboarding` (§3.1) before any legacy component renders. It is documented here only as background, and every claim below is **[OBSERVED in source]** (read at the cited `file:line`, not executed as a canonical path).
 
-- **Redirect-to-first-step fallback:** `FlowRenderer` renders `RedirectToStep slug={ … stepPaths[0] }` on a catch-all route — `client/landing/stepper/declarative-flow/internals/index.tsx:241-251`.
-- **Flow is the ultimate navigation authority:** a flow-defined `goBack` overrides the default (`history.back()`); "Flow is the ultimate authority on navigation" — `client/landing/stepper/declarative-flow/internals/hooks/use-step-navigation-with-tracking/index.ts:132`, override at `:134-141`; `canUserGoBack` at `:54-58`; note that `previousStep` may originate from another flow/run at `:47-53`.
-- **Step query params take precedence:** merged "because they're new and more deliberate" — `client/landing/stepper/declarative-flow/internals/hooks/use-flow-navigation/index.tsx:111` (merge at `:112-115`).
-- **Per-flow custom back overrides:** the site-setup flow's per-step `goBack` switch consults `backToStep` / `backToFlow` query args — `client/landing/stepper/declarative-flow/flows/site-setup-flow/site-setup-flow.ts` (`backToStep` read `:109`, `backToFlow` read `:110`, `goBack` switch `:499-548`).
-
-> **Citation-path note:** the real path is `client/landing/stepper/declarative-flow/flows/site-setup-flow/site-setup-flow.ts` (a shorter `.../declarative-flow/site-setup-flow.ts` does **not** exist).
+- **Precedence in `getBackUrl`** (`client/signup/navigation-link/index.jsx:78-116`): (1) explicit `backUrl` prop short-circuits first (`:83-85`); (2) otherwise the `back_to` query arg — merged into `backUrl` by `step-wrapper` with the prop winning (`const backUrl = ownProps.backUrl ?? backTo;`, `step-wrapper/index.jsx:277`; leading-slash guard `:275`); (3) otherwise the flow-position walk `getPreviousStep` (`:47-76`) → `getStepUrl` (`utils.js:45-69`). The first-step Back button is normally hidden (`navigation-link/index.jsx:154-161`) unless `allowBackFirstStep` is forced by a present target (`step-wrapper/index.jsx:65`).
+- **Correction to the `back_to=not-a-path` case.** `getBackUrl` builds a `fallbackQueryParams` from `window.location.search` and uses it when no explicit `queryParams` prop is provided (`navigation-link/index.jsx:87-97`). The `step-wrapper` leading-slash guard only prevents a non-slash `back_to` from becoming the **override target** — it does **not** strip it from the URL. So a `back_to=not-a-path` is **retained as a query argument** on the flow-position destination (e.g., `…?back_to=not-a-path`), rather than silently dropped. **[OBSERVED in source]**
+- **Correction to the "different flow" example.** A route-valid legacy cross-flow requires a **real** legacy flow that shares the step. `with-plugin` is such a flow (`client/signup/config/flows-pure.js:122-123` → `steps: [ userSocialStep, 'domains', 'plans-business-with-plugin' ]`), and it shares the `domains` step with legacy onboarding (`:133` → `steps: [ userSocialStep, 'domains', 'plans' ]`). A `domains` step whose `lastKnownFlow` is `with-plugin` would make `getStepUrl` assemble `/start/with-plugin/domains` — a real, route-valid different legacy flow — because `getStepUrl`'s first argument is `previousStep.lastKnownFlow || this.props.flowName` (`navigation-link/index.jsx:109`). **[OBSERVED in source]**
+- **Correction to the default first step.** Under repo defaults `signup/social-first` is **`true`** in every web config (`config/development.json`, `config/production.json`, `config/stage.json`, `config/horizon.json`, `config/test.json`, `config/wpcalypso.json`), so the legacy onboarding first step resolves to **`user-social`**, not `user` (`flows-pure.js:13-14, 133`). **[OBSERVED in source]**
+- **Correction to the locale placement and default.** `getStepUrl` computes the locale segment as `localeSlug ? '/' + localeSlug : ''` (`utils.js:56`) and concatenates it **last** — `framework + flow + step + section + locale` (`utils.js:66-67`) — so the locale is **appended** as the final path segment, never prepended, and is omitted only when `localeSlug` is falsy. The resolved default locale is **`en`** (the i18n-calypso `getLocaleSlug()` default), not an empty string. This corrects the prior claim that the locale defaulted to `''` and was prepended. **[OBSERVED in source — append/omit logic at `utils.js:56, 66-67`; the `en` default is the i18n-calypso convention, read not executed here]**
+- **Parallel-mechanism note.** The legacy tension (external override vs. flow-position) is the _same class_ of problem as the canonical Stepper tension (flow `goBack`/`history.back()` vs. `canUserGoBack`), which is why the symptom description fits both frameworks — but only the Stepper path actually runs for onboarding.
 
 ---
 
 ## 9. Methodology & evidence discipline
 
-- **Run-first:** the decision logic was executed before any conclusion was drawn; every behavioral claim is paired with captured output or a verified `file:line`.
-- **Exhaustive conditions:** all six disagreement scenarios (A, B, C, C2, D, E) across all three step positions were exercised — primary path, both anomaly branches, the guard-rejection edge, and both override channels.
-- **Observed vs. inferred:** runtime facts are labeled **[OBSERVED @ runtime]**; code facts read at a verified location are **[OBSERVED in source]**; anything not executed (React DOM render/hide, redux `connect()` wiring, `window` query reads, and the entire Stepper path) is labeled **[INFERRED]**.
-- **Canonical configuration:** default feature flags (`signup/social-first` OFF), logged-out user, default English locale. Non-default permutations were not enumerated (out of scope) and would not change the precedence order.
-- **Leave-no-trace:** the observation harness resided in `/tmp` (outside the checkout) and was deleted; the repository is byte-for-byte unchanged apart from this document.
+- **Run-first, canonical entry point.** The investigation began by running the real entry predicate (`isOnboardingFlow`) and the real onboarding flow (`initialize()`), establishing that the canonical route is Stepper; then it ran the real navigation hook and the real `history.back()` primitive. Conclusions follow the runtime evidence, not the reverse.
+- **Exhaustive conditions.** Eight scenarios (S1–S8) cover: the normal one-step-back, both anomaly branches (snap-to-first, cross-flow), all three `canUserGoBack` suppression edges, and both flow-authority precedence states.
+- **Observed vs. inferred.** `[OBSERVED @ runtime]` = proven by the Jest harness or real Chrome; `[OBSERVED in source]` = a code fact read at a verified `file:line` (e.g., the controller redirect firing, the legacy framework, `previousStep` persistence); `[INFERRED]` = read but not executed here (React mounting `RedirectToStep`/`StepContainer` in a live browser, redux store wiring in production).
+- **Canonical configuration.** Default experiments (`isMvpOnboardingExperiment → false`, Playground ineligible), logged-out user; non-default permutations were not enumerated and do not change the precedence rules.
+- **Leave-no-trace.** The observation harness was a temporary Jest file in a scratch `test/` directory and was deleted (§6.3); `git status` shows the deliverable as the only repository change.
 
-### Appendix — the observation harness (`/tmp/backnav_observe.mjs`, since deleted)
+### Appendix — the observation harness (temporary Jest file, since deleted)
+
+This is the **actual file that was executed** (it imports the real modules; it is not a transcription of the decision logic):
+
+```tsx
+/**
+ * @jest-environment jsdom
+ *
+ * BLITZY temporary run-first observation harness (deleted after use).
+ * Exercises the REAL canonical onboarding Back-navigation decision path:
+ *   - @automattic/onboarding isOnboardingFlow  (the /start -> /setup redirect predicate)
+ *   - the REAL onboarding flow object + initialize()  (no custom goBack, real step list)
+ *   - the REAL useStepNavigationWithTracking hook  (canUserGoBack gate + goBack target)
+ */
+import { renderHook, act } from '@testing-library/react';
+import { isOnboardingFlow, ONBOARDING_FLOW } from '@automattic/onboarding';
+
+// ---- controllable useSelect return (intent/goals AND stepData share one object) ----
+let mockSelectReturn: Record< string, unknown > = { intent: '', goals: [] };
+jest.mock( '@wordpress/data', () => {
+	const actual = jest.requireActual( '@wordpress/data' );
+	// Proxy forwards lazily to the real module (preserving combineReducers, store
+	// registration, etc. needed by transitively-imported @wordpress/* stores) while
+	// overriding only the two hooks we drive.
+	return new Proxy( actual, {
+		get( target, prop ) {
+			if ( prop === 'useSelect' ) {
+				return () => mockSelectReturn;
+			}
+			if ( prop === 'useDispatch' ) {
+				return () => ( {} );
+			}
+			return target[ prop ];
+		},
+	} );
+} );
+jest.mock( 'calypso/landing/stepper/stores', () => ( {
+	ONBOARD_STORE: {},
+	STEPPER_INTERNAL_STORE: {},
+} ) );
+jest.mock(
+	'calypso/landing/stepper/declarative-flow/internals/analytics/record-step-navigation',
+	() => ( { recordStepNavigation: jest.fn() } )
+);
+// Drive the real onboarding.initialize() down its canonical (default) branch.
+jest.mock( 'calypso/landing/stepper/hooks/use-mvp-onboarding-experiment', () => ( {
+	isMvpOnboardingExperiment: jest.fn( async () => false ),
+	useMvpOnboardingExperiment: jest.fn( () => [ false, false ] ),
+} ) );
+jest.mock( 'calypso/landing/stepper/hooks/use-is-playground-eligible', () => ( {
+	isPlaygroundEligible: jest.fn( () => false ),
+	useIsPlaygroundEligible: jest.fn( () => false ),
+} ) );
+
+import { useStepNavigationWithTracking } from '../../../internals/hooks/use-step-navigation-with-tracking';
+import onboarding from '../onboarding';
+
+// ---- controllable browser history ----
+let HIST_LEN = 1;
+Object.defineProperty( window.history, 'length', {
+	configurable: true,
+	get: () => HIST_LEN,
+} );
+const backSpy = jest.spyOn( window.history, 'back' ).mockImplementation( () => undefined );
+
+const outLines: string[] = [];
+const log = ( ...a: unknown[] ) => {
+	const line = a.map( ( x ) => ( typeof x === 'string' ? x : String( x ) ) ).join( ' ' );
+	outLines.push( line );
+	// eslint-disable-next-line no-console
+	console.log( line );
+};
+const flushReport = () => {
+	// eslint-disable-next-line @typescript-eslint/no-var-requires
+	const fs = require( 'fs' );
+	const outPath = process.env.BLITZY_OUT || '/tmp/blitzy_backnav_report.txt';
+	fs.writeFileSync( outPath, outLines.join( '\n' ) + '\n' );
+};
+
+type FlowGoBack = ( () => void ) | undefined;
+const makeParams = ( flowGoBack: FlowGoBack, currentStepRoute: string, stepSlugs: string[] ) => ( {
+	flow: {
+		name: 'onboarding',
+		isSignupFlow: true,
+		__experimentalUseBuiltinAuth: true,
+		useSteps: () => [],
+		useStepNavigation: () =>
+			flowGoBack ? { submit: () => undefined, goBack: flowGoBack } : { submit: () => undefined },
+	},
+	stepSlugs,
+	currentStepRoute,
+	navigate: () => undefined,
+} );
+
+// Observe one scenario against the REAL hook. Returns observed facts.
+const observe = ( opts: {
+	current: string;
+	previousStep?: string;
+	histLen: number;
+	stepSlugs: string[];
+	flowGoBack?: () => void;
+} ) => {
+	mockSelectReturn = { intent: '', goals: [], previousStep: opts.previousStep };
+	HIST_LEN = opts.histLen;
+	backSpy.mockClear();
+	const flowGoBackSpy = opts.flowGoBack ? jest.fn( opts.flowGoBack ) : undefined;
+	const { result } = renderHook( () =>
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		useStepNavigationWithTracking(
+			makeParams( flowGoBackSpy, opts.current, opts.stepSlugs ) as any
+		)
+	);
+	const backShown = typeof result.current.goBack === 'function';
+	let calledHistoryBack = false;
+	let calledFlowGoBack = false;
+	if ( backShown ) {
+		act( () => {
+			result.current.goBack?.();
+		} );
+		calledHistoryBack = backSpy.mock.calls.length > 0;
+		calledFlowGoBack = !! flowGoBackSpy && flowGoBackSpy.mock.calls.length > 0;
+	}
+	return { backShown, calledHistoryBack, calledFlowGoBack };
+};
+
+describe( 'BLITZY canonical onboarding Back-navigation observation', () => {
+	it( 'emits the full observation report', async () => {
+		log( '=== BLITZY RUN-FIRST OBSERVATION: wp-calypso onboarding Back navigation ===' );
+		log( 'node', process.version );
+
+		log( '' );
+		log(
+			'--- PART 1: canonical routing predicate isOnboardingFlow (REAL @automattic/onboarding) ---'
+		);
+		for ( const f of [ 'onboarding', 'newsletter', 'site-setup', 'with-plugin', null ] ) {
+			log( `isOnboardingFlow(${ JSON.stringify( f ) }) = ${ isOnboardingFlow( f ) }` );
+		}
+		log( `ONBOARDING_FLOW constant = ${ JSON.stringify( ONBOARDING_FLOW ) }` );
+		log(
+			'-> isOnboardingFlow(flowName) true triggers window.location.replace(/setup...) at controller.js:179-200'
+		);
+
+		log( '' );
+		log( '--- PART 2: canonical onboarding flow object (REAL onboarding.ts) ---' );
+		log( `flow.name = ${ onboarding.name }` );
+		log(
+			`flow has own goBack? ${ Object.prototype.hasOwnProperty.call(
+				onboarding,
+				'goBack'
+			) }  -> uses framework DEFAULT goBack (history.back)`
+		);
+		log( `flow.__experimentalUseBuiltinAuth = ${ onboarding.__experimentalUseBuiltinAuth }` );
+		log( `flow.isSignupFlow = ${ onboarding.isSignupFlow }` );
+		const steps = await onboarding.initialize();
+		const stepSlugs = steps.map( ( s: { slug: string } ) => s.slug );
+		log( `initialize() steps = ${ JSON.stringify( stepSlugs ) }` );
+		// FlowRenderer catch-all redirect target: __experimentalUseBuiltinAuth ? firstStepSlug : stepPaths[0].
+		// useFirstStep returns stepPaths[1] only when stepPaths[0]==='user' && loggedIn; here stepPaths[0] is 'domains'.
+		log(
+			`FlowRenderer redirect target (firstStepSlug) = ${ stepSlugs[ 0 ] }  [stepPaths[0]; not 'user']`
+		);
+
+		log( '' );
+		log(
+			'--- PART 3: REAL useStepNavigationWithTracking - canUserGoBack gate + goBack target ---'
+		);
+		log( '(onboarding-shaped flow: useStepNavigation returns { submit } only, no goBack)' );
+		log( `stepSlugs = ${ JSON.stringify( stepSlugs ) }  (stepSlugs[0]=${ stepSlugs[ 0 ] })` );
+
+		const flowGoBack = () => undefined;
+		const rows: Array< [ string, ReturnType< typeof observe > ] > = [];
+
+		log( '' );
+		let r = observe( { current: 'domains', previousStep: 'plans', histLen: 2, stepSlugs } );
+		rows.push( [ 'S1', r ] );
+		log(
+			`S1 first-step:      current=domains        previousStep=plans   histLen=2 -> backShown=${ r.backShown }  (current===stepSlugs[0] => canUserGoBack false)`
+		);
+
+		r = observe( { current: 'plans', previousStep: 'use-my-domain', histLen: 2, stepSlugs } );
+		rows.push( [ 'S2', r ] );
+		log(
+			`S2 normal:          current=plans          previousStep=use-my-domain histLen=2 -> backShown=${ r.backShown } historyBack=${ r.calledHistoryBack }  [normal one-step-back]`
+		);
+
+		r = observe( { current: 'plans', previousStep: undefined, histLen: 1, stepSlugs } );
+		rows.push( [ 'S3', r ] );
+		log(
+			`S3 deep-link/refresh: current=plans        previousStep=<none>  histLen=1 -> backShown=${ r.backShown }  (no previousStep & histLen<=1 => hidden; unknown step => FlowRenderer redirects to ${ stepSlugs[ 0 ] } = SNAP TO FIRST)`
+		);
+
+		r = observe( {
+			current: 'plans',
+			previousStep: 'migrationHandled', // a step persisted from a DIFFERENT flow (site-migration)
+			histLen: 5,
+			stepSlugs,
+		} );
+		rows.push( [ 'S4', r ] );
+		log(
+			`S4 foreign-flow:    current=plans          previousStep=migrationHandled(site-migration) histLen=5 -> backShown=${ r.backShown } historyBack=${ r.calledHistoryBack }  [SLIPS INTO DIFFERENT FLOW: shown on persisted foreign proxy; history.back() exits flow]`
+		);
+
+		r = observe( { current: 'plans', previousStep: 'domains', histLen: 1, stepSlugs } );
+		rows.push( [ 'S5', r ] );
+		log(
+			`S5 history-gate:    current=plans          previousStep=domains histLen=1 -> backShown=${ r.backShown }  (history.length not > 1 => canUserGoBack false)`
+		);
+
+		r = observe( { current: 'plans', previousStep: 'plans', histLen: 2, stepSlugs } );
+		rows.push( [ 'S6', r ] );
+		log(
+			`S6 flash-guard:     current=plans          previousStep=plans   histLen=2 -> backShown=${ r.backShown }  (previousStep===current => canUserGoBack false)`
+		);
+
+		r = observe( {
+			current: 'domains',
+			previousStep: undefined,
+			histLen: 1,
+			stepSlugs,
+			flowGoBack,
+		} );
+		rows.push( [ 'S7', r ] );
+		log(
+			`S7 flow-goBack (gate FALSE): flow defines goBack; current=domains(first) previousStep=<none> histLen=1 -> backShown=${ r.backShown } flowGoBack=${ r.calledFlowGoBack } historyBack=${ r.calledHistoryBack }  [Flow is the ultimate authority: overrides even when canUserGoBack false]`
+		);
+
+		r = observe( {
+			current: 'plans',
+			previousStep: 'domains',
+			histLen: 2,
+			stepSlugs,
+			flowGoBack,
+		} );
+		rows.push( [ 'S8', r ] );
+		log(
+			`S8 flow-goBack (gate TRUE):  flow defines goBack; current=plans previousStep=domains histLen=2 -> backShown=${ r.backShown } flowGoBack=${ r.calledFlowGoBack } historyBack=${ r.calledHistoryBack }  [flow goBack > default history.back]`
+		);
+
+		log( '' );
+		log( '=== END OBSERVATION ===' );
+		flushReport();
+
+		// ---- Assertions that PROVE the observations (test fails if canonical logic changed) ----
+		expect( isOnboardingFlow( 'onboarding' ) ).toBe( true );
+		expect( isOnboardingFlow( 'newsletter' ) ).toBe( false );
+		expect( Object.prototype.hasOwnProperty.call( onboarding, 'goBack' ) ).toBe( false );
+		expect( stepSlugs ).toEqual( [
+			'domains',
+			'use-my-domain',
+			'plans',
+			'create-site',
+			'processing',
+			'post-checkout-onboarding',
+		] );
+		const byId = Object.fromEntries( rows );
+		expect( byId.S1.backShown ).toBe( false ); // first step: hidden
+		expect( byId.S2.backShown ).toBe( true );
+		expect( byId.S2.calledHistoryBack ).toBe( true ); // normal -> history.back()
+		expect( byId.S3.backShown ).toBe( false ); // deep-link no history: hidden
+		expect( byId.S4.backShown ).toBe( true );
+		expect( byId.S4.calledHistoryBack ).toBe( true ); // foreign proxy -> history.back()
+		expect( byId.S5.backShown ).toBe( false );
+		expect( byId.S6.backShown ).toBe( false );
+		expect( byId.S7.backShown ).toBe( true );
+		expect( byId.S7.calledFlowGoBack ).toBe( true ); // flow authority overrides gate
+		expect( byId.S7.calledHistoryBack ).toBe( false );
+		expect( byId.S8.backShown ).toBe( true );
+		expect( byId.S8.calledFlowGoBack ).toBe( true ); // flow goBack beats default
+		expect( byId.S8.calledHistoryBack ).toBe( false );
+	} );
+} );
+```
+
+> **Reproduction note.** The block above is the complete harness that was executed (nothing elided) — it imports the real `@automattic/onboarding` predicate, the real `onboarding` flow object, and the real `useStepNavigationWithTracking` hook. The repository's Prettier config normalizes whitespace and line-wrapping when the file is embedded in this Markdown document; the code is otherwise identical to the file that produced the §5.3 output via the command in §5.1.
+
+### Appendix — the History-API browser observation (§6.2)
+
+Driven in real headless Chrome on a minimal same-origin page:
+
 ```js
-// backnav_observe.mjs — temporary run-first harness (lived in /tmp; deleted after use).
-// Decision logic transcribed VERBATIM from source @ HEAD be7e5cc641, annotated with file:line.
-'use strict';
-const defaultFlowName = 'onboarding';                       // flows.js:243-250
-const ONBOARDING_STEPS = ['user', 'domains', 'plans'];      // flows-pure.js:132-133 (social-first OFF)
-const FLOWS = {
-  onboarding: { name: 'onboarding', steps: ONBOARDING_STEPS },
-  newsletter: { name: 'newsletter', steps: ['user', 'newsletterSetup', 'domains', 'plans'] },
-};
-const stepConfig = { user: { providesToken: true } };
-function removeUserStepFromFlow(flow) {                      // flows.js:216-224
-  if (!flow) return;
-  return { ...flow, steps: flow.steps.filter((s) => !stepConfig[s]?.providesToken) };
-}
-function getFlow(flowName, isUserLoggedIn) {                 // flows.js:262-280
-  let flow = FLOWS[flowName];
-  if (!flow) return flow;
-  if (isUserLoggedIn) {
-    const isUserStepOnly = flow.steps.length === 1 && stepConfig[flow.steps[0]]?.providesToken;
-    if (!isUserStepOnly) flow = removeUserStepFromFlow(flow);
-  }
-  return flow;
-}
-function getLocaleSlug() { return ''; }                      // i18n-calypso: default English -> ''
-function addQueryArgs(args, url) {                           // add-query-args.ts:12-66
-  if ('object' !== typeof args) throw new Error('addQueryArgs expects the first argument to be an object.');
-  if ('string' !== typeof url) throw new Error('addQueryArgs expects the second argument to be a string.');
-  const kept = Object.keys(args).filter((k) => args[k] != null);
-  if (kept.length === 0) return url;                        // empty args -> identity
-  const [path, existing = ''] = url.split('?');
-  const sp = new URLSearchParams(existing);
-  for (const k of kept) sp.set(k, String(args[k]));
-  const q = sp.toString();
-  return q ? `${path}?${q}` : path;
-}
-function getStepUrl(flowName, stepName, stepSectionName, localeSlug, params = {}, frameworkParam = null) { // utils.js:45-69
-  const flow = flowName ? `/${flowName}` : '';
-  const step = stepName ? `/${stepName}` : '';
-  const section = stepSectionName ? `/${stepSectionName}` : '';
-  const locale = localeSlug ? `/${localeSlug}` : '';
-  const framework = frameworkParam ||
-    (typeof window !== 'undefined' && window.location.pathname.startsWith('/setup') ? '/setup' : '/start');
-  const url = flowName === defaultFlowName && framework === '/start'
-    ? framework + step + section + locale
-    : framework + flow + step + section + locale;
-  return addQueryArgs(params, url);
-}
-function isFirstStepInFlow(flowName, stepName, isUserLoggedIn) { // utils.js:28-31
-  const { steps: stepsBelongingToFlow } = getFlow(flowName, isUserLoggedIn);
-  return stepsBelongingToFlow.indexOf(stepName) === 0;
-}
-function getFilteredSteps(flowName, progress, isUserLoggedIn) {  // utils.js:137-150
-  const flow = getFlow(flowName, isUserLoggedIn);
-  if (!flow) return [];
-  const filtered = Object.values(progress).filter((step) => flow.steps.includes(step.stepName));
-  return filtered.slice().sort((a, b) => flow.steps.indexOf(a.stepName) - flow.steps.indexOf(b.stepName));
-}
-function getPreviousStep(flowName, signupProgress, currentStepName, userLoggedIn) { // navigation-link/index.jsx:47-76
-  const previousStep = { stepName: null };
-  if (isFirstStepInFlow(flowName, currentStepName, userLoggedIn)) return previousStep;
-  const filteredProgressedSteps = getFilteredSteps(flowName, signupProgress, userLoggedIn).filter((s) => !s.wasSkipped);
-  if (filteredProgressedSteps.length === 0) return previousStep;
-  const idx = filteredProgressedSteps.findIndex((s) => s.stepName === currentStepName);
-  if (idx === -1) return filteredProgressedSteps.pop();
-  return filteredProgressedSteps[idx - 1] || previousStep;
-}
-function getBackUrl(props) {                                 // navigation-link/index.jsx:78-115
-  if (props.direction !== 'back') return undefined;
-  if (props.backUrl) return props.backUrl;                   // :83-84 PRECEDENCE 1
-  const { flowName, signupProgress, stepName, userLoggedIn, queryParams = {} } = props;
-  const previousStep = getPreviousStep(flowName, signupProgress, stepName, userLoggedIn);
-  const prev = signupProgress[previousStep.stepName];
-  const stepSectionName = (prev && prev.stepSectionName) || '';
-  const locale = !userLoggedIn ? getLocaleSlug() : '';
-  return getStepUrl(previousStep.lastKnownFlow || props.flowName, previousStep.stepName, stepSectionName, locale, queryParams);
-}
-function resolveStepWrapper(ownProps, queryArguments) {      // step-wrapper/index.jsx:273-277 + :65
-  const backToParam = queryArguments?.back_to?.toString();
-  const backTo = backToParam?.startsWith('/') ? backToParam : undefined;
-  const backUrl = ownProps.backUrl ?? backTo;
-  const allowBackFirstStep = ownProps.allowBackFirstStep || !!backUrl;
-  return { backUrl, allowBackFirstStep };
-}
-function isBackHidden(positionInFlow, direction, stepSectionName, allowBackFirstStep) { // navigation-link/index.jsx:154-161
-  return positionInFlow === 0 && direction === 'back' && !stepSectionName && !allowBackFirstStep;
-}
-function computeForStep(scenario, positionInFlow) {
-  const stepName = ONBOARDING_STEPS[positionInFlow];
-  const { backUrl, allowBackFirstStep } = resolveStepWrapper(
-    { backUrl: scenario.ownBackUrl, allowBackFirstStep: false }, scenario.queryArguments);
-  const props = { direction: 'back', backUrl, flowName: 'onboarding', signupProgress: scenario.progress,
-    stepName, userLoggedIn: false, positionInFlow, queryParams: {} };
-  return { stepName, dest: getBackUrl(props), hidden: isBackHidden(positionInFlow, 'back', '', allowBackFirstStep) };
-}
-const fullProgress = {
-  user: { stepName: 'user', lastKnownFlow: 'onboarding', status: 'completed', wasSkipped: false },
-  domains: { stepName: 'domains', lastKnownFlow: 'onboarding', status: 'completed', wasSkipped: false },
-  plans: { stepName: 'plans', lastKnownFlow: 'onboarding', status: 'in-progress', wasSkipped: false },
-};
-const emptyProgress = {};
-const foreignFlowProgress = {
-  user: { stepName: 'user', lastKnownFlow: 'onboarding', status: 'completed', wasSkipped: false },
-  domains: { stepName: 'domains', lastKnownFlow: 'newsletter', status: 'completed', wasSkipped: false },
-  plans: { stepName: 'plans', lastKnownFlow: 'onboarding', status: 'in-progress', wasSkipped: false },
-};
-const SCENARIOS = [
-  { id: 'A',  label: 'No override, full progress',              ownBackUrl: undefined,         queryArguments: {},                        progress: fullProgress },
-  { id: 'B',  label: 'No override, EMPTY progress (deep-link)', ownBackUrl: undefined,         queryArguments: {},                        progress: emptyProgress },
-  { id: 'C',  label: 'back_to=/home (external override)',       ownBackUrl: undefined,         queryArguments: { back_to: '/home' },      progress: fullProgress },
-  { id: 'C2', label: 'back_to=not-a-path (guard rejects)',      ownBackUrl: undefined,         queryArguments: { back_to: 'not-a-path' }, progress: fullProgress },
-  { id: 'D',  label: "Explicit backUrl='mailbox-domain/' prop", ownBackUrl: 'mailbox-domain/', queryArguments: {},                        progress: fullProgress },
-  { id: 'E',  label: "Prev step lastKnownFlow='newsletter'",    ownBackUrl: undefined,         queryArguments: {},                        progress: foreignFlowProgress },
-];
-function runOnce(runLabel) {
-  console.log(`\n========== ${runLabel} (node ${process.version}) ==========`);
-  console.log(`flow='onboarding' defaultFlowName='${defaultFlowName}' steps=${JSON.stringify(ONBOARDING_STEPS)} framework='/start' userLoggedIn=false`);
-  for (const sc of SCENARIOS) {
-    console.log(`\nScenario ${sc.id}: ${sc.label}`);
-    for (const pos of [0, 1, 2]) {
-      const r = computeForStep(sc, pos);
-      console.log(`   pos${pos} ${r.stepName} -> ${JSON.stringify(r.dest)}${r.hidden ? ' [back hidden]' : ''}`);
-    }
-  }
-}
-runOnce('RUN 1');
-runOnce('RUN 2');
+history.replaceState( {}, '', '/setup/hosted-site-migration/migrationHandled' ); // a DIFFERENT flow
+history.pushState( {}, '', '/setup/onboarding/plans' ); // current onboarding step
+const before = location.pathname; // "/setup/onboarding/plans"
+await new Promise( ( resolve ) => {
+	window.addEventListener( 'popstate', () => resolve( location.pathname ), { once: true } );
+	history.back(); // the canonical default goBack
+} );
+// -> "/setup/hosted-site-migration/migrationHandled"  (crossedFlow: true)
 ```
