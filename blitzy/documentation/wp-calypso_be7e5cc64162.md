@@ -860,7 +860,7 @@ reqid=1500 GET https://public-api.wordpress.com/rest/v1.1/me?http_envelope=1&met
 ```text
 // evaluate_script for cookies + localStorage on the logged-out /discover page:
 {
-  "document.cookie_raw": "tk_ai=hpkYyf8ytGW%2FXfkl72GEm3o%2F; country_code=US; region=Iowa; tk_qs=",
+  "document.cookie_raw": "tk_ai=<redacted>; country_code=<redacted>; region=<redacted>; tk_qs=",
   "cookieNames": ["country_code", "region", "tk_ai", "tk_qs"],
   "has_wordpress_logged_in_cookie_in_JS": false,
   "has_wpcom_token_cookie_in_JS": false,
