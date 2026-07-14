@@ -10,11 +10,11 @@ Tests **can** pass alone but fail in a full run when **the same test file means 
 2. **Per‑suite `moduleNameMapper` redirects layered on a `calypso:src`‑first custom resolver.** The custom `enhanced-resolve` resolver (`packages/calypso-jest/src/module-resolver.js:L18`) prefers untranspiled source, and each suite adds its own redirects — so the _same_ import string (`@automattic/calypso-config`) resolves to **two different files** depending on the suite (Q4).
 3. **Browser‑global provisioning timed to `setupFilesAfterEnv`.** The jsdom `testEnvironment` provides `window`/`document` at construction time, but the browser‑like globals `matchMedia`, `ResizeObserver`, `CSS`, and `Worker` are installed later by `test/client/setup-test-framework.js`, which runs in `setupFilesAfterEnv` (Q5). (`fetch`/`TextEncoder`/`ReadableStream`/`structuredClone` are also installed there in the client context, but are additionally Node‑22 runtime‑natives in the node context — see Q2.) A file that assumes those setup‑provided globals passes only where that setup file is wired in.
 
-**Scope of this thesis — what was and was not reproduced.** These three mechanisms are demonstrated to *exist and behave as described* at runtime; they are the evidenced routes by which an isolation‑vs‑full‑suite discrepancy **can** arise. This investigation did **not** reproduce a specific test that passes in isolation and then fails in the full suite *because of* these mechanisms. The full‑suite failures that **were** observed while running the seven commands (Q1) have **environmental / library‑version root causes** — a `nock` "Invalid URL" rejection of a scheme‑less host, a CircleCI‑artifact test that needs network access (disabled by `nock.disableNetConnect()`), a `mock-fs`/Node‑22 incompatibility, and `Intl`/ICU currency‑format expectation drift under Node 22 — and are **independent** of the module‑resolution and global‑provisioning mechanisms above. Notably, the per‑file‑jsdom `test-client` suite **passes** in full while several node‑environment suites fail, for those environmental reasons rather than the environment split itself. The sections below therefore document *mechanisms that can cause* the reported symptom, with the exact commands and complete output that establish each mechanism's runtime behavior.
+**Scope of this thesis — what was and was not reproduced.** These three mechanisms are demonstrated to *exist and behave as described* at runtime; they are the evidenced routes by which an isolation‑vs‑full‑suite discrepancy **can** arise. This investigation did **not** reproduce a specific test that passes in isolation and then fails in the full suite *because of* these mechanisms. The full‑suite failures that **were** observed while running the seven commands (Q1) have **environmental / library‑version root causes** — a `nock` "Invalid URL" rejection of a scheme‑less host, a CircleCI‑artifact test that runs in a **separate child process** and finds **no matching CircleCI artifact** (the parent Jest process’s `nock.disableNetConnect()` does not cross the `child_process` boundary, so it is not the cause), a `mock-fs`/Node‑22 incompatibility, and `Intl`/ICU currency‑format expectation drift, plus **date‑sensitive test‑fixture drift** (a `domains-table` fixture hard‑codes an already‑past expiry date), under Node 22 — and are **independent** of the module‑resolution and global‑provisioning mechanisms above. Notably, the per‑file‑jsdom `test-client` suite **passes** in full while several node‑environment suites fail, for those environmental reasons rather than the environment split itself. The sections below therefore document *mechanisms that can cause* the reported symptom, with the exact commands and complete output that establish each mechanism's runtime behavior.
 
 **Toolchain / prerequisite.** Everything below was produced under the pinned toolchain — **Node.js 22.9.0** (`.nvmrc:L1`; `package.json:L57` engines `"node": "^v22.9.0"`) and **Yarn 4.0.2** via Corepack (`package.json:L422`; `.yarnrc.yml:L5`) — after the one‑time prerequisite `corepack yarn install` (the repository root ships without `node_modules`). The container's actual executable reports **Node v22.23.1**, which is on the pinned `^v22.9.0` 22.x line (pins vs. observed are separated in the method section). This distinction matters for Q2: the node context exposes `fetch`/`structuredClone`/`TextEncoder`/`ReadableStream` as **Node‑22 runtime‑natives**, so the clean client‑only differentiator is **`matchMedia`**, not `fetch`.
 
-> **Evidence & reproducibility discipline.** Every claim below is backed by the _exact command executed_ and its _complete, unedited output_ (benign noise — the Browserslist "caniuse‑lite is 17 months old" notice — is kept verbatim). Every count/order/resolution claim was reproduced **at least twice** and was **identical across runs** unless a distribution is explicitly reported; this is stated per section. The absolute checkout prefix that appears in the outputs is `/tmp/blitzy/wp-calypso/blitzy-f2a8184c-fd7c-43d0-9446-cc645dc1aa89_72bcd5`; where this prefix is abbreviated it is written `<REPO>` **in prose only** — it is never substituted inside a captured output block, which are shown byte‑for‑byte. All observations were produced by running the actual `test-*` Jest configs — the canonical entry points — never by re‑implementing the resolver or hand‑mocking the environment. The one exception, the Q5 "extended config," **spreads the real client config and only _adds_ `console.log` observation hooks**; it is disclosed as a non‑canonical additive wrapper in Q5 and bypasses no real hook.
+> **Evidence & reproducibility discipline.** Every claim below is backed by the _exact command executed_ and its _complete, unedited output_ (benign noise — the Browserslist "caniuse‑lite is 17 months old" notice — is kept verbatim). The only claims **not** shown with their full raw log are the three oversized suites — `test-packages`, `test-client`, and the aggregate `test` — whose per‑test logs run to 3,489 / 141,713 / 145,232 lines; for those, run metadata plus the **complete final summary block** are shown (a carve‑out stated explicitly where each appears in Q1). Every count/order/resolution claim was reproduced **at least twice** and was **identical across runs** unless a distribution is explicitly reported; this is stated per section. The absolute checkout prefix that appears in the outputs is `/tmp/blitzy/wp-calypso/blitzy-f2a8184c-fd7c-43d0-9446-cc645dc1aa89_72bcd5`; where this prefix is abbreviated it is written `<REPO>` **in prose only** — it is never substituted inside a captured output block, which are shown byte‑for‑byte. All observations were produced by running the actual `test-*` Jest configs — the canonical entry points — never by re‑implementing the resolver or hand‑mocking the environment. The one exception, the Q5 "extended config," **spreads the real client config and only _adds_ `console.log` observation hooks**; it is disclosed as a non‑canonical additive wrapper in Q5 and bypasses no real hook.
 
 ---
 
@@ -22,7 +22,7 @@ Tests **can** pass alone but fail in a full run when **the same test file means 
 
 ### How to read the evidence in this document
 
-This document was produced **run‑first**: every behavioural claim below is backed by the *exact command executed* and its *complete, unedited output* (including benign noise such as the Browserslist "caniuse‑lite is N months old" notice, which is retained verbatim). Output blocks are shown **raw** — absolute paths appear exactly as the tools printed them. The repository checkout prefix that recurs in those outputs is:
+This document was produced **run‑first**: every behavioural claim below is backed by the *exact command executed* and its *complete, unedited output* (including benign noise such as the Browserslist "caniuse‑lite is N months old" notice, which is retained verbatim). The three oversized suites (`test-packages`, `test-client`, and the aggregate `test`) are the sole exception — shown as run metadata plus their **complete final summary block** rather than their multi‑thousand‑line raw logs (a carve‑out stated explicitly where they appear); all other output blocks are shown **raw** — absolute paths appear exactly as the tools printed them. The repository checkout prefix that recurs in those outputs is:
 
 ```
 /tmp/blitzy/wp-calypso/blitzy-f2a8184c-fd7c-43d0-9446-cc645dc1aa89_72bcd5
@@ -108,6 +108,15 @@ exit=0
 ```
 
 ```
+corepack --version
+```
+
+```
+0.34.6
+exit=0
+```
+
+```
 corepack yarn --version
 ```
 
@@ -125,7 +134,7 @@ git rev-parse HEAD
 exit=0
 ```
 
-**Reconciliation.** The observed **Node v22.23.1** is *not* the pinned **22.9.0**, but it is on the same 22.x line and **satisfies** the declared range `engines.node: "^v22.9.0"` (`package.json:L57`) — `^22.9.0` admits any `22.x.y` with `x.y ≥ 9.0`. Yarn matches the pin exactly (`4.0.2`). This distinction is not academic: **Q2 depends on it**, because Node 22 ships a *native global `fetch`* (and `structuredClone`, `TextEncoder`, `ReadableStream`), which changes which globals are genuinely context‑specific. Any value obtained under v22.23.1 that would differ under the exact pin is called out where relevant; none of the resolution/ordering findings depend on the patch version.
+**Reconciliation.** The observed **Node v22.23.1** is *not* the pinned **22.9.0**, but it is on the same 22.x line and **satisfies** the declared range `engines.node: "^v22.9.0"` (`package.json:L57`) — `^22.9.0` admits any `22.x.y` with `x.y ≥ 9.0`. Yarn matches the pin exactly (`4.0.2`). This distinction is not academic: **Q2 depends on it**, because Node 22 ships a *native global `fetch`* (and `structuredClone`, `TextEncoder`, `ReadableStream`), which changes which globals are genuinely context‑specific. Any value obtained under v22.23.1 that would differ under the exact pin is called out where relevant; none of the resolution/ordering findings depend on the patch version. Corepack **0.34.6** (`corepack --version`, the Node‑bundled shim) is the tool that activates the pinned Yarn **4.0.2** from `packageManager` (`package.json:L422`); Corepack’s own version tracks the installed Node runtime and is not separately pinned by the repository, whereas the Yarn version it activates is pin‑exact.
 
 All suites below are exercised through their **canonical entry points** — the actual `test-*` npm scripts in `package.json` and the Jest configs they reference — never by re‑implementing the resolver or hand‑mocking the environment. The **one** disclosed exception is the Q5 "extended config," which *spreads the real client config and only adds `console.log` observation hooks*; it is described in full (with source) in Q5 and bypasses no real hook.
 
@@ -342,7 +351,23 @@ Ran all test suites.
 exit=1   (wall≈3s)
 ```
 
-**Run‑to‑run ordering note (distribution).** Across three runs the failing **set** and **counts** were identical (`2 failed, 1 passed` suites; `5 failed, 2 passed` tests), but the **order** in which the two failing files printed varied: `use-nock` → `get-circle` in 2 runs, `get-circle` → `use-nock` in 1 run. This reflects Jest's nondeterministic parallel worker scheduling and is reported as a distribution rather than presented as deterministic.
+**Run‑to‑run ordering note (observed distribution).** The earlier draft’s claim of a varying 2:1 print order is **not reproduced**. Re‑running the *unchanged* `test-integration` command **six** times, the failing **set**, **counts**, and **print order** were **identical every time**: `bin/integration/get-circle-string-artifact-url.js` printed **before** `client/test-helpers/use-nock/integration/index.js` in **6 of 6** runs (`2 failed, 1 passed` suites; `5 failed, 2 passed` tests; exit `1`). Per the run‑to‑run discipline this is reported as the observed distribution from repeated identical‑input runs (6/6 identical order), not as a constructed deterministic variant.
+
+The exact command and its complete per‑run order summary (run twice; byte‑identical both times):
+
+```bash
+$ for i in 1 2 3 4 5 6; do \
+    CI=1 FORCE_COLOR=0 corepack yarn test-integration > "/tmp/ti_run_$i.log" 2>&1; ec=$?; \
+    order=$(grep -E '^FAIL ' "/tmp/ti_run_$i.log" | sed -E 's/^FAIL //' | paste -sd'>' -); \
+    echo "run $i: exit=$ec order=$order"; \
+  done
+run 1: exit=1 order=bin/integration/get-circle-string-artifact-url.js>client/test-helpers/use-nock/integration/index.js
+run 2: exit=1 order=bin/integration/get-circle-string-artifact-url.js>client/test-helpers/use-nock/integration/index.js
+run 3: exit=1 order=bin/integration/get-circle-string-artifact-url.js>client/test-helpers/use-nock/integration/index.js
+run 4: exit=1 order=bin/integration/get-circle-string-artifact-url.js>client/test-helpers/use-nock/integration/index.js
+run 5: exit=1 order=bin/integration/get-circle-string-artifact-url.js>client/test-helpers/use-nock/integration/index.js
+run 6: exit=1 order=bin/integration/get-circle-string-artifact-url.js>client/test-helpers/use-nock/integration/index.js
+```
 
 #### `test-server` — complete output (exit 1)
 
@@ -485,7 +510,41 @@ FAIL packages/i18n-calypso/src/number-formatters/test/number-format-currency.ts
 FAIL packages/i18n-calypso/src/test/index.js
 ```
 
-All six are currency/number‑formatting suites (`i18n-calypso`, `format-currency`, `PlanPrice`, `domains-table`) whose expectations are sensitive to the bundled ICU/`Intl` data — again an environmental cause, not the resolution/environment mechanisms this document explains.
+These six break into **two** distinct environmental causes — **not** a single ICU issue (an earlier draft mis‑stated all six as currency/number formatting):
+
+- **Four ICU/`Intl` currency‑formatting suites** — `PlanPrice` (`plan-price`), `format-currency`, and the two `i18n-calypso` number‑formatter suites — whose expectations depend on the bundled ICU/`Intl` data and differ under Node 22.23.1.
+- **Two date‑sensitive `domains-table` suites** (`domains-table-row.tsx`, `index.tsx`) that fail for an unrelated reason: a shared fixture hard‑codes `expiry: '2026-03-11T00:00:00+00:00'` (`packages/domains-table/src/test-utils.tsx:42`); because the run date (July 13, 2026) is later, the row renders `Expired Mar 11, 2026` where the test expects `Active`.
+
+Both are environmental (library/ICU and clock/fixture) drift, independent of the resolution/environment mechanisms this document explains. Evidence for each cause follows.
+
+The two `domains-table` failures are clock/fixture drift — the rendered status is `Expired Mar 11, 2026`, so the `getByText( 'Active' )` assertion at `__tests__/domains-table-row.tsx:971` cannot match:
+
+```bash
+$ CI=1 FORCE_COLOR=0 corepack yarn jest -c=packages/domains-table/jest.config.js domains-table-row \
+    -t "transferred but doesnt point to wpcom" 2>&1 \
+  | sed -E 's/\x1b\[[0-9;]*m//g' \
+  | grep -E "●|Unable to find an element with the text: Active|Expired Mar 11, 2026|getByText\( 'Active' \)|^Tests:" \
+  | grep -v "● Console"
+  ● domain status cell › when the domain is transferred but doesnt point to wpcom, display the cta so the user can point it
+    Unable to find an element with the text: Active. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+                  Expired Mar 11, 2026
+      971 | 			expect( screen.getByText( 'Active' ) );
+Tests:       1 failed, 34 skipped, 35 total
+```
+
+The four ICU suites are library/ICU drift — e.g. `format-currency` › IDR expects `Rp 1.072.800,00` but receives `Rp 107.280.000` (grouping and precision differ; the separator is U+00A0):
+
+```bash
+$ CI=1 FORCE_COLOR=0 corepack yarn jest -c=packages/format-currency/jest.config.js 2>&1 \
+  | sed -E 's/\x1b\[[0-9;]*m//g' \
+  | grep -E "●|Expected:|Received:|toBe\( 'Rp|^Tests:" \
+  | grep -v "● Console"
+  ● formatCurrency › specific currencies › IDR
+    Expected: "Rp 1.072.800,00"
+    Received: "Rp 107.280.000"
+    > 299 | 			expect( money ).toBe( 'Rp 1.072.800,00' );
+Tests:       1 failed, 55 passed, 56 total
+```
 
 #### `test-client` — run metadata + complete final summary block (exit 0)
 
@@ -542,11 +601,49 @@ run2: server 'performance-mark' marker count=0 ; build-tools 'sections-loader' m
 Running the seven commands **does** reproduce real full‑suite failures (`test-integration`, `test-server`, `test-packages`, and therefore the aggregate all exit `1`). However — critically — **every observed failure is environmental / library‑version drift under the observed Node v22.23.1**, not a manifestation of the module‑resolution or environment‑provisioning mechanisms this document catalogs:
 
 - **`nock` "Invalid URL"** (`test-integration`) — `nock( 'wordpress.com' )` without a scheme throws under the installed `nock` (`node_modules/nock/lib/scope.js:33`), which requires an absolute URL.
-- **Network‑dependent test** (`test-integration`) — `get-circle-string-artifact-url` shells out to fetch CircleCI artifacts; it fails because outbound network is disabled by default.
+- **Child‑process CircleCI artifact lookup** (`test-integration`) — the test spawns a **separate** `node` process via `child_process.execSync` (`bin/integration/get-circle-string-artifact-url.js:8`), which runs `bin/get-circle-string-artifact-url` → `bin/get-circle-artifact-url.js`. That child **reaches CircleCI successfully** (HTTP 200; 100 recent successful `trunk` builds) but finds **no build carrying a matching `calypso-strings.pot` artifact** (0 of the returned builds have `has_artifacts` truthy), so it prints `failed to find artifacts matching /\/calypso-strings\.pot$/` and exits `1` (`bin/get-circle-artifact-url.js:44`). The parent Jest process’s `nock.disableNetConnect()` does **not** cause this — nock patches HTTP only inside its own process and does not cross the `child_process.execSync` boundary; a genuine network *block* would instead surface via the `catch` at `bin/get-circle-artifact-url.js:47` as a thrown error object, not this artifact‑absence message.
 - **`mock-fs` "Item with the same name already exists: tmp"** (`test-server`) — a `mock-fs`/Node 22 incompatibility (`node_modules/mock-fs/lib/directory.js:33`).
-- **`Intl`/ICU currency formatting** (`test-packages`) — six currency/number suites expect ICU output that differs from Node 22.23.1's bundled data.
+- **ICU/`Intl` currency formatting** (`test-packages`) — **four** currency/number suites (`PlanPrice`, `format-currency`, and two `i18n-calypso` number‑formatter suites) expect ICU output that differs from Node 22.23.1's bundled data.
+- **Date‑sensitive fixture drift** (`test-packages`) — **two** `domains-table` suites fail for an unrelated reason: a shared fixture hard‑codes an already‑past `expiry` date (`packages/domains-table/src/test-utils.tsx:42`), so the row renders `Expired Mar 11, 2026` where the test expects `Active`. This is clock/fixture drift, **not** ICU drift.
 
 These are stable across two runs and are a **different class** of failure from the isolation‑vs‑full‑suite discrepancy the questions target. This distinction is made explicit in the summary/thesis: the mechanisms below (Q2–Q5) are ones that *can* cause an "isolated pass, suite fail" divergence, but **no such specific divergence was reproduced here** — the concrete suite failures we observed have environmental root causes.
+
+#### Evidence for the corrected `test-integration` attribution (child‑process artifact lookup, not parent `nock`)
+
+Invoking the child script directly reproduces the failure — `failed to find artifacts` from `bin/get-circle-artifact-url.js:44`, exit `1` — with no parent Jest/`nock` context present:
+
+```bash
+$ node ./bin/get-circle-string-artifact-url 2>&1; echo "exit=$?"
+failed to find artifacts matching /\/calypso-strings\.pot$/
+exit=1
+```
+
+The child **does** reach CircleCI (outbound network is available); it fails only because none of the 100 recent successful `trunk` builds carries a matching `calypso-strings.pot` artifact (`has_artifacts` truthy on 0), so the `failed to find artifacts` branch (`:44`) is taken rather than the network‑error `catch` (`:47`):
+
+```bash
+$ node -e '
+const https = require( "https" );
+const url = "https://circleci.com/api/v1.1/project/gh/Automattic/wp-calypso/tree/trunk?filter=successful&limit=100";
+https.get( url, { headers: { Accept: "application/json" } }, ( res ) => {
+  let body = "";
+  res.on( "data", ( c ) => ( body += c ) );
+  res.on( "end", () => {
+    let builds = [];
+    try { builds = JSON.parse( body ); } catch ( e ) {}
+    const withArtifacts = builds.filter( ( b ) => b && b.has_artifacts ).length;
+    console.log( "HTTP status:", res.statusCode );
+    console.log( "builds returned:", Array.isArray( builds ) ? builds.length : "n/a" );
+    console.log( "builds with has_artifacts truthy:", withArtifacts );
+  } );
+} ).on( "error", ( e ) => console.log( "network error:", e.message ) );
+'; echo "exit=$?"
+HTTP status: 200
+builds returned: 100
+builds with has_artifacts truthy: 0
+exit=0
+```
+
+Hence the parent process’s `nock.disableNetConnect()` is **not** the cause: `nock` patches HTTP only within its own process and does not cross the `child_process.execSync` boundary.
 
 ### Terminology precision (scope of "seven commands")
 
@@ -1516,7 +1613,7 @@ $ node --version
 v22.23.1
 
 === (C) effective setupFiles / setupFilesAfterEnv via jest --showConfig (RUN 1) ===
-$ corepack yarn jest --showConfig -c=test/blitzy_probe_client.config.js | node -e <extract>
+$ corepack yarn jest --showConfig -c=test/blitzy_probe_client.config.js | node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(0,"utf8"));const c=j.configs[0];const te=c.testEnvironment.replace(/.*node_modules\//,"");console.log("testEnvironment="+te);console.log("setupFiles=");c.setupFiles.forEach((f)=>console.log("  "+f));console.log("setupFilesAfterEnv=");c.setupFilesAfterEnv.forEach((f)=>console.log("  "+f));'
 testEnvironment=jest-environment-node/build/index.js
 setupFiles=
   /tmp/blitzy/wp-calypso/blitzy-f2a8184c-fd7c-43d0-9446-cc645dc1aa89_72bcd5/client/blitzy_probe_tmp/probe-setupfile.js
@@ -1527,7 +1624,7 @@ setupFilesAfterEnv=
 exit=0
 
 === (C) effective setupFiles / setupFilesAfterEnv via jest --showConfig (RUN 2) ===
-$ corepack yarn jest --showConfig -c=test/blitzy_probe_client.config.js | node -e <extract>
+$ corepack yarn jest --showConfig -c=test/blitzy_probe_client.config.js | node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(0,"utf8"));const c=j.configs[0];const te=c.testEnvironment.replace(/.*node_modules\//,"");console.log("testEnvironment="+te);console.log("setupFiles=");c.setupFiles.forEach((f)=>console.log("  "+f));console.log("setupFilesAfterEnv=");c.setupFilesAfterEnv.forEach((f)=>console.log("  "+f));'
 testEnvironment=jest-environment-node/build/index.js
 setupFiles=
   /tmp/blitzy/wp-calypso/blitzy-f2a8184c-fd7c-43d0-9446-cc645dc1aa89_72bcd5/client/blitzy_probe_tmp/probe-setupfile.js
@@ -1879,19 +1976,23 @@ Re‑reading each question and confirming every named item is addressed **by nam
 
 **Thesis scope (Q0/TL;DR).** The document establishes the three mechanisms that **can** cause an isolation‑vs‑full‑suite discrepancy and states explicitly that **no specific such failing test was reproduced**; the full‑suite failures that were observed have **environmental / library‑version** root causes, documented in Q1 and the corrections section. ✔
 
-All five questions, and every named mechanism, file, flag, and example, are addressed above with the exact command that produced each result and its complete, unedited output; all count/order/resolution claims were reproduced at least twice and were stable (or reported as a distribution where they varied).
+All five questions, and every named mechanism, file, flag, and example, are addressed above with the exact command that produced each result and its complete, unedited output — with the single, explicitly‑labelled exception of the three oversized suites (`test-packages`, `test-client`, and the aggregate `test`), for which run metadata plus the **complete final summary block** are shown in place of their 3,489 / 141,713 / 145,232‑line raw logs (stated where those suites appear in Q1). All count/order/resolution claims were reproduced at least twice and were stable, or are reported as the observed distribution from repeated identical‑input runs where an earlier draft thought they varied (the `test-integration` print order was re‑measured as 6/6 identical).
 
 ---
 
 ## Repository integrity
 
-All observations above were produced by temporary probe test files and two temporary "extended" Jest configs, created solely to capture runtime signals, then removed. **Cleanup was surgical, not recursive on any generic path.** Probes lived in uniquely‑named directories (`client/blitzy_probe_tmp/`, `client/server/blitzy_probe_tmp/`) and — for the one probe that had to sit inside a package's own tree to be discovered by the `test-packages` multi‑project runner — under a `test/` folder that the phase created and then removed. After each phase captured its output, every exact file created in that phase was removed with `rm -f`, and each directory the phase had created was removed with `rmdir` **only if empty** (`rmdir` refuses to delete a non‑empty directory, so it can never remove pre‑existing content). The recursive `rm -rf <generic-dir>` pattern was deliberately **avoided**. The cleanup shape for a phase was:
+All observations above were produced by temporary probe test files and two temporary "extended" Jest configs, created solely to capture runtime signals, then removed. **Cleanup was surgical, not recursive on any generic path.** Probes lived in uniquely‑named directories (`client/blitzy_probe_tmp/`, `client/server/blitzy_probe_tmp/`) and — for the one probe that had to sit inside a package's own tree to be discovered by the `test-packages` multi‑project runner — under a `test/` folder that the phase created and then removed. After each phase captured its output, every exact file created in that phase was removed with `rm -f`, and each directory the phase had created was removed with `rmdir` **only if empty** (`rmdir` refuses to delete a non‑empty directory, so it can never remove pre‑existing content). The recursive `rm -rf <generic-dir>` pattern was deliberately **avoided**. The cleanup shape is shown below as the concrete, re‑verified **client‑lifecycle (Q5)** example, captured with the real per‑command exit codes (the server‑lifecycle and package probe phases followed the identical shape with their own paths, and both temporary extended configs were removed — as the scans below confirm):
 
 ```text
-# remove only the exact files this phase created, then the (now-empty) dirs it created
-rm -f   <exact probe file 1> <exact probe file 2> ...
-rmdir   <deepest created dir> ... <top created dir>   # each only-if-empty; refuses if non-empty
-rm -f   test/blitzy_probe_client.config.js test/blitzy_probe_server.config.js
+# client-lifecycle (Q5) phase: remove the exact files created, then the (now-empty) dirs
+$ rm -f   client/blitzy_probe_tmp/probe-setupfile.js client/blitzy_probe_tmp/probe-setupafterenv.js \
+          client/blitzy_probe_tmp/stage-snap.js client/blitzy_probe_tmp/test/lifecycle-probe.js
+exit=0
+$ rmdir   client/blitzy_probe_tmp/test client/blitzy_probe_tmp   # each only-if-empty; refuses if non-empty
+exit=0
+$ rm -f   test/blitzy_probe_client.config.js
+exit=0
 ```
 
 The removal was then **verified with each command shown separately, with its real exit code**. First, a name scan for any lingering probe file (excluding `node_modules`); an empty result with `exit=0` means the scan ran and matched nothing:
@@ -1947,4 +2048,68 @@ exit=0
 ```
 
 Both commands exit `0` and report the **same single path**, `blitzy/documentation/wp-calypso_be7e5cc64162.md`, with status `M` (this document was already tracked at `HEAD`, so the honest status is *modified*, not *untracked*). No other tracked file is modified and no untracked file exists outside `node_modules`. The empty `blitzy/screenshots/` and `blitzy/screen_recordings/` directories contain no files and are not tracked by git. The repository is therefore unchanged except for this one document.
+
+### Delivery readiness — dependency audit (accepted, scoped exception)
+
+Beyond the git‑visible integrity proof above, a dependency‑vulnerability audit was run for delivery‑readiness completeness. **Direct answer:** the workspace audit reports pre‑existing advisories and exits non‑zero, but **this task introduces zero dependency change**, so every advisory is inherited baseline rather than introduced here; remediation is **explicitly out of scope** for this documentation‑only, dependency‑frozen task (AAP §0.5.2, §0.6.2) and is recorded here as an **accepted, scoped exception**.
+
+The exact command, its exit code, and line volume (the full advisory tree is 3,302 lines — reported in summary, the same way the three oversized suites are per the evidence‑discipline note above, rather than pasted in full):
+
+```text
+$ corepack yarn npm audit --all --recursive > /tmp/wpcalypso_audit.txt 2>&1; echo "exit=$?"
+exit=1
+$ wc -l < /tmp/wpcalypso_audit.txt
+3302
+```
+
+Severity breakdown, computed two ways from the captured output. First, **tree entries** (one line per advisory × dependency‑path) — the 252 figure:
+
+```text
+$ grep -oE 'Severity: [a-z]+' /tmp/wpcalypso_audit.txt | sort | uniq -c | sort -rn
+    130 Severity: moderate
+     88 Severity: high
+     24 Severity: low
+     10 Severity: critical
+```
+
+Second, **unique advisories** (distinct advisory IDs) — the 206 figure:
+
+```text
+$ awk '/ID: [0-9]+/{id=$NF} /Severity: [a-z]+/{sev[id]=$NF} END{for(i in sev)c[sev[i]]++; for(s in c)print c[s]" "s}' /tmp/wpcalypso_audit.txt | sort -rn
+103 moderate
+75 high
+18 low
+10 critical
+```
+
+So: **206 unique advisories** (10 critical, 75 high, 103 moderate, 18 low) spanning **252 advisory×dependency‑path tree entries** (10 critical, 88 high, 130 moderate, 24 low). The audit was run twice and both captures were byte‑identical (exit `1`). A representative first entry, verbatim from the top of the tree:
+
+```text
+├─ @babel/core
+│  ├─ ID: 1120793
+│  ├─ Issue: @babel/core: Arbitrary File Read via sourceMappingURL Comment
+│  ├─ URL: https://github.com/advisories/GHSA-4x5r-pxfx-6jf8
+│  ├─ Severity: low
+│  ├─ Vulnerable Versions: <=7.29.0
+│  │ 
+│  ├─ Tree Versions
+│  │  ├─ 7.25.7
+│  │  └─ 7.26.10
+│  │ 
+│  └─ Dependents
+│     ├─ @wordpress/babel-preset-default@npm:8.21.0
+│     └─ wp-calypso@workspace:.
+│
+```
+
+**Zero dependency delta (why this is an accepted baseline, not a regression).** This task added exactly one file and changed no dependency manifest. The base‑to‑`HEAD` diff shows only the answer document, and the three dependency manifests are byte‑identical between the base commit and `HEAD` (`--exit-code` returns `0`, i.e. genuinely no change):
+
+```text
+$ git diff --name-status be7e5cc641 HEAD
+A	blitzy/documentation/wp-calypso_be7e5cc64162.md
+$ git diff --exit-code --name-status be7e5cc641 HEAD -- package.json yarn.lock .yarnrc.yml; echo "manifest-delta-exit=$?"
+manifest-delta-exit=0
+```
+
+The second command prints nothing (empty diff) and exits `0`: `package.json`, `yarn.lock`, and `.yarnrc.yml` are unchanged. Because the AAP freezes dependencies (“New dependencies to add: None. Dependencies to update: None. Dependencies to remove: None.” — §0.6.2) and forbids modifying any existing file except this document (§0.5.2), these advisories cannot be remediated within the task’s scope without violating those constraints. They are therefore **acknowledged and accepted as a pre‑existing, out‑of‑scope baseline**, disclosed here in full for delivery‑readiness transparency.
 
