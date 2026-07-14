@@ -6,8 +6,9 @@ Every substantive factual claim below is grounded with a `file:line` citation, n
 
 > **Legend**
 >
-> - **[OBSERVED]** — captured from live runtime output (server stdout piped through bunyan, HTTP responses, the browser's Redux store, `getComputedStyle`, the DevTools Network panel, IndexedDB/localStorage inspection). The exact command/script and its complete, unedited output are shown next to the claim.
-> - **[INFERRED]** — derived from reading the source (with `file:line`). Used only where a runtime signal genuinely could not be produced through the real entry point after varied attempts; where used, the attempts are documented.
+> - **[OBSERVED]** — captured from live runtime output (server stdout piped through bunyan, HTTP responses, the browser's Redux store, `getComputedStyle`, the DevTools Network panel, IndexedDB/localStorage inspection). The exact command/script and its complete, verbatim output are shown next to the claim. The output is presented unedited except for one purely cosmetic normalization that, where it applies, is called out explicitly at that block: trailing whitespace is trimmed so this Markdown file carries none (it affects only the ASCII welcome banner). No values, lines, or structure are ever removed.
+> - **[INFERRED]** — derived from reading the source (with `file:line`). Used only where a runtime signal genuinely could not be produced through the real entry point after varied attempts; where used, the attempts are documented. A source-read value for an override/mock path that was never run may additionally carry a "non-canonical" note (e.g., the `MOCK_WORDPRESSDOTCOM` port override).
+> - **[OBSERVED — NON-CANONICAL]** — a value that *was* produced at runtime, but only by forcing a non-default path rather than the default canonical configuration: a bypassing interface, a forced fallback, a synthetic stand-in, or a mock/override. It is real runtime output, but because it did not arise from the canonical entry point it does **not** count as a canonical observation and is labeled distinctly from plain **[OBSERVED]**. The forcing step is always stated at the claim (e.g., "`window.indexedDB` disabled before boot to reach the localStorage fallback").
 
 This is a **read-only** investigation. No product source file was modified, created, or deleted. Temporary observation scripts and captured-output files lived only under `/tmp/calypso_obs/` (outside the tracked tree) and were removed afterward; the only permanent change to the repository is this document (and the `blitzy/documentation/` directory that holds it). The final cleanup commands and their output are shown in the **Cleanup** section.
 
@@ -32,15 +33,31 @@ $ CI=true yarn install --immutable
 ```
 
 ```text
-➤ YN0000: └ Completed in 0s 547ms
+➤ YN0000: · Yarn 4.0.2
+➤ YN0000: ┌ Resolution step
+➤ YN0000: └ Completed in 0s 489ms
 ➤ YN0000: ┌ Fetch step
-➤ YN0000: └ Completed in 4s 469ms
+➤ YN0000: └ Completed in 4s 355ms
 ➤ YN0000: ┌ Link step
-➤ YN0000: └ Completed in 1s 2ms
-➤ YN0000: · Done in 6s 291ms
+➤ YN0000: └ Completed in 1s 26ms
+➤ YN0000: · Done in 6s 135ms
 ```
 
-`git status --porcelain` was empty immediately after the install, confirming `yarn.lock` and tracked files were unchanged by it. **[OBSERVED]**
+(The four step durations — Resolution/Fetch/Link and the final `Done` total — vary run-to-run; the step structure and the `Yarn 4.0.2` header are stable. With the lockfile already satisfied, no `Resolution step` package additions are printed.)
+
+The immutable install left `yarn.lock` and every tracked file unchanged. This was confirmed with two targeted checks (each prints nothing) plus the full working-tree status:
+
+```bash
+$ git status --porcelain yarn.lock   # lockfile changes (no output = unchanged)
+$ git diff --stat                    # tracked-file changes (no output = none)
+$ git status --porcelain             # full working-tree status
+```
+
+```text
+?? blitzy/screenshots/
+```
+
+The first two commands print nothing, proving the install modified neither `yarn.lock` nor any tracked file. The only line the full `git status --porcelain` prints is the **untracked** `blitzy/screenshots/` directory — a later QA-evidence folder that the install did not create and that is never committed — so no tracked file was touched by the install. **[OBSERVED]**
 
 ### Version check — command and output **[OBSERVED]**
 
@@ -204,12 +221,12 @@ All four local concerns were probed on `:3000` with real asset URLs (taken from 
 ```bash
 $ CSS=/calypso/evergreen/assets_stylesheets_style_scss.css
 $ JS=/calypso/evergreen/runtime.js
-$ curl -o /dev/null -s -w 'HTTP %{http_code} | %{content_type} | %{size_download} bytes\n' --max-time 20 http://calypso.localhost:3000/
-$ curl -s --max-time 20 http://calypso.localhost:3000/ | grep -oE '<title>[^<]*</title>'
-$ curl -s --max-time 20 http://calypso.localhost:3000/ | grep -oE 'id="wpcom"'
-$ curl -o /dev/null -s -w 'HTTP %{http_code} | %{content_type} | %{size_download} bytes\n' --max-time 20 "http://calypso.localhost:3000${CSS}"
-$ curl -o /dev/null -s -w 'HTTP %{http_code} | %{content_type} | %{size_download} bytes\n' --max-time 20 "http://calypso.localhost:3000${JS}"
-$ curl -o /dev/null -s -w 'HTTP %{http_code} | %{content_type}\n' --max-time 3 http://calypso.localhost:3000/__webpack_hmr
+$ printf 'SSR   : '; curl -o /dev/null -s -w 'HTTP %{http_code} | %{content_type} | %{size_download} bytes\n' --max-time 20 http://calypso.localhost:3000/
+$ printf 'title : '; curl -s --max-time 20 http://calypso.localhost:3000/ | grep -oE '<title>[^<]*</title>'
+$ printf 'root  : '; curl -s --max-time 20 http://calypso.localhost:3000/ | grep -oE 'id="wpcom"'
+$ printf 'CSS   : '; curl -o /dev/null -s -w 'HTTP %{http_code} | %{content_type} | %{size_download} bytes\n' --max-time 20 "http://calypso.localhost:3000${CSS}"
+$ printf 'JS    : '; curl -o /dev/null -s -w 'HTTP %{http_code} | %{content_type} | %{size_download} bytes\n' --max-time 20 "http://calypso.localhost:3000${JS}"
+$ printf 'HMR   : '; curl -o /dev/null -s -w 'HTTP %{http_code} | %{content_type}\n' --max-time 3 http://calypso.localhost:3000/__webpack_hmr
 ```
 
 ```text
@@ -653,8 +670,73 @@ GET  /rest/v1.1/me?meta=flags                                                   
 ### Edge/alternate conditions
 
 - **Initial vs subsequent page [OBSERVED]:** first request → `number=4`, no `page_handle`; the auto-fetched next page → `number=7`, `page_handle` present. Both captured verbatim above and reproduced across two runs (run 1 reqids 179/198; run 2 reqids 505/527), with an identical `page_handle`, confirming determinism.
-- **Logged-out default stream [OBSERVED]:** the logged-out visitor is redirected to `/discover`; the `discover:recommended` stream (`/read/streams/discover`) genuinely fires. Login prompts are rendered around it, but the fetch and the `READER_STREAMS_PAGE_REQUEST`/`READER_STREAMS_PAGE_RECEIVE` pair were observed, not inferred.
+- **Logged-out default stream [OBSERVED]:** the logged-out visitor is redirected to `/discover`; the Discover stream (`/read/streams/discover`) genuinely fires. Login prompts are rendered around it, but the fetch and the `READER_STREAMS_PAGE_REQUEST`/`READER_STREAMS_PAGE_RECEIVE` pair were observed, not inferred.
+- **Runtime stream key vs. source base key [OBSERVED]:** the *bare* `discover:recommended` string is a source constant set at `client/reader/discover/index.web.js:L34` (hence labeled INFERRED in the coverage matrix). Inspecting the **live Redux store** (`state.reader.streams`) showed the actual runtime key is the tag-suffixed `discover:recommended--dailyprompt--wordpress` — the base key rebuilt from the response's `user_interests` via `buildDiscoverStreamKey('recommended', data.user_interests)` at `client/state/data-layer/wpcom/read/streams/index.js:L493-L494`. So what is *observed* at runtime is the rebuilt key, while the un-suffixed constant is source-derived.
 - **Actions defined but NOT fired on this initial load [INFERRED]:** `READER_STREAMS_PAGINATED_REQUEST` (`action-types.ts:L79`), `READER_STREAMS_UPDATES_RECEIVE` (`:L85`), and `READER_STREAMS_NEW_POST_RECEIVE` (`:L86`) did not appear in the 269-action trace; they belong to the pagination-by-request and live-update paths that the default discover load does not exercise.
+
+### Offline / network-error and recovery [OBSERVED]
+
+The capture above is the happy path. The stream data layer was also exercised under a **network error** and its **recovery** — directly through the browser (Chrome DevTools), not inferred. The governing source contract is the `READER_STREAMS_PAGE_REQUEST` handler, registered with `dispatchRequest( { fetch: requestPage, onSuccess: handlePage, onError: noop } )` at `client/state/data-layer/wpcom/read/streams/index.js:L514-L521` — critically **`onError: noop` at `:L519`**, meaning a failed stream fetch dispatches **no** failure or receive action, so prior/pending state is preserved and no error is surfaced to the user.
+
+**Method (real entry point).** With the app loaded on `/discover`, a store subscriber logged every dispatched `action.type` (same hook as the happy-path capture). The network was then toggled with the DevTools `emulate` control, and a **fresh, not-yet-cached** stream fetch was triggered by switching to the "Latest" Discover tab — which the data layer maps to `/read/tags/posts` (`:L227-L228`), with `orderBy: 'date'` for the non-recommended tab (`:L244`):
+
+```text
+# 1. Baseline (online). The /discover Recommended stream is already loaded; its
+#    stream-related actions (subset of the full trace) were:
+READER_VIEW_STREAM → READER_STREAMS_PAGE_REQUEST → READER_POSTS_RECEIVE
+  → READER_RECOMMENDED_SITES_RECEIVE → READER_STREAMS_PAGE_RECEIVE
+  → READER_STREAMS_PAGE_REQUEST → READER_POSTS_RECEIVE → READER_STREAMS_PAGE_RECEIVE
+
+# 2. Go OFFLINE, then trigger a fresh fetch by switching to the "Latest" tab:
+emulate(networkConditions="Offline")
+click("Latest")            # client-side nav to /discover/latest
+```
+
+**(offline) Redux actions [OBSERVED].** `navigator.onLine === false`. The new-stream request actions fired, but **no `READER_STREAMS_PAGE_RECEIVE` and no `READER_POSTS_RECEIVE` followed**:
+
+```text
+CONNECTION_LOST                      # Calypso connection monitor detects the drop
+NOTICE_CREATE, NOTICE_REMOVE         # user-facing connectivity notice
+READER_VIEW_STREAM
+WPCOM_HTTP_REQUEST
+READER_STREAMS_PAGE_REQUEST          # the number=4 request IS dispatched
+   … no READER_STREAMS_PAGE_RECEIVE, no READER_POSTS_RECEIVE …
+```
+
+**(offline) network + console [OBSERVED].** The stream's `INITIAL_FETCH = 4` request to the remote host failed at the transport layer (auto-retried a few times, identical URL each time); the only console output is the browser's transport error — **no stack trace, no token, no credential is surfaced**:
+
+```text
+# list_network_requests(resourceTypes=["xhr"]) — the /discover/latest stream fetch:
+GET https://public-api.wordpress.com/wpcom/v2/read/tags/posts?_envelope=1&orderBy=date&meta=post%2Cdiscover_original_post&feed_id=&number=4&lang=en&tags%5B%5D=dailyprompt&tags%5B%5D=wordpress&tag_recs_per_card=5&site_recs_per_card=5&age_based_decay=0.5&content_width=675   [net::ERR_INTERNET_DISCONNECTED]
+   (same URL, same number=4, repeated as later reqids while offline)
+
+# list_console_messages(types=["error"]) — one unique message:
+[error] Failed to load resource: net::ERR_INTERNET_DISCONNECTED   [5 times]
+```
+
+The UI degrades gracefully: the `/discover/latest` stream shows its **loading skeletons** and never crashes or leaks (screenshot `blitzy/screenshots/q2_offline_discover_latest_skeletons.png`). This is exactly what `onError: noop` (`:L519`) prescribes — a failed fetch produces no error action, so no page is applied and the pending skeleton state remains.
+
+**(recovery) [OBSERVED].** Restoring the network and re-navigating to the **same** `/discover/latest` stream makes the identical `/read/tags/posts` request that just failed now succeed with `number=4`, immediately followed by the auto-paginated `number=7` page:
+
+```text
+emulate()                  # network restored (throttling disabled); navigator.onLine === true
+
+# Redux actions (stream-related) — the RECEIVE pair, absent while offline, now fires:
+READER_VIEW_STREAM → READER_STREAMS_PAGE_REQUEST → READER_POSTS_RECEIVE
+  → READER_STREAMS_PAGE_RECEIVE → READER_STREAMS_PAGE_REQUEST → READER_POSTS_RECEIVE
+  → READER_STREAMS_PAGE_RECEIVE
+
+# list_network_requests(resourceTypes=["xhr"]) — same endpoint, now 200, then number=7:
+GET https://public-api.wordpress.com/wpcom/v2/read/tags/posts?_envelope=1&orderBy=date&meta=post%2Cdiscover_original_post&feed_id=&number=4&lang=en&tags%5B%5D=dailyprompt&tags%5B%5D=wordpress&tag_recs_per_card=5&site_recs_per_card=5&age_based_decay=0.5&content_width=675   [200]
+GET https://public-api.wordpress.com/wpcom/v2/read/tags/posts?_envelope=1&orderBy=date&meta=post%2Cdiscover_original_post&feed_id=&page_handle=ZnJvbT00JmJlZm9yZT0yMDI2LTA3LTE0VDEyJTNBMTklM0ExMSUyQjA4JTNBMDA%3D&number=7&lang=en&tags%5B%5D=dailyprompt&tags%5B%5D=wordpress&tag_recs_per_card=5&site_recs_per_card=5&age_based_decay=0.5&content_width=675   [200]
+```
+
+The stream then renders real posts (screenshot `blitzy/screenshots/q2_recovery_discover_latest_rendered.png`). The recovered `READER_STREAMS_PAGE_REQUEST → READER_STREAMS_PAGE_RECEIVE` pair — missing throughout the offline window — is the observable signal that the fetch succeeded; the same `number = pageHandle ? PER_FETCH : INITIAL_FETCH` rule (`:L380`) again yields `number=4` first, then `number=7` once a `page_handle` exists.
+
+**Citations (file:line).**
+- Failure contract: `READER_STREAMS_PAGE_REQUEST` registered with `onError: noop` at `client/state/data-layer/wpcom/read/streams/index.js:L514-L521` (the `noop` handler at `:L519`).
+- Fetch builder: `requestPage` at `:L358`; `const fetchCount = pageHandle ? PER_FETCH : INITIAL_FETCH;` at `:L380`; outbound `return http( { … } )` at `:L395`; `PER_FETCH = 7`/`INITIAL_FETCH = 4` at `:L160-L161`.
+- "Latest" Discover tab → REST path: the `discover` stream entry returns `'/read/tags/posts'` when the stream-key suffix includes `'latest'` at `:L227-L228`, with `orderBy: 'date'` for the non-recommended tab at `:L244` (matching the observed `orderBy=date`).
 
 ## Q3 — How the app detects login before rendering, and which storage it checks
 
@@ -903,7 +985,7 @@ reqid=1500 GET https://public-api.wordpress.com/rest/v1.1/me?http_envelope=1&met
 }
 ```
 
-**(f) Alternate condition — the localStorage fallback, genuinely exercised. [OBSERVED]**
+**(f) Alternate condition — the localStorage fallback, exercised via a forced harness. [OBSERVED — NON-CANONICAL]**
 
 ```text
 // ALTERNATE CONDITION: re-navigated with window.indexedDB made unavailable BEFORE app
@@ -942,7 +1024,7 @@ reqid=1500 GET https://public-api.wordpress.com/rest/v1.1/me?http_envelope=1&met
 - **Which storage is checked, by name:**
   - **Cookies.** `wordpress_logged_in` is the server-side auth cookie read by `getBootstrappedUser` — only when `wpcom-user-bootstrap` is enabled (it is **off** in dev), and it is httpOnly so it never appears in `document.cookie` (observed absent). `wpcom_token` is an **OAuth-only** credential read by `oauth-token`'s `getToken()` — only when the `oauth` feature is enabled (it is **off** in dev), so it is not consulted here (observed absent). The only cookies present are analytics/geo (`tk_ai`, `country_code`, `region`, `tk_qs`). **[OBSERVED]**
   - **IndexedDB (primary).** Persisted Redux/query state lives in the `calypso` database (v2), object store `calypso_store` — observed with 17–18 keys: the 16 `redux-state-logged-out*` entries (the base key plus its per-subtree chunks) and the `browser-storage-sanity-test` key that `supportsIDB()` writes to probe support (17 stable), plus a transient `was-state-randomly-cleared` flag — from Calypso's random state-clear dev feature — that brings the total to 18 when it is present, exactly as the capture above shows. The count therefore varies run-to-run within 17–18 while the 16-key `redux-state-logged-out*` core stays fixed. **[OBSERVED]**
-  - **localStorage (fallback).** When IndexedDB is unavailable, the same tiered store falls back to `localStorage`; disabling `window.indexedDB` moved the 16 `redux-state-logged-out*` entries into `localStorage`. `oauth-token` also uses a `localStorage` `store` as its second lookup — OAuth-only, so unused here. **[OBSERVED for the redux fallback]**
+  - **localStorage (fallback).** When IndexedDB is unavailable, the same tiered store falls back to `localStorage`; disabling `window.indexedDB` moved the 16 `redux-state-logged-out*` entries into `localStorage`. `oauth-token` also uses a `localStorage` `store` as its second lookup — OAuth-only, so unused here. **[OBSERVED — NON-CANONICAL for the redux fallback: reached only by disabling `window.indexedDB` before boot, which bypasses the canonical IndexedDB tier]**
   - **In-memory (bypass).** A third tier bypasses persistent storage entirely; it is toggled only by `bypassPersistentStorage(true)`, called in production solely by the support-user impersonation flow — not reachable from the default logged-out Reader. **[INFERRED]**
 - **The persistence key encodes identity.** Every persisted key is suffixed with `currentUser?.ID`, or the literal `logged-out` when there is no user — which is exactly what the observed `redux-state-logged-out*` keys show. **[OBSERVED]**
 
@@ -960,7 +1042,7 @@ reqid=1500 GET https://public-api.wordpress.com/rest/v1.1/me?http_envelope=1&met
 ### Edge/alternate conditions
 
 - **Logged out (primary, default) [OBSERVED]:** `currentUser.id = null`, `isUserLoggedIn = false`, `currentUserReceiveCount = 0`, `window.currentUser = undefined`; persistence key `redux-state-logged-out`.
-- **IndexedDB primary vs localStorage fallback [OBSERVED both]:** with IDB present, the 17–18 keys (the 16 `redux-state-logged-out*` entries and the `browser-storage-sanity-test` probe, plus the transient `was-state-randomly-cleared` flag when present) live in `calypso_store`; with `window.indexedDB` disabled before boot, the 16 `redux-state-logged-out*` keys move into `localStorage`.
+- **IndexedDB primary vs localStorage fallback [OBSERVED — IDB canonical; localStorage NON-CANONICAL]:** with IDB present, the 17–18 keys (the 16 `redux-state-logged-out*` entries and the `browser-storage-sanity-test` probe, plus the transient `was-state-randomly-cleared` flag when present) live in `calypso_store`; with `window.indexedDB` disabled before boot, the 16 `redux-state-logged-out*` keys move into `localStorage`.
 - **Logged in [INFERRED]:** could not be exercised (no credentials; local Calypso talks to the remote `public-api.wordpress.com`). Per source, a logged-in `/me` (or a server-injected `window.currentUser` when bootstrap is enabled) yields a user object → `setCurrentUser` → `CURRENT_USER_RECEIVE` sets `currentUser.id` → `isUserLoggedIn` becomes `true`, and the persistence key becomes `redux-state-<userId>` rather than `redux-state-logged-out`.
 - **In-memory storage bypass [INFERRED]:** reachable only through the support-user impersonation flow (`support-user-interop.js:L90`), not from the default Reader; the two reachable tiers (IDB, localStorage) were exercised genuinely.
 - **Server-side `wordpress_logged_in` bootstrap [INFERRED]:** disabled in dev (`wpcom-user-bootstrap: false`), so the `getBootstrappedUser` cookie read and its "Cannot bootstrap without an auth cookie" throw are not on the default local path; this is source-derived, not observed.
@@ -1316,7 +1398,7 @@ client/assets/stylesheets/shared/mixins/_breakpoints.scss
 22:					@media (max-width: $breakpoint) {
 ```
 
-- **Deprecated Calypso `$breakpoints` [OBSERVED — from file]:** `480px, 660px, 800px, 960px, 1040px, 1280px, 1400px` — `client/assets/stylesheets/shared/mixins/_breakpoints.scss:L10`. `breakpoint-deprecated("<960px")` expands to `@media (max-width: 960px)` (`client/assets/stylesheets/shared/mixins/_breakpoints.scss:L20-L22`), the `960` boundary confirmed by the sweep.
+- **Deprecated Calypso `$breakpoints` [INFERRED — source-derived]:** `480px, 660px, 800px, 960px, 1040px, 1280px, 1400px` — `client/assets/stylesheets/shared/mixins/_breakpoints.scss:L10`. The full seven-value list is a compile-time Sass variable, not a runtime-observable artifact; only the specific `960` boundary it feeds was confirmed at runtime by the responsive sweep. `breakpoint-deprecated("<960px")` expands to `@media (max-width: 960px)` (`client/assets/stylesheets/shared/mixins/_breakpoints.scss:L20-L22`), and that `960` boundary is the part observed via the sweep.
 - **Modern Gutenberg `@wordpress/base-styles` set [INFERRED — framework-sourced]** (the deprecation comment at `client/assets/stylesheets/shared/mixins/_breakpoints.scss:L4-L5` directs new code here; corroborated by framework docs, not runtime-observed): `$break-mobile: 480px`, `$break-small: 600px`, `$break-medium: 782px`, `$break-large: 960px`, `$break-xlarge: 1080px`, `$break-wide: 1280px`, `$break-huge: 1440px`, plus `$break-xhuge: 1920px` and `$break-zoomed-in: 280px`. The `782px` masterbar toggle and the Reader's own `min-width: 782px` / `max-width: 781px` / `max-width: 600px` media queries (`client/reader/sidebar/style.scss:L79,L102,L95`) align with the Gutenberg `$break-medium: 782px` and `$break-small: 600px` values.
 
 ### Citations (file:line)
@@ -1341,7 +1423,7 @@ client/assets/stylesheets/shared/mixins/_breakpoints.scss
 
 ## Coverage Pass
 
-Every named item across the four questions, with its value, exact `file:line`, the runtime evidence that supports it (which observed-output block in the section above), and an **OBSERVED**/**INFERRED** label. **Legend:** **OBSERVED** = captured from the running app at the real entry point; **INFERRED** = read from source and not exercised in this run (source-derived / framework-sourced / non-canonical, as noted). Rows marked "source only" were not exercised at runtime under the default logged-out session.
+Every named item across the four questions, with its value, exact `file:line`, the runtime evidence that supports it (which observed-output block in the section above), and an **OBSERVED**/**INFERRED** label. **Legend:** **OBSERVED** = captured from the running app at the real entry point (default canonical configuration); **OBSERVED — NON-CANONICAL** = produced at runtime but only by forcing a non-default path (e.g., disabling `window.indexedDB` to reach the localStorage fallback), so it is real output but not a canonical observation; **INFERRED** = read from source and not exercised in this run (source-derived / framework-sourced / non-canonical override, as noted). Rows marked "source only" were not exercised at runtime under the default logged-out session.
 
 ### Q1 — Dev-server topology & readiness
 
@@ -1376,7 +1458,8 @@ Every named item across the four questions, with its value, exact `file:line`, t
 | ------------------------------------ | ------------------------------------------------------------- | ----------------------------------------------------------------------- | ---------------- | -------- |
 | `/reader` -> `/discover` redirect    | `redirectLoggedOutToDiscover` -> `page.redirect('/discover')` | `client/reader/controller.js:L356-L363`                                 | Q2 (a)           | OBSERVED |
 | Redirect wiring (first middleware)   | `page( ['/reader', ...], redirectLoggedOutToDiscover, ... )`  | `client/reader/index.ts:L54-L62`                                        | Q2 (a)           | OBSERVED |
-| Discover stream key                  | `discover:recommended`                                        | `client/reader/discover/index.web.js:L34`                               | Q2 (b)           | OBSERVED |
+| Discover stream key (source base string) | `discover:recommended`                                    | `client/reader/discover/index.web.js:L34`                               | source only      | INFERRED |
+| Discover stream key (runtime, store-observed) | `discover:recommended--dailyprompt--wordpress`       | `client/state/data-layer/wpcom/read/streams/index.js:L493-L494`         | Q2 edge          | OBSERVED |
 | Observed initial endpoint            | `GET /wpcom/v2/read/streams/discover?...&number=4`            | `client/state/data-layer/wpcom/read/streams/index.js:L224-L226`         | Q2 (b)           | OBSERVED |
 | `orderBy`                            | `popular`                                                     | `client/state/data-layer/wpcom/read/streams/index.js:L244`              | Q2 (b)           | OBSERVED |
 | `apiNamespace`                       | `wpcom/v2`                                                    | `client/state/data-layer/wpcom/read/streams/index.js:L246`              | Q2 (b)           | OBSERVED |
@@ -1422,9 +1505,9 @@ Every named item across the four questions, with its value, exact `file:line`, t
 | `document.cookie` (observed)             | only tracking cookies; no `wordpress_logged_in`/`wpcom_token`            | runtime                                                            | Q3 (d)                                    | OBSERVED                    |
 | Browser-storage DB                       | `calypso` / v2 / `calypso_store`                                         | `client/lib/browser-storage/index.ts:L20-L22`                      | Q3 (e)                                    | OBSERVED                    |
 | `supportsIDB`                            | memoized IndexedDB probe -> true                                         | `client/lib/browser-storage/index.ts:L36`                          | Q3 (e)/(f)                                | OBSERVED                    |
-| `getStoredItem` tiers                    | bypass -> IndexedDB -> localStorage                                      | `client/lib/browser-storage/index.ts:L275-L283`                    | Q3 (e) IDB; (f) localStorage              | OBSERVED (IDB+localStorage) |
+| `getStoredItem` tiers                    | bypass -> IndexedDB -> localStorage                                      | `client/lib/browser-storage/index.ts:L275-L283`                    | Q3 (e) IDB; (f) localStorage              | OBSERVED — IDB canonical / localStorage NON-CANONICAL |
 | In-memory bypass caller                  | support-user impersonation only                                          | `client/lib/user/support-user-interop.js:L90`                      | source only                               | INFERRED                    |
-| localStorage fallback (exercised)        | 16 `redux-state-logged-out*` keys move to localStorage when IDB disabled | runtime                                                            | Q3 (f)                                    | OBSERVED                    |
+| localStorage fallback (forced harness)   | 16 `redux-state-logged-out*` keys move to localStorage when IDB disabled | runtime (`window.indexedDB` disabled)                              | Q3 (f)                                    | OBSERVED — NON-CANONICAL    |
 | Persistence LOAD                         | `getAllStoredItems( /^(redux-state\|query-state)-/ )`                    | `client/state/persisted-state.js:L15-L23`                          | Q3 (e) keys                               | OBSERVED                    |
 | Persistence LOAD trigger                 | `createQueryClient` calls `loadPersistedState`                           | `client/state/query-client.ts:L30-L34`                             | Q3 (e)                                    | OBSERVED                    |
 | Persistence key format                   | `'redux-state-' + (userId ?? 'logged-out')`                              | `client/state/initial-state.js:L76`                                | Q3 (e) `redux-state-logged-out`           | OBSERVED                    |
@@ -1452,7 +1535,7 @@ Every named item across the four questions, with its value, exact `file:line`, t
 | `<960px` no-sidebar override                         | `padding-left: 24px`                                    | `client/layout/style.scss:L121-L122`                                    | Q4 (c)                              | OBSERVED                                        |
 | `<660px` mobile                                      | `padding:0; padding-top:calc(--masterbar-height + 1px)` | `client/layout/style.scss:L141-L144`                                    | Q4 (c) `47px 0px 0px` @375          | OBSERVED                                        |
 | Reader calc consumers (inert logged out)             | `calc(--masterbar-height + --content-padding-top)`      | `client/reader/sidebar/style.scss:L77-L78,L80`                          | Q4 (b) (dropped; paddingTop=79px)   | OBSERVED (inert) / INFERRED (active value)      |
-| Deprecated breakpoints                               | `480, 660, 800, 960, 1040, 1280, 1400px`                | `client/assets/stylesheets/shared/mixins/_breakpoints.scss:L10`         | Q4: breakpoints                     | OBSERVED (from file)                            |
+| Deprecated breakpoints                               | `480, 660, 800, 960, 1040, 1280, 1400px`                | `client/assets/stylesheets/shared/mixins/_breakpoints.scss:L10`         | Q4: breakpoints                     | INFERRED (source-read)                          |
 | `breakpoint-deprecated` mixin                        | `<960px` -> `@media (max-width: 960px)`                 | `client/assets/stylesheets/shared/mixins/_breakpoints.scss:L12,L20-L22` | Q4 (c) matchMedia                   | OBSERVED                                        |
 | Gutenberg breakpoints                                | `480/600/782/960/1080/1280/1440` (+1920, +280)          | `@wordpress/base-styles` (framework)                                    | source only (framework)             | INFERRED                                        |
 | Reader breakpoints                                   | `max-width:600px`, `max-width:781px`, `min-width:782px` | `client/reader/sidebar/style.scss:L95,L102,L79`                         | Q4 (c) matchMedia                   | OBSERVED (media state) / INFERRED (rule effect) |
