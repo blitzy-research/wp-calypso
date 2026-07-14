@@ -182,7 +182,7 @@ server.listen( { port, host: process.env.CALYPSO_IS_FORK ? host : null }, … );
 
 For a normal (non‑fork) `yarn start`, `CALYPSO_IS_FORK` is unset, so `host` is **`null`** — Node binds the **wildcard/any‑host** address, not `calypso.localhost` specifically.
 
-**Observed — the actual bind address is the IPv6 wildcard `::`** (ss/lsof do not traverse this sandbox's network namespace, so `/proc` is used as the authoritative source; port `3000` = hex `0BB8`, TCP state `0A` = `LISTEN`):
+**Observed — the actual bind address is the IPv6 wildcard `::`** (the `ss`/`lsof` utilities are not available in this environment, so `/proc` is used as the authoritative source; port `3000` = hex `0BB8`, TCP state `0A` = `LISTEN`):
 
 ```text
 # IPv4 listeners on :3000  -> none
@@ -599,21 +599,33 @@ The Reader sidebar deliberately **imports the My Sites sidebar stylesheet** befo
 }
 ```
 
-**Layer 2 — My Sites overrides** (active for Reader because of the import above) `[client/my-sites/sidebar/style.scss:L12-L61]`:
+**Layer 2 — My Sites overrides** (active for Reader because of the import above) `[client/my-sites/sidebar/style.scss:L10-L61]`. These overrides are **nested by sidebar-state class**, so the effective sidebar width resolves three different ways depending on state:
 
 ```scss
---sidebar-width-max: 272px;                   // [L12]
---sidebar-width-min: 272px;                   // [L13]  overrides the root 228px
---content-padding-top: 16px;                  // [L50]  DEFINED here (root never defines it)
---content-padding-bottom: 16px;               // [L51]
-// collapsed state:
---sidebar-width-max: 69px;                    // [L60]
---sidebar-width-min: 69px;                    // [L61]
+.theme-default {                              // [client/my-sites/sidebar/style.scss:L10]
+    --sidebar-width-max: 272px;               // [L12]  theme-default DEFAULT (overrides the root 228px min)
+    --sidebar-width-min: 272px;               // [L13]
+
+    .is-global-sidebar-visible {              // [L15]  the VISIBLE sidebar state — the state the Reader sidebar carries
+        --sidebar-width-max: 295px;           // [L16]  => effective sidebar width is 295px while visible
+        --sidebar-width-min: 295px;           // [L17]
+        /* …sidebar/masterbar color overrides omitted (L19-L49)… */
+        --content-padding-top: 16px;          // [L50]  DEFINED here — ONLY within the visible-sidebar scope (root never defines it)
+        --content-padding-bottom: 16px;       // [L51]
+    }                                         // [L57]  .is-global-sidebar-visible block closes
+
+    .is-global-sidebar-collapsed {            // [L59]  the COLLAPSED sidebar state
+        --sidebar-width-max: 69px;            // [L60]
+        --sidebar-width-min: 69px;            // [L61]
+    }
+}
 ```
+
+**The effective sidebar width therefore resolves three ways, all under `.theme-default`:** `272px` by default `[client/my-sites/sidebar/style.scss:L12-L13]`; **`295px` when `.is-global-sidebar-visible`** — the state the *visible* Reader global sidebar carries, so the rendered Reader sidebar is `295px` wide, not `272px` `[client/my-sites/sidebar/style.scss:L15-L17]`; and `69px` when `.is-global-sidebar-collapsed` `[client/my-sites/sidebar/style.scss:L59-L61]`.
 
 **Which properties the Reader sidebar actually consumes.** `client/reader/sidebar/style.scss` uses `calc()` over `--masterbar-height`, `--content-padding-top`, `--content-padding-bottom`, and `--sidebar-width-max` `[client/reader/sidebar/style.scss:L70,L77-L78,L80,L107]`. Two consequences worth calling out:
 
-- `--content-padding-top`/`--content-padding-bottom` are **not** defined at `:root`; they exist only because the My Sites stylesheet defines them `[client/my-sites/sidebar/style.scss:L50-L51]`. Reader's padding math therefore depends on that imported layer.
+- `--content-padding-top`/`--content-padding-bottom` are **not** defined at `:root`; they exist only because the My Sites stylesheet defines them — and only **inside the `.is-global-sidebar-visible` scope** (that block opens at `[client/my-sites/sidebar/style.scss:L15]`, the two properties are declared at `[client/my-sites/sidebar/style.scss:L50-L51]`, and the block closes at `[client/my-sites/sidebar/style.scss:L57]`). Reader's padding math therefore depends both on that imported layer and on the sidebar being in its visible state.
 - `--masterbar-checkout-height` (`72px`, `[client/assets/stylesheets/shared/_variables.scss:L8]`) and `--sidebar-width-min` are declared but are **not** consumed by the Reader sidebar's `calc()` expressions — they are shared/global properties, not Reader‑specific drivers. (`--sidebar-width-min` *is* used by the layout container in §5.4, just not inside `reader/sidebar/style.scss`.)
 
 ### 5.4 Viewport widths where the layout changes (#13, #14)
@@ -629,7 +641,9 @@ Distinct rules fire at distinct widths; the table maps each to its selector and 
 | `max-width: 660px` | `.global-sidebar .tooltip:hover::after` `[client/layout/global-sidebar/style.scss:L511-L515]` | Sidebar tooltip on hover is hidden |
 | Core app scale | `$breakpoints: 480px, 660px, 800px, 960px, 1040px, 1280px, 1400px` `[client/assets/stylesheets/shared/mixins/_breakpoints.scss:L10]` | The named sizes the `breakpoint()`/`breakpoint-deprecated()` mixins accept; `660` and `960` above are drawn from this list |
 
-The container width (`.layout__secondary`) is the element that visibly "shifts": `var(--sidebar-width-max)` by default `[client/layout/style.scss:L185]`, narrowing to `--sidebar-width-min` under `960px`, then becoming full‑width under `660px`. The header's own padding/gap never change — only its container's width and the collapsed/tooltip presentation do.
+**Boundary semantics of the `< Npx` mixin rows (the width `N` is *inclusive*).** The `breakpoint-deprecated( "<Npx" )` shorthand compiles to `@media (max-width: Npx)` `[client/assets/stylesheets/shared/mixins/_breakpoints.scss:L18]`, `[client/assets/stylesheets/shared/mixins/_breakpoints.scss:L20-L24]`, so the boundary width `N` itself is *included*. Concretely: at **exactly `960px`** the container has already narrowed to `--sidebar-width-min` (it only widens back to `--sidebar-width-max` at `961px`), and at **exactly `660px`** the container is already `100%` full‑width (it only returns to `--sidebar-width-min` at `661px`). The complementary `> Npx` form compiles to `@media (min-width: Npx + 1)` `[client/assets/stylesheets/shared/mixins/_breakpoints.scss:L26-L30]` — which is exactly why the sibling `min-width: 661px` rule (§5.2) takes over one pixel above the `660px` boundary. The standalone raw `min-width: 782px` masterbar query is likewise inclusive of `782px` (masterbar height is `32px` at exactly `782px`, and `46px` at `781px`).
+
+The container width (`.layout__secondary`) is the element that visibly "shifts": `var(--sidebar-width-max)` by default `[client/layout/style.scss:L185]`, narrowing to `--sidebar-width-min` at/under `960px`, then becoming full‑width at/under `660px`. The header's own padding/gap never change — only its container's width and the collapsed/tooltip presentation do.
 
 ### 5.5 What was observed vs. inferred here
 
@@ -669,7 +683,7 @@ This table closes the loop required by the run‑first methodology: each distinc
 | 22 | **CSS custom properties** driving layout | `--masterbar-height`, `--sidebar-width-max`, `--sidebar-width-min`, `--content-padding-top/bottom` | §5.3 | Source |
 | 23 | Header visibility mechanism | State class `.has-no-masterbar` flips `display: none` → `flex` — not a viewport breakpoint | §5.2 | Source |
 | 24 | **Viewport widths** where things change | `782px` (masterbar height), `960px` (sidebar→min width), `660/661px` (sidebar→100% / collapsed restyle / tooltip), plus the core `$breakpoints` scale | §5.4 | Source |
-| 25 | Root defaults vs. **My Sites override** | Reader imports the My Sites sidebar SCSS, which overrides `--sidebar-width-min` and **defines** `--content-padding-*` (absent from `:root`) | §5.3 | Source |
+| 25 | Root defaults vs. **My Sites override** | Reader imports the My Sites sidebar SCSS, which overrides the sidebar width per state (`272px` `.theme-default` default → **`295px` when `.is-global-sidebar-visible`** → `69px` collapsed) and **defines** `--content-padding-*` inside the visible‑sidebar scope (absent from `:root`) | §5.3 | Source |
 | 26 | Repository left unchanged + **cleanup** | Server stopped by PID, `/tmp` scratch removed, working tree clean, one‑file diff vs. baseline | §7 | Observed |
 
 Every "e.g./such as" item the prompt named is included above: hot reloading (#6), API calls (#7), the storage mechanisms enumeration (#17), margin *and* padding (#21), CSS custom properties (#22), and viewport widths (#24).
@@ -680,7 +694,7 @@ Every "e.g./such as" item the prompt named is included above: hot reloading (#6)
 
 Per the task's ground rule — *temporary scripts may be used for observation, but the repository must remain unchanged and anything temporary cleaned up* — the development server was stopped deterministically, all scratch files were removed, and the repository state was verified. This is the observed evidence promised in §1.2.
 
-**Stopping the server (by exact PID, never a broad `pkill`).** Because `ss`/`lsof` do not traverse this container's network namespace, the listener‑owning process was identified from `/proc` (the same method used in §2.5: cross‑referencing the `:3000` socket inode against `/proc/<pid>/fd`), and only that process (and its process group, the launched `yarn start`) was signalled:
+**Stopping the server (by exact PID, never a broad `pkill`).** Because the `ss`/`lsof` utilities are not available in this environment, the listener‑owning process was identified from `/proc` (the same method used in §2.5: cross‑referencing the `:3000` socket inode against `/proc/<pid>/fd`), and only that process (and its process group, the launched `yarn start`) was signalled:
 
 ```text
 # terminate exactly the process group of the launched dev server (pgid captured at launch);
