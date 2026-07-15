@@ -305,6 +305,17 @@ $ curl -sS --max-time 15 'https://public-api.wordpress.com/rest/v1.1/me?meta=fla
 
 The `403 authorization_required` is exactly the boundary an unauthenticated caller hits; a real user session would supply an access token and receive `200`. The authenticated `200` bodies and the resulting browser Redux dispatch are therefore labeled **(inferred)** in §3.5. (This 403 `error` code is the same value the client's `initializeCurrentUser` treats as "logged out" — see §4.3.)
 
+**Observed — the transport the app actually uses is *enveloped*, returning HTTP `200` wrapped around the same inner `403`.** The `curl` above is the plain (non‑enveloped) call, so its HTTP transport status genuinely is `403`. The WordPress.com XHR transport that Calypso's in‑app current‑user probe uses (§4.2) requests the `http_envelope=1` form, which always returns transport `200` and moves the real status into the JSON body — so the *same* unauthenticated `/me` surfaces the identical `authorization_required` error as the envelope's `code` field rather than as the HTTP status line:
+
+```text
+$ curl -sS -w '\nhttp_code=%{http_code}\n' --max-time 15 \
+     'https://public-api.wordpress.com/rest/v1.1/me?http_envelope=1&meta=flags'
+{"code":403,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"error":"authorization_required","message":"An active access token must be used to query information about the current user."}}
+http_code=200
+```
+
+Either transport yields the same `authorization_required` error that the dev branch's `catch` swallows, leaving `state.currentUser` empty (§4.6). The non‑enveloped call is shown as the primary evidence above because its `403` appears directly in the HTTP status line.
+
 ### 2.7 What was observed vs. inferred here
 
 - **Observed:** port `3000`; the pre‑listen boot log and the "Ready!" banner with timestamps; the wildcard `::` bind; the holding page; `/`, an in‑memory JS bundle, an in‑memory CSS asset, and the HMR SSE stream all answering on `3000`; a single PID‑tied listener; and the unauthenticated WordPress.com `403`.
@@ -496,7 +507,7 @@ fetchingUser = rawCurrentUserFetch()                        // [L40]  GET /me
         const userData = filterUserObject( user );
         const storedUserId = getStoredUserId();             // [L44]  read localStorage 'wpcom_user_id'
         if ( storedUserId != null && storedUserId !== userData.ID ) {  // [L45]  DIFFERENT user?
-            await clearStore();                             // [L47]  wipe stale persisted Redux state
+            await clearStore();                             // [L46]  wipe stale persisted Redux state
         }
         setStoredUserId( userData.ID );                     // [L49]  remember who we are now
         dispatch( setCurrentUser( userData ) );             // [L50]  THIS is what makes isUserLoggedIn true
@@ -647,7 +658,7 @@ The container width (`.layout__secondary`) is the element that visibly "shifts":
 
 ### 5.5 What was observed vs. inferred here
 
-- **Observed:** every value above is read directly from the SCSS/JSX sources at the pinned commit (`padding: 30px 24px 29px`, `gap: 8px`, the custom‑property declarations, and each media‑query/state‑class rule with its line number).
+- **Source:** every value above is read directly from the SCSS/JSX sources at the pinned commit (`padding: 30px 24px 29px`, `gap: 8px`, the custom‑property declarations, and each media‑query/state‑class rule with its line number).
 - **(Inferred):** the *rendered* pixel result of these rules across live breakpoints was **not** captured headlessly in this environment — the Reader UI only fully renders for an authenticated session (§3.1, §4.6), so a screenshot‑based per‑breakpoint comparison was not performed. The cause→effect mapping above is derived from the cascade as written in source.
 
 
