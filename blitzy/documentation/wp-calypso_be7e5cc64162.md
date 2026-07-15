@@ -8,9 +8,11 @@ investigation is strictly **read-only**: the only file written to the repository
 is this document. All investigative probes were created **outside the source
 tree** — each in a private `mktemp -d` directory under `/tmp`, created with
 `umask 077` — and removed when done. The working tree was verified clean after
-every probe: because the deliverable is already committed at `HEAD`,
-`git status --porcelain --untracked-files=all` is **empty** throughout the
-investigation (shown in the Environment section below).
+every probe: throughout the investigation `git status --porcelain
+--untracked-files=all` showed **only this deliverable itself** — ` M …md` while
+the document was being authored (uncommitted) and empty once it is committed at
+`HEAD` — and **never** any source file or investigative probe (see the
+Environment section below, and the ` M` snapshots in the Q4 and Q7 sections).
 
 Statements that could not be observed at runtime and are derived from reading
 code are explicitly labelled **(inferred)**.
@@ -73,13 +75,38 @@ EXIT=0
 ```
 
 Every probe below is created under a private `/tmp` directory and removed
-afterwards, so this empty status holds after each probe (re-verified per
-section). `node_modules` is installed (git-ignored) and `build/server.js`
-(7.9 MB) is pre-built by `yarn run build` (`package.json:64`).
+afterwards, so after each probe `git status --porcelain` shows **only this
+deliverable** and **no** source or probe file (re-verified per section). The
+` M blitzy/documentation/wp-calypso_be7e5cc64162.md` snapshots shown later in the
+Q4 and Q7 sections are exactly that status captured while the document was still
+being authored (the deliverable uncommitted); once the deliverable is committed
+the status is empty, precisely as the baseline above shows. `node_modules` is
+installed (git-ignored) and `build/server.js` (7.9 MB) is pre-built by
+`yarn run build` (`package.json:64`).
 
 Key dependency versions (from `package.json`): `jest ^29.7.0`
 (`package.json:290`), `nock ^13.5.6` (`package.json:299`), and `bunyan ^1.8.15`
 (`package.json:265`).
+
+**One host-resolution prerequisite** applies to the canonical dev-server URL
+used later (the dev server advertises and serves itself at
+`http://calypso.localhost:3000`, and the Q6 dev-side curl targets that host).
+`calypso.localhost` is **not** resolved automatically here:
+`/etc/nsswitch.conf` uses `hosts: files dns` (no `myhostname`/auto-`.localhost`
+NSS module), so the host resolves **only** via an `/etc/hosts` entry. Add it once
+with `echo '127.0.0.1 calypso.localhost' | sudo tee -a /etc/hosts`; afterwards it
+resolves to loopback:
+
+```
+$ grep -E '^hosts' /etc/nsswitch.conf
+hosts:          files dns
+$ getent hosts calypso.localhost
+127.0.0.1       calypso.localhost
+```
+
+Q1's health check below uses `http://127.0.0.1:3000/` directly and needs **no**
+such entry; the Q6 dev-side curl uses the canonical `http://calypso.localhost:3000/`
+host and therefore does (substituting `127.0.0.1:3000` there works as well).
 
 ---
 
